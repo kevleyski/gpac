@@ -25,6 +25,13 @@
 
 #include <gpac/tools.h>
 
+#if defined(WIN32) && !defined(GPAC_CONFIG_WIN32)
+#include <windows.h>
+#include <wincon.h>
+static HANDLE console = NULL;
+static WORD console_attr_ori = 0;
+#endif
+
 
 static char szTYPE[5];
 
@@ -78,7 +85,7 @@ static u64 prev_pc = 0;
 static void gf_on_progress_std(const char *_title, u64 done, u64 total)
 {
 	Double prog;
-	u32 pos;
+	u32 pos, pc;
 	const char *szT = _title ? (char *)_title : (char *) "";
 	prog = (double) done;
 	prog /= total;
@@ -88,6 +95,13 @@ static void gf_on_progress_std(const char *_title, u64 done, u64 total)
 		prev_pos = 0;
 		prev_pc = 0;
 	}
+	pc = (u32) ( 100 * prog);
+	if ((pos!=prev_pos) || (pc!=prev_pc)) {
+		prev_pos = pos;
+		prev_pc = pc;
+		fprintf(stderr, "%s: |%s| (%02d/100)\r", szT, szProg[pos], pc);
+		fflush(stderr);
+	}
 	if (done==total) {
 		u32 len = (u32) strlen(szT) + 40;
 		while (len) {
@@ -95,15 +109,6 @@ static void gf_on_progress_std(const char *_title, u64 done, u64 total)
 			len--;
 		};
 		fprintf(stderr, "\r");
-	}
-	else {
-		u32 pc = (u32) ( 100 * prog);
-		if ((pos!=prev_pos) || (pc!=prev_pc)) {
-			prev_pos = pos;
-			prev_pc = pc;
-			fprintf(stderr, "%s: |%s| (%02d/100)\r", szT, szProg[pos], pc);
-			fflush(stderr);
-		}
 	}
 }
 
@@ -134,7 +139,7 @@ void gf_set_progress_callback(void *_user_cbk, gf_on_progress_cbk _prog_cbk)
 static struct log_tool_info {
 	u32 type;
 	const char *name;
-	u32 level;
+	GF_LOG_Level level;
 } global_log_tools [] =
 {
 	{ GF_LOG_CORE, "core", GF_LOG_WARNING },
@@ -182,7 +187,6 @@ GF_Err gf_log_modify_tools_levels(const char *val)
 			return GF_BAD_PARAM;
 		}
 
-		level = 0;
 		if (!strnicmp(sep_level+1, "error", 5)) {
 			level = GF_LOG_ERROR;
 			next_val = sep_level+1 + 5;
@@ -221,11 +225,11 @@ GF_Err gf_log_modify_tools_levels(const char *val)
 					global_log_tools[i].level = level;
 			}
 			else {
-				Bool found = 0;
+				Bool found = GF_FALSE;
 				for (i=0; i<GF_LOG_TOOL_MAX; i++) {
 					if (!strcmp(global_log_tools[i].name, tools)) {
 						global_log_tools[i].level = level;
-						found = 1;
+						found = GF_TRUE;
 					}
 				}
 				if (!found) {
@@ -326,22 +330,80 @@ u32 call_lev = 0;
 u32 call_tool = 0;
 
 GF_EXPORT
-Bool gf_log_tool_level_on(u32 log_tool, u32 log_level)
+Bool gf_log_tool_level_on(GF_LOG_Tool log_tool, GF_LOG_Level log_level)
 {
 	assert(log_tool<GF_LOG_TOOL_MAX);
 	if (global_log_tools[log_tool].level >= log_level) return GF_TRUE;
 	return GF_FALSE;
 }
 
-void default_log_callback(void *cbck, u32 level, u32 tool, const char* fmt, va_list vlist)
+#define RED    "\x1b[31m"
+#define YELLOW "\x1b[33m"
+#define GREEN  "\x1b[32m"
+#define CYAN   "\x1b[36m"
+#define WHITE  "\x1b[37m"
+#define RESET  "\x1b[0m"
+
+void default_log_callback(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list vlist)
 {
-#ifndef _WIN32_WCE
+#if defined(WIN32) && !defined(GPAC_CONFIG_WIN32)
+	if (console == NULL) {
+		CONSOLE_SCREEN_BUFFER_INFO console_info;
+		console = GetStdHandle(STD_ERROR_HANDLE);
+		assert(console != INVALID_HANDLE_VALUE);
+		if (console != INVALID_HANDLE_VALUE) {
+			GetConsoleScreenBufferInfo(console, &console_info);
+			console_attr_ori = console_info.wAttributes;
+		}
+	}
+	switch(level) {
+		case GF_LOG_ERROR:
+			SetConsoleTextAttribute(console, FOREGROUND_RED | FOREGROUND_INTENSITY);
+			break;
+		case GF_LOG_WARNING:
+			SetConsoleTextAttribute(console, FOREGROUND_INTENSITY | FOREGROUND_RED | FOREGROUND_GREEN);
+			break;
+		case GF_LOG_INFO:
+			SetConsoleTextAttribute(console, FOREGROUND_INTENSITY | FOREGROUND_GREEN);
+			break;
+		case GF_LOG_DEBUG:
+			SetConsoleTextAttribute(console, FOREGROUND_GREEN);
+			break;
+		default:
+			SetConsoleTextAttribute(console, FOREGROUND_GREEN | FOREGROUND_RED | FOREGROUND_BLUE);
+			break;
+	}
+	
 	vfprintf(stderr, fmt, vlist);
+	SetConsoleTextAttribute(console, console_attr_ori);
+#elif !defined(_WIN32_WCE)
+	switch(level) {
+		case GF_LOG_ERROR:
+			fprintf(stderr, RED);
+			break;
+		case GF_LOG_WARNING:
+			fprintf(stderr, YELLOW);
+			break;
+		case GF_LOG_INFO:
+			fprintf(stderr, GREEN);
+			break;
+		case GF_LOG_DEBUG:
+			fprintf(stderr, CYAN);
+			break;
+		default:
+			fprintf(stderr, WHITE);
+			break;
+	}
+
+	vfprintf(stderr, fmt, vlist);
+	fprintf(stderr, RESET);
+#else /*_WIN32_WCE*/
+	/*no log*/
 #endif
 }
 
 static void *user_log_cbk = NULL;
-static gf_log_cbk log_cbk = default_log_callback;
+gf_log_cbk log_cbk = default_log_callback;
 static Bool log_exit_on_error = GF_FALSE;
 
 GF_EXPORT
@@ -351,8 +413,18 @@ void gf_log(const char *fmt, ...)
 	va_start(vl, fmt);
 	log_cbk(user_log_cbk, call_lev, call_tool, fmt, vl);
 	va_end(vl);
-	if (log_exit_on_error && call_lev==GF_LOG_ERROR)
+	if (log_exit_on_error && (call_lev==GF_LOG_ERROR) && (call_tool != GF_LOG_MEMORY)) {
 		exit(1);
+	}
+}
+
+GF_EXPORT
+void gf_log_va_list(GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list vl)
+{
+	log_cbk(user_log_cbk, call_lev, call_tool, fmt, vl);
+	if (log_exit_on_error && (call_lev==GF_LOG_ERROR) && (call_tool != GF_LOG_MEMORY)) {
+		exit(1);
+	}
 }
 
 GF_EXPORT
@@ -362,7 +434,7 @@ void gf_log_set_strict_error(Bool strict)
 }
 
 GF_EXPORT
-void gf_log_set_tool_level(u32 tool, u32 level)
+void gf_log_set_tool_level(GF_LOG_Tool tool, GF_LOG_Level level)
 {
 	assert(tool<=GF_LOG_TOOL_MAX);
 	if (tool==GF_LOG_ALL) {
@@ -375,7 +447,7 @@ void gf_log_set_tool_level(u32 tool, u32 level)
 }
 
 GF_EXPORT
-void gf_log_lt(u32 ll, u32 lt)
+void gf_log_lt(GF_LOG_Level ll, GF_LOG_Tool lt)
 {
 	call_lev = ll;
 	call_tool = lt;
@@ -387,7 +459,7 @@ gf_log_cbk gf_log_set_callback(void *usr_cbk, gf_log_cbk cbk)
 	gf_log_cbk prev_cbk = log_cbk;
 	log_cbk = cbk;
 	if (!log_cbk) log_cbk = default_log_callback;
-	user_log_cbk = usr_cbk;
+	if (usr_cbk) user_log_cbk = usr_cbk;
 	return prev_cbk;
 }
 
@@ -397,7 +469,7 @@ void gf_log(const char *fmt, ...)
 {
 }
 GF_EXPORT
-void gf_log_lt(u32 ll, u32 lt)
+void gf_log_lt(GF_LOG_Level ll, GF_LOG_Tool lt)
 {
 }
 GF_EXPORT
@@ -614,8 +686,8 @@ const char *gpac_features()
 #ifdef GPAC_USE_TINYGL
 	                       "GPAC_USE_TINYGL "
 #endif
-#ifdef GPAC_USE_OGL_ES
-	                       "GPAC_USE_OGL_ES "
+#ifdef GPAC_USE_GLES1X
+	                       "GPAC_USE_GLES1X "
 #endif
 #if defined(_WIN32_WCE)
 #ifdef GPAC_USE_IGPP
@@ -1218,8 +1290,9 @@ s32 gf_lang_find(const char *lang_or_rfc_5646_code)
 	char *sep;
 	u32 count = sizeof(defined_languages) / sizeof(struct lang_def);
 
+	if (!lang_or_rfc_5646_code) return -1;
 
-	len = 0;
+	len = (u32)strlen(lang_or_rfc_5646_code);
 	sep = (char *) strchr(lang_or_rfc_5646_code, '-');
 	if (sep) {
 		sep[0] = 0;
@@ -1231,10 +1304,10 @@ s32 gf_lang_find(const char *lang_or_rfc_5646_code)
 		if (!strcmp(defined_languages[i].name, lang_or_rfc_5646_code)) {
 			return i;
 		}
-		if (sep && (len==3) && !strnicmp(defined_languages[i].three_char_code, lang_or_rfc_5646_code, 3)) {
+		if ((len==3) && !strnicmp(defined_languages[i].three_char_code, lang_or_rfc_5646_code, 3)) {
 			return i;
 		}
-		if (sep && (len==2) && !strnicmp(defined_languages[i].two_char_code, lang_or_rfc_5646_code, 2)) {
+		if ((len==2) && !strnicmp(defined_languages[i].two_char_code, lang_or_rfc_5646_code, 2)) {
 			return i;
 		}
 	}

@@ -52,12 +52,12 @@ void visual_2d_release_raster(GF_VisualManager *visual)
 }
 
 
-void visual_2d_clear_surface(GF_VisualManager *visual, GF_IRect *rc, u32 BackColor, Bool is_offscreen)
+void visual_2d_clear_surface(GF_VisualManager *visual, GF_IRect *rc, u32 BackColor, u32 is_offscreen)
 {
 #ifdef SKIP_DRAW
 	return;
 #endif
-	if (!visual->is_attached) return;
+	if (! visual->CheckAttached(visual) ) return;
 
 	if (!BackColor && !visual->offscreen) {
 		if (!visual->compositor->user || !(visual->compositor->user->init_flags & GF_TERM_WINDOW_TRANSPARENT)) {
@@ -100,7 +100,7 @@ static void visual_2d_fill_path(GF_VisualManager *visual, DrawableContext *ctx, 
 	/*background & direct drawing : use ctx clip*/
 	if ((ctx->flags & CTX_IS_BACKGROUND) || tr_state->immediate_draw) {
 		if (ctx->bi->clip.width && ctx->bi->clip.height) {
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Visual2D] Redrawing node %s[%s] (direct draw)\n", gf_node_get_log_name(ctx->drawable->node), gf_node_get_class_name(ctx->drawable->node) ));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Visual2D] Redrawing node %s [%s] (direct draw)\n", gf_node_get_log_name(ctx->drawable->node), gf_node_get_class_name(ctx->drawable->node) ));
 
 			if (stencil) {
 				raster->surface_set_clipper(visual->raster_surface, &ctx->bi->clip);
@@ -123,7 +123,7 @@ static void visual_2d_fill_path(GF_VisualManager *visual, DrawableContext *ctx, 
 			clip = ctx->bi->clip;
 			gf_irect_intersect(&clip, &visual->to_redraw.list[i].rect);
 			if (clip.width && clip.height) {
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Visual2D] Redrawing node %s[%s] (indirect draw @ dirty rect idx %d)\n", gf_node_get_log_name(ctx->drawable->node), gf_node_get_class_name(ctx->drawable->node), i));
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Visual2D] Redrawing node %s [%s] (indirect draw @ dirty rect idx %d)\n", gf_node_get_log_name(ctx->drawable->node), gf_node_get_class_name(ctx->drawable->node), i));
 				if (stencil) {
 					raster->surface_set_clipper(visual->raster_surface, &clip);
 					raster->surface_fill(visual->raster_surface, stencil);
@@ -290,7 +290,8 @@ void visual_2d_texture_path_text(GF_VisualManager *visual, DrawableContext *txt_
 	GF_ColorMatrix cmat;
 	GF_Raster2D *raster;
 
-	if (!visual->is_attached) return;
+	if (! visual->CheckAttached(visual) ) return;
+
 	raster = visual->compositor->rasterizer;
 
 	stencil = gf_sc_texture_get_stencil(txh);
@@ -349,86 +350,112 @@ void visual_2d_texture_path_text(GF_VisualManager *visual, DrawableContext *txt_
 
 
 #ifndef GPAC_DISABLE_3D
+
+void visual_2d_flush_hybgl_canvas(GF_VisualManager *visual, GF_TextureHandler *txh, struct _drawable_context *ctx, GF_TraverseState *tr_state)
+{
+	Bool line_texture = GF_FALSE;
+	u32 i;
+	u32 prev_color;
+	Bool transparent, had_flush = 0;
+	u32 nb_obj_left_on_canvas = visual->nb_objects_on_canvas_since_last_ogl_flush;
+	u8 alpha;
+
+	if (! visual->hybgl_drawn.count)
+		return;
+
+	//we have drawn things on the canvas before this object, flush canvas to GPU
+
+	if (txh && (txh==ctx->aspect.line_texture)) {
+		line_texture = GF_TRUE;
+		alpha = GF_COL_A(ctx->aspect.line_color);
+		prev_color = ctx->aspect.line_color;
+		ctx->aspect.line_texture = NULL;
+		ctx->aspect.line_color = 0;
+	} else {
+		alpha = GF_COL_A(ctx->aspect.fill_color);
+		if (!alpha) alpha = GF_COL_A(ctx->aspect.line_color);
+		prev_color = ctx->aspect.fill_color;
+		ctx->aspect.fill_texture = NULL;
+		ctx->aspect.fill_color = 0;
+
+	}
+	transparent = txh ? (txh->transparent || (alpha!=0xFF)) : GF_TRUE;
+	//clear wherever we have overlap
+	for (i=0; i<visual->hybgl_drawn.count; i++) {
+		GF_IRect rc = ctx->bi->clip;
+		gf_irect_intersect(&ctx->bi->clip, &visual->hybgl_drawn.list[i].rect);
+		if (ctx->bi->clip.width && ctx->bi->clip.height) {
+			//if something behind this, flush canvas to gpu
+			if (transparent) {
+				if (!had_flush) {
+					//flush the complete area below this object, regardless of intersections
+					compositor_2d_hybgl_flush_video(visual->compositor, tr_state->immediate_draw ? NULL : &rc);
+					had_flush = 1;
+				}
+				//if object was not completely in the flush region we will need to flush the canvas
+				if ( gf_irect_inside(&rc, &visual->hybgl_drawn.list[i].rect)) {
+					//it may happen that we had no object on the canvas but syil have their bounds (we only drew textures)
+					if (nb_obj_left_on_canvas)
+						nb_obj_left_on_canvas--;
+				}
+			}
+			//immediate mode flush, erase all canvas (we just completely flusged it)
+			if (tr_state->immediate_draw && had_flush && !tr_state->immediate_for_defer) {
+				visual->compositor->rasterizer->surface_clear(visual->raster_surface, NULL, 0);
+			}
+			//defer mode, erase all part of the canvas below us
+			else if (txh) {
+				visual_2d_draw_path_extended(visual, ctx->drawable->path, ctx, NULL, NULL, tr_state, NULL, NULL, GF_TRUE);
+			} else {
+				visual->compositor->rasterizer->surface_clear(visual->raster_surface, &ctx->bi->clip, 0);
+			}
+		}
+		ctx->bi->clip = rc;
+	}
+	if (line_texture) {
+		ctx->aspect.line_color = prev_color;
+		ctx->aspect.line_texture = txh;
+	} else {
+		ctx->aspect.fill_color = prev_color;
+		ctx->aspect.fill_texture = txh;
+	}
+
+	if (had_flush) {
+		visual->nb_objects_on_canvas_since_last_ogl_flush = nb_obj_left_on_canvas;
+	}
+}
+
 void visual_2d_texture_path_opengl_auto(GF_VisualManager *visual, GF_Path *path, GF_TextureHandler *txh, struct _drawable_context *ctx, GF_Rect *orig_bounds, GF_Matrix2D *ext_mx, GF_TraverseState *tr_state)
 {
 	GF_Rect clipper;
+	GF_Matrix mx;
 	u32 prev_mode = tr_state->traversing_mode;
 	u32 prev_type_3d = tr_state->visual->type_3d;
 
-	//we have drawn things on the canvas before this object
-	if (visual->hybgl_drawn.count) {
-		Bool line_texture = GF_FALSE;
-		u32 i;
-		u32 prev_color;
-		Bool transparent, had_flush = 0;
-		u32 nb_obj_left_on_canvas = visual->nb_objects_on_canvas_since_last_ogl_flush;
-		u8 alpha;
-
-		if (txh==ctx->aspect.line_texture) {
-			line_texture = GF_TRUE;
-			alpha = GF_COL_A(ctx->aspect.line_color);
-			prev_color = ctx->aspect.line_color;
-			ctx->aspect.line_texture = NULL;
-			ctx->aspect.line_color = 0;
-		} else {
-			alpha = GF_COL_A(ctx->aspect.fill_color);
-			if (!alpha) alpha = GF_COL_A(ctx->aspect.line_color);
-			prev_color = ctx->aspect.fill_color;
-			ctx->aspect.fill_texture = NULL;
-			ctx->aspect.fill_color = 0;
-		}
-		transparent = txh->transparent || (alpha!=0xFF);
-
-		//clear wherever we have overlap
-		for (i=0; i<visual->hybgl_drawn.count; i++) {
-			GF_IRect rc = ctx->bi->clip;
-			gf_irect_intersect(&ctx->bi->clip, &visual->hybgl_drawn.list[i].rect);
-			if (ctx->bi->clip.width && ctx->bi->clip.height) {
-				//if something behind this, flush canvas to gpu
-				if (transparent) {
-					if (!had_flush) {
-						//flush the complete area below this object, regardless of intersections
-						compositor_2d_hybgl_flush_video(visual->compositor, tr_state->immediate_draw ? NULL : &rc);
-						had_flush = 1;
-					}
-					//if object was not completely in the flush region we will need to flush the canvas
-					if (gf_irect_inside(&rc, &visual->hybgl_drawn.list[i].rect)) {
-						assert(nb_obj_left_on_canvas);
-						nb_obj_left_on_canvas--;
-					}
-				}
-
-				//erase all part of the canvas below us
-				visual_2d_draw_path_extended(visual, ctx->drawable->path, ctx, NULL, NULL, tr_state, NULL, NULL, GF_TRUE);
-			}
-			ctx->bi->clip = rc;
-		}
-		if (line_texture) {
-			ctx->aspect.line_color = prev_color;
-			ctx->aspect.line_texture = txh;
-		} else {
-			ctx->aspect.fill_color = prev_color;
-			ctx->aspect.fill_texture = txh;
-		}
-
-		if (had_flush) {
-			visual->nb_objects_on_canvas_since_last_ogl_flush = nb_obj_left_on_canvas;
-		}
-	}
+	visual_2d_flush_hybgl_canvas(visual, txh, ctx, tr_state);
 
 	tr_state->visual->type_3d = 4;
 	tr_state->appear = ctx->appear;
 	if (ctx->col_mat) gf_cmx_copy(&tr_state->color_mat, ctx->col_mat);//
 
 	tr_state->traversing_mode=TRAVERSE_DRAW_3D;
-	gf_mx_from_mx2d(&tr_state->model_matrix, &ctx->transform);
+	//in hybridGL the 2D camera is always setup as centered-coords, we have to insert flip+translation in case of top-left origin 
+	if (tr_state->visual->center_coords) {
+		gf_mx_from_mx2d(&tr_state->model_matrix, &ctx->transform);
+	} else {
+		gf_mx_init(tr_state->model_matrix);
+		gf_mx_add_scale(&tr_state->model_matrix, FIX_ONE, -FIX_ONE, FIX_ONE);
+		gf_mx_add_translation(&tr_state->model_matrix, -tr_state->camera->width/2, -tr_state->camera->height/2, 0);
 
+		gf_mx_from_mx2d(&mx, &ctx->transform);
+		gf_mx_add_matrix(&tr_state->model_matrix, &mx);
+	}
 
 	clipper.x = INT2FIX(ctx->bi->clip.x);
 	clipper.y = INT2FIX(ctx->bi->clip.y);
 	clipper.width = INT2FIX(ctx->bi->clip.width);
 	clipper.height = INT2FIX(ctx->bi->clip.height);
-	visual_3d_set_clipper_2d(tr_state->visual, clipper, NULL, 1);
+	visual_3d_set_clipper_2d(tr_state->visual, clipper, NULL);
 
 	gf_node_allow_cyclic_traverse(ctx->drawable->node);
 	gf_node_traverse(ctx->drawable->node, tr_state);
@@ -452,7 +479,9 @@ void visual_2d_texture_path_extended(GF_VisualManager *visual, GF_Path *path, GF
 	GF_Matrix2D mx_texture;
 	GF_Rect orig_rc;
 	GF_Raster2D *raster;
-	if (!visual->is_attached) return;
+
+	if (! visual->CheckAttached(visual) ) return;
+
 	raster = visual->compositor->rasterizer;
 
 	if (!txh) txh = ctx->aspect.fill_texture;
@@ -580,7 +609,9 @@ void visual_2d_texture_path(GF_VisualManager *visual, GF_Path *path, struct _dra
 #ifdef SKIP_DRAW
 	return;
 #endif
-	if (!visual->is_attached || (ctx->flags & CTX_PATH_FILLED) || !ctx->aspect.fill_texture || visual->compositor->is_hidden) return;
+	if (! visual->CheckAttached(visual) ) return;
+
+	if ((ctx->flags & CTX_PATH_FILLED) || !ctx->aspect.fill_texture || visual->compositor->is_hidden) return;
 
 	/*this is ambiguous in the spec, what if the material is filled and the texture is transparent ?
 	let's draw, it's nicer */
@@ -604,7 +635,7 @@ void visual_2d_draw_path_extended(GF_VisualManager *visual, GF_Path *path, Drawa
 #ifdef SKIP_DRAW
 	return;
 #endif
-	if (!visual->is_attached) return;
+	if (! visual->CheckAttached(visual) ) return;
 
 	if ((ctx->flags & CTX_PATH_FILLED) && (ctx->flags & CTX_PATH_STROKE) ) {
 		if (visual->compositor->draw_bvol) draw_clipper(visual, ctx);
@@ -697,7 +728,8 @@ void visual_2d_fill_rect(GF_VisualManager *visual, DrawableContext *ctx, GF_Rect
 	return;
 #endif
 
-	if (!visual->is_attached) return;
+	if (! visual->CheckAttached(visual) ) return;
+
 	if (!color && !strike_color) return;
 
 	if ((ctx->flags & CTX_PATH_FILLED) && (ctx->flags & CTX_PATH_STROKE) ) {
@@ -761,7 +793,9 @@ void visual_2d_fill_irect(GF_VisualManager *visual, GF_IRect *rc, u32 fill, u32 
 #endif
 
 	if (!rc) return;
-	if (!visual->is_attached) return;
+
+	if (! visual->CheckAttached(visual) ) return;
+
 	if (!fill && !strike ) return;
 
 	/*no aa*/

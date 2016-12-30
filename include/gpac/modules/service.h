@@ -90,6 +90,8 @@ typedef enum
 	GF_NET_CHAN_GET_ESD,
 	/*retrieves visual PAR as indicated in container if any*/
 	GF_NET_CHAN_GET_PIXEL_AR,
+	/*retrieves visual SRD as indicated in container if any*/
+	GF_NET_CHAN_GET_SRD,
 
 	/*service buffer query (for all channels running in service), app<-module*/
 	GF_NET_BUFFER_QUERY,
@@ -102,6 +104,8 @@ typedef enum
 	GF_NET_SERVICE_INFO,
 	/*checks if there is an audio stream in the service - term->net only*/
 	GF_NET_SERVICE_HAS_AUDIO,
+	/*checks if the service can support reverse playback (speed<0) - term->service only*/
+	GF_NET_SERVICE_CAN_REVERSE_PLAYBACK,
 	/*send by the terminal to indicate the channel(s) on this service need more data - term->net only*/
 	GF_NET_SERVICE_FLUSH_DATA,
 
@@ -141,11 +145,18 @@ typedef enum
 	//sets nalu mode
 	GF_NET_CHAN_NALU_MODE,
 
+	/*indicates visible part of the visual object associated with the channel*/
+	GF_NET_CHAN_VISIBILITY_HINT,
 	/*request current position in TSB - 0 means 'at the live point'*/
 	GF_NET_GET_TIMESHIFT,
 
 	/*seek request from service on all channels*/
 	GF_NET_SERVICE_SEEK,
+
+	/*query codec statistic on all channels*/
+	GF_NET_SERVICE_CODEC_STAT_QUERY,
+	/* Used in DASH: submodules can query the DASH module for the computed UTC delay between client and server */
+	GF_NET_SERVICE_QUERY_UTC_DELAY,
 } GF_NET_CHAN_CMD;
 
 /*channel command for all commands that don't need params:
@@ -214,6 +225,8 @@ typedef struct
 	u32 min, max;
 	/*only used with GF_NET_CHAN_BUFFER_QUERY and GF_NET_BUFFER_QUERY- amount of media in decoding buffer, in ms. This value is adjusted by the current playback speed, eg if playing at 2x the occupancy is (media time in buffers) / 2 */
 	u32 occupancy;
+	/*set to GF_TRUE if a channel is buffering for the required service*/
+	Bool buffering;
 } GF_NetComBuffer;
 
 /*GF_NET_CHAN_DURATION*/
@@ -251,7 +264,7 @@ typedef struct
 	u32 command_type;
 	LPNETCHANNEL on_channel;
 	//time in sec in the timeshift buffer - 0 means live point
-	u32 time;
+	Double time;
 } GF_NetComTimeShift;
 
 
@@ -350,14 +363,35 @@ typedef struct __netstatcom
 	u16 multiplex_port;
 } GF_NetComStats;
 
-/*GF_NET_CHAN_GET_PIXEL_AR*/
+/*GF_NET_CHAN_GET_PIXEL_AR and GF_NET_SERVICE_HAS_FORCED_VIDEO_SIZE*/
 typedef struct
 {
 	u32 command_type;
 	LPNETCHANNEL on_channel;
 	u32 hSpacing, vSpacing;
 	u32 width, height, pixel_format;
+	Bool is_srd;
 } GF_NetComPixelAR;
+
+/*GF_NET_CHAN_GET_SRD*/
+typedef struct
+{
+	u32 command_type;
+	LPNETCHANNEL on_channel;
+	u32 w,h,x,y, width, height;
+	u32 dependent_group_index;
+} GF_NetComSRDInfo;
+
+/*GF_NET_CHAN_VISIBILITY_HINT*/
+typedef struct
+{
+	u32 command_type;
+	LPNETCHANNEL on_channel;
+	//gives min_max coords of the visible rectangle associated with channels.
+	//min_x may be greater than max_x in case of 360 videos
+	u32 min_x, max_x, min_y, max_y;
+} GF_NetComVisibililityHint;
+
 
 /*GF_NET_SERVICE_INFO*/
 typedef struct __netinfocom
@@ -437,6 +471,10 @@ typedef struct
 	const char *next_url_init_or_switch_segment;
 	u64 switch_start_range, switch_end_range;
 
+	/*set to key URL for current segment, or NULL if none*/
+	const char *key_url;
+	/*set to key IV for current segment, or NULL if none*/
+	bin128 *key_IV;
 
 	Bool has_next;
 	/*module->proxy: indicates that currently downloaded segment should be checked.
@@ -460,8 +498,14 @@ typedef struct
 	Bool up;
 
 	Bool set_auto;
+	//0: current group, otherwise index of the depending_on group
+	u32 dependent_group_index;
 	//or ID of the quality to switch, as indicated in query quality
 	const char *ID;
+	//1+tile mode adaptation (doesn't change other selections)
+	u32 set_tile_mode_plus_one;
+	
+	u32 quality_degradation;
 } GF_NetQualitySwitch;
 
 
@@ -473,9 +517,11 @@ typedef struct
 	LPNETCHANNEL on_channel;
 
 	//1-based index of quality to query
-	//if 0, the command is used to query the number of quality for the object
+	//if 0, the command is used to query the number of quality for the object and the number of objects depending on this one in dependent_group_index
 	u32 index;
-
+	//if not 0, the parameters are queried for the depending on grup with the given index
+	u32 dependent_group_index;
+	
 	//all out params
 	u32 bandwidth;
 	const char *ID;
@@ -492,6 +538,7 @@ typedef struct
 	Bool disabled;
 	Bool is_selected;
 	Bool automatic;
+	u32 tile_adaptation_mode;
 } GF_NetQualityQuery;
 
 /*GF_NET_SERVICE_STATUS_PROXY*/
@@ -535,6 +582,7 @@ typedef struct
 	Bool is_announce, is_splicing;
 	Bool reload_external;
 	Bool enable_if_defined;
+	Bool disable_if_defined;
 	Double activation_countdown;
 } GF_AssociatedContentLocation;
 
@@ -552,6 +600,7 @@ typedef struct
 	Bool force_reload;
 	Bool is_paused;
 	Bool is_discontinuity;
+	u64 ntp;
 } GF_AssociatedContentTiming;
 
 /*GF_NET_CHAN_NALU_MODE*/
@@ -562,8 +611,26 @@ typedef struct
 
 	//mode 0: extract in ISOBMF format (nalu size field + nalu)
 	//mode 1: extract in Annex B format (start code + nalu)
+	//mode 2: extract in Annex B format (start code + nalu) and disable sync sample seek mode (only used for scalable hybrid)
 	u32 extract_mode;
 } GF_NALUExtractMode;
+
+/*GF_NET_SERVICE_CODEC_STAT_QUERY*/
+typedef struct
+{
+	/*avg_dec_time is the maximum average decoding time of all channels;
+	  max_dec_time, irap_avg_dec_time and irap_max_dec_time is the maximum decoding time of a frame and a I frame in this channel*/
+	u32 avg_dec_time, max_dec_time, irap_avg_dec_time, irap_max_dec_time;
+	/*flag codec has been reset*/
+	Bool codec_reset;
+	Bool decode_only_rap;
+} GF_CodecStat;
+
+/*GF_NET_SERVICE_QUERY_UTC_DELAY*/
+typedef struct
+{
+	s32 delay;
+} GF_UTCDelay;
 
 typedef union __netcommand
 {
@@ -594,6 +661,10 @@ typedef union __netcommand
 	GF_NALUExtractMode nalu_mode;
 	GF_NetComSendEvent send_event;
 	GF_NetQualityQuery quality_query;
+	GF_CodecStat codec_stat;
+	GF_NetComSRDInfo srd;
+	GF_NetComVisibililityHint visibility_hint;
+	GF_UTCDelay utc_delay;
 } GF_NetworkCommand;
 
 /*

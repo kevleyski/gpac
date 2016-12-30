@@ -30,11 +30,24 @@
 
 
 #ifdef _WIN32_WCE
-#ifdef GPAC_USE_OGL_ES
+#ifdef GPAC_USE_GLES1X
 #endif
+#elif defined(GPAC_USE_GLES2)
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
+
+//#  pragma comment(lib, "libGLESv2")
+#  pragma comment(lib, "libEGL")
+
+
 #else
 #include <GL/gl.h>
+
+#  pragma comment(lib, "opengl32")
+
+
 #endif
+
 
 #define DDCONTEXT	DDContext *dd = (DDContext *)dr->opaque;
 
@@ -92,7 +105,7 @@ PFNWGLSWAPINTERVALFARPROC wglSwapIntervalEXT = NULL;
 static void dd_init_gl_offscreen(GF_VideoOutput *driv)
 {
 	const char *opt;
-	DDContext *dd = driv->opaque;
+	DDContext *dd = (DDContext*)driv->opaque;
 
 	opt = gf_modules_get_option((GF_BaseInterface *)driv, "Video", "GLOffscreenMode");
 
@@ -129,7 +142,11 @@ static void dd_init_gl_offscreen(GF_VideoOutput *driv)
 #ifdef _WIN32_WCE
 			dd->gl_hwnd = CreateWindow(_T("GPAC DirectDraw Output"), _T("GPAC OpenGL Offscreen"), WS_POPUP, 0, 0, 120, 100, NULL, NULL, GetModuleHandle(_T("gm_dx_hw.dll")), NULL);
 #else
+#ifdef UNICODE
+			dd->gl_hwnd = CreateWindow(L"GPAC DirectDraw Output", L"GPAC OpenGL Offscreen", WS_POPUP, 0, 0, 120, 100, NULL, NULL, GetModuleHandle(L"gm_dx_hw.dll"), NULL);
+#else
 			dd->gl_hwnd = CreateWindow("GPAC DirectDraw Output", "GPAC OpenGL Offscreen", WS_POPUP, 0, 0, 120, 100, NULL, NULL, GetModuleHandle("gm_dx_hw.dll"), NULL);
+#endif
 #endif
 			if (!dd->gl_hwnd)
 				return;
@@ -147,7 +164,7 @@ static void dd_init_gl_offscreen(GF_VideoOutput *driv)
 static void RestoreWindow(DDContext *dd)
 {
 	if (!dd->NeedRestore) return;
-	dd->NeedRestore = 0;
+	dd->NeedRestore = GF_FALSE;
 
 #ifndef GPAC_DISABLE_3D
 	if (dd->output_3d_type==1) {
@@ -158,7 +175,7 @@ static void RestoreWindow(DDContext *dd)
 #endif
 
 		dd->pDD->lpVtbl->SetCooperativeLevel(dd->pDD, dd->cur_hwnd, DDSCL_NORMAL);
-	dd->NeedRestore = 0;
+	dd->NeedRestore = GF_FALSE;
 
 //	SetForegroundWindow(dd->cur_hwnd);
 	SetFocus(dd->cur_hwnd);
@@ -173,12 +190,12 @@ void DestroyObjectsEx(DDContext *dd, Bool only_3d)
 		memset(&dd->rgb_pool, 0, sizeof(DDSurface));
 		SAFE_DD_RELEASE(dd->yuv_pool.pSurface);
 		memset(&dd->yuv_pool, 0, sizeof(DDSurface));
-		dd->yuv_pool.is_yuv = 1;
+		dd->yuv_pool.is_yuv = GF_TRUE;
 
 		SAFE_DD_RELEASE(dd->pPrimary);
 		SAFE_DD_RELEASE(dd->pBack);
 		SAFE_DD_RELEASE(dd->pDD);
-		dd->ddraw_init = 0;
+		dd->ddraw_init = GF_FALSE;
 
 #ifdef GPAC_DISABLE_3D
 	}
@@ -189,7 +206,7 @@ void DestroyObjectsEx(DDContext *dd, Bool only_3d)
 	}
 
 	/*delete openGL context*/
-#ifdef GPAC_USE_OGL_ES
+#if defined(GPAC_USE_GLES1X) || defined(GPAC_USE_GLES2)
 	if (dd->eglctx) eglDestroyContext(dd->egldpy, dd->eglctx);
 	dd->eglctx = NULL;
 	if (dd->surface) eglDestroySurface(dd->egldpy, dd->surface);
@@ -234,7 +251,7 @@ void DestroyObjectsEx(DDContext *dd, Bool only_3d)
 
 void DestroyObjects(DDContext *dd)
 {
-	DestroyObjectsEx(dd, 0);
+	DestroyObjectsEx(dd, GF_FALSE);
 }
 
 #ifndef GPAC_DISABLE_3D
@@ -246,7 +263,7 @@ GF_Err DD_SetupOpenGL(GF_VideoOutput *dr, u32 offscreen_width, u32 offscreen_hei
 	Bool hw_reset = GF_FALSE;
 	DDCONTEXT
 
-#ifdef GPAC_USE_OGL_ES
+#if defined(GPAC_USE_GLES1X) || defined(GPAC_USE_GLES2)
 	EGLint major, minor;
 	EGLint n;
 	EGLConfig configs[1];
@@ -272,7 +289,12 @@ GF_Err DD_SetupOpenGL(GF_VideoOutput *dr, u32 offscreen_width, u32 offscreen_hei
 	egl_atts[i++] = nb_bits;
 	egl_atts[i++] = EGL_STENCIL_SIZE;
 	egl_atts[i++] = EGL_DONT_CARE;
+
+	egl_atts[i++] = EGL_RENDERABLE_TYPE;
+	egl_atts[i++] = EGL_OPENGL_ES2_BIT;
+
 	egl_atts[i++] = EGL_NONE;
+
 
 	/*already setup*/
 	DestroyObjects(dd);
@@ -283,7 +305,20 @@ GF_Err DD_SetupOpenGL(GF_VideoOutput *dr, u32 offscreen_width, u32 offscreen_hei
 	dd->eglconfig = configs[0];
 	dd->surface = eglCreateWindowSurface(dd->egldpy, dd->eglconfig, dd->cur_hwnd, 0);
 	if (!dd->surface) return GF_IO_ERR;
+
+#ifdef GPAC_USE_GLES2
+
+	i=0;
+	egl_atts[i++] = EGL_CONTEXT_CLIENT_VERSION;
+	egl_atts[i++] = 2;
+	egl_atts[i++] = EGL_NONE;
+
+	eglBindAPI(EGL_OPENGL_ES_API);
+	dd->eglctx = eglCreateContext(dd->egldpy, dd->eglconfig, NULL, 	egl_atts);
+#else
 	dd->eglctx = eglCreateContext(dd->egldpy, dd->eglconfig, NULL, NULL);
+#endif
+
 	if (!dd->eglctx) {
 		eglDestroySurface(dd->egldpy, dd->surface);
 		dd->surface = 0L;
@@ -314,7 +349,7 @@ GF_Err DD_SetupOpenGL(GF_VideoOutput *dr, u32 offscreen_width, u32 offscreen_hei
 	dd->bound_hwnd = target_hwnd;
 
 	/*cleanup*/
-	DestroyObjectsEx(dd, (dd->output_3d_type==1) ? 0 : 1);
+	DestroyObjectsEx(dd, (dd->output_3d_type==1) ? GF_FALSE : GF_TRUE);
 
 	//first time we init GL: create a dummy window to select pixel format for high bpp - we must do this because
 	//- we must get a valid GL context to query the extensions for bpp > 8 (regular choosePixelFormat does not work for them)
@@ -329,7 +364,11 @@ GF_Err DD_SetupOpenGL(GF_VideoOutput *dr, u32 offscreen_width, u32 offscreen_hei
 			dd->bpp = atoi(sOpt);
 		}
 		if (dd->bpp > 8) {
+#ifdef UNICODE
+			highbpp_hwnd = CreateWindow(L"GPAC DirectDraw Output", L"dummy", WS_POPUP, 0, 0, 128, 128, NULL, NULL, NULL /* GetModuleHandle("gm_dx_hw.dll")*/, NULL);
+#else
 			highbpp_hwnd = CreateWindow("GPAC DirectDraw Output", "dummy", WS_POPUP, 0, 0, 128, 128, NULL, NULL, NULL /* GetModuleHandle("gm_dx_hw.dll")*/, NULL);
+#endif
 			dd->gl_HDC = GetDC(highbpp_hwnd);
 
 			memset(&pfd, 0, sizeof(pfd));
@@ -365,12 +404,12 @@ GF_Err DD_SetupOpenGL(GF_VideoOutput *dr, u32 offscreen_width, u32 offscreen_hei
 	dd->gl_HDC = GetDC(dd->bound_hwnd);
 	if (!dd->gl_HDC) return GF_IO_ERR;
 
-	use_double_buffer = 0;
+	use_double_buffer = GF_FALSE;
 	if (dd->gl_double_buffer ) {
 		use_double_buffer = dd->gl_double_buffer;
 	} else {
 		sOpt = gf_modules_get_option((GF_BaseInterface *)dr, "Video", "UseGLDoubleBuffering");
-		if (!sOpt || !strcmp(sOpt, "yes")) use_double_buffer = 1;
+		if (!sOpt || !strcmp(sOpt, "yes")) use_double_buffer = GF_TRUE;
 	}
 
 	sOpt = gf_modules_get_option((GF_BaseInterface *)dr, "Video", "GLNbBitsDepth");
@@ -457,7 +496,7 @@ GF_Err DD_SetupOpenGL(GF_VideoOutput *dr, u32 offscreen_width, u32 offscreen_hei
 	if (!dd->gl_HRC) return GF_IO_ERR;
 
 	if (!dd->glext_init) {
-		dd->glext_init=1;
+		dd->glext_init = GF_TRUE;
 		wglMakeCurrent(dd->gl_HDC, dd->gl_HRC);
 		dd_init_gl_offscreen(dr);
 	}
@@ -510,12 +549,15 @@ GF_Err DD_SetupOpenGL(GF_VideoOutput *dr, u32 offscreen_width, u32 offscreen_hei
 	for our plugin window - avoid this by overriding the WindowProc once OpenGL is setup!!*/
 	if ((dd->bound_hwnd==dd->os_hwnd) && dd->orig_wnd_proc)
 #ifdef _WIN64
-		SetWindowLongPtr(dd->os_hwnd, GWLP_WNDPROC, (DWORD) DD_WindowProc);
+		SetWindowLongPtr(dd->os_hwnd, GWLP_WNDPROC, (LPARAM) DD_WindowProc);
 #else
 		SetWindowLong(dd->os_hwnd, GWL_WNDPROC, (DWORD) DD_WindowProc);
 #endif
 
+#if !defined(GPAC_USE_GLES1X) && !defined(GPAC_USE_GLES2)
 exit:
+#endif
+
 	if (dd->output_3d_type==1) {
 		memset(&evt, 0, sizeof(GF_Event));
 		evt.type = GF_EVENT_VIDEO_SETUP;
@@ -573,6 +615,26 @@ static void DD_Shutdown(GF_VideoOutput *dr)
 	DD_ShutdownWindow(dr);
 }
 
+void DD_ShowTaskbar(Bool show)
+{
+#ifdef UNICODE
+	HWND tbwnd = FindWindow(L"Shell_TrayWnd", NULL);
+	HWND swnd = FindWindow(L"Button", NULL);
+#else
+	HWND tbwnd = FindWindow("Shell_TrayWnd", NULL);
+	HWND swnd = FindWindow("Button", NULL);
+#endif
+
+	if (tbwnd != NULL) {
+		ShowWindow(tbwnd, show ? SW_SHOW : SW_HIDE);
+		UpdateWindow(tbwnd);
+	}
+	if (swnd != NULL) {
+		// Vista
+		ShowWindow(swnd, show ? SW_SHOW : SW_HIDE);
+		UpdateWindow(swnd);
+	}
+}
 static GF_Err DD_SetFullScreen(GF_VideoOutput *dr, Bool bOn, u32 *outWidth, u32 *outHeight)
 {
 	GF_Err e;
@@ -589,10 +651,10 @@ static GF_Err DD_SetFullScreen(GF_VideoOutput *dr, Bool bOn, u32 *outWidth, u32 
 
 	/*whenever changing card display mode relocate fastest YUV format for blit (since it depends
 	on the dest pixel format)*/
-	dd->yuv_init = 0;
+	dd->yuv_init = GF_FALSE;
 	if (dd->fullscreen) {
 		const char *sOpt = gf_modules_get_option((GF_BaseInterface *)dr, "Video", "SwitchResolution");
-		if (sOpt && !stricmp(sOpt, "yes")) dd->switch_res = 1;
+		if (sOpt && !stricmp(sOpt, "yes")) dd->switch_res = GF_TRUE;
 		/*get current or best fitting mode*/
 		if (GetDisplayMode(dd) != GF_OK) return GF_IO_ERR;
 	}
@@ -617,60 +679,71 @@ static GF_Err DD_SetFullScreen(GF_VideoOutput *dr, Bool bOn, u32 *outWidth, u32 
 		ShowWindow(dd->cur_hwnd, SW_SHOW);
 	}
 
-#ifndef GPAC_DISABLE_3D
-	if (dd->output_3d_type==1) {
-		e = GF_OK;
-		dd->on_secondary_screen = 0;
-		/*Setup FS*/
-		if (dd->fullscreen) {
-			int X = 0;
-			int Y = 0;
+
+	dd->on_secondary_screen = GF_FALSE;
+	/*Setup FS*/
+	if (dd->fullscreen) {
+		int X = 0;
+		int Y = 0;
 #if(WINVER >= 0x0500)
-			HMONITOR hMonitor;
-			MONITORINFOEX minfo;
-			/*get monitor our windows is on*/
-			hMonitor = MonitorFromWindow(dd->os_hwnd, MONITOR_DEFAULTTONEAREST);
-			if (hMonitor) {
-				memset(&minfo, 0, sizeof(MONITORINFOEX));
-				minfo.cbSize = sizeof(MONITORINFOEX);
-				/*get monitor top-left for fullscreen switch, and adjust width and height*/
-				GetMonitorInfo(hMonitor, (LPMONITORINFO) &minfo);
-				dd->fs_width = minfo.rcWork.right - minfo.rcWork.left;
-				dd->fs_height = minfo.rcWork.bottom - minfo.rcWork.top;
-				X = minfo.rcWork.left;
-				Y = minfo.rcWork.top;
-				if (!(minfo.dwFlags & MONITORINFOF_PRIMARY)) dd->on_secondary_screen = 1;
+		HMONITOR hMonitor;
+		MONITORINFOEX minfo;
+
+		DD_ShowTaskbar(GF_FALSE);
+
+		/*get monitor our windows is on*/
+		hMonitor = MonitorFromWindow(dd->os_hwnd, MONITOR_DEFAULTTONEAREST);
+		if (hMonitor) {
+			memset(&minfo, 0, sizeof(MONITORINFOEX));
+			minfo.cbSize = sizeof(MONITORINFOEX);
+			/*get monitor top-left for fullscreen switch, and adjust width and height*/
+			GetMonitorInfo(hMonitor, (LPMONITORINFO) &minfo);
+			dd->fs_width = minfo.rcWork.right - minfo.rcWork.left;
+			dd->fs_height = minfo.rcWork.bottom - minfo.rcWork.top;
+			X = minfo.rcWork.left;
+			Y = minfo.rcWork.top;
+
+			if (dd->fs_height+100 > dr->max_screen_height) {
+				dd->fs_height = dr->max_screen_height;
+				Y = 0;
 			}
+			if (!(minfo.dwFlags & MONITORINFOF_PRIMARY)) dd->on_secondary_screen = GF_TRUE;
+		}
 #endif
 
-			/*change display mode*/
-			if ((MaxWidth && (dd->fs_width >= MaxWidth)) || (MaxHeight && (dd->fs_height >= MaxHeight)) ) {
-				dd->fs_width = MaxWidth;
-				dd->fs_height = MaxHeight;
-			}
-			SetWindowPos(dd->cur_hwnd, NULL, X, Y, dd->fs_width, dd->fs_height, SWP_SHOWWINDOW | SWP_NOZORDER /*| SWP_ASYNCWINDOWPOS*/);
-
-			dd->fs_store_width = dd->fs_width;
-			dd->fs_store_height = dd->fs_height;
-		} else if (dd->os_hwnd==dd->fs_hwnd) {
-			SetWindowPos(dd->os_hwnd, NULL, 0, 0, dd->store_width+dd->off_w, dd->store_height+dd->off_h, SWP_NOMOVE | SWP_NOZORDER /*| SWP_ASYNCWINDOWPOS*/);
+		/*change display mode*/
+		if ((MaxWidth && (dd->fs_width >= MaxWidth)) || (MaxHeight && (dd->fs_height >= MaxHeight)) ) {
+			dd->fs_width = MaxWidth;
+			dd->fs_height = MaxHeight;
 		}
+		SetWindowPos(dd->cur_hwnd, NULL, X, Y, dd->fs_width, dd->fs_height, SWP_SHOWWINDOW | SWP_NOZORDER /*| SWP_ASYNCWINDOWPOS*/);
+	} else if (dd->os_hwnd==dd->fs_hwnd) {
+		SetWindowPos(dd->os_hwnd, NULL, 0, 0, dd->store_width+dd->off_w, dd->store_height+dd->off_h, SWP_SHOWWINDOW | SWP_NOZORDER /*| SWP_ASYNCWINDOWPOS*/);
+	}
+	if (!dd->fullscreen || dd->on_secondary_screen) {
+		DD_ShowTaskbar(GF_TRUE);
+	}
 
-		if (!e) e = DD_SetupOpenGL(dr, 0, 0);
 
+#ifndef GPAC_DISABLE_3D
+	if (dd->output_3d_type==1) {
+		e = DD_SetupOpenGL(dr, 0, 0);
 	} else
 #endif
 	{
-
 		if (!dd->fullscreen && (dd->os_hwnd==dd->fs_hwnd)) {
-			SetWindowPos(dd->os_hwnd, NULL, 0, 0, dd->store_width+dd->off_w, dd->store_height+dd->off_h, SWP_NOZORDER | SWP_NOMOVE | SWP_ASYNCWINDOWPOS);
+//			SetWindowPos(dd->os_hwnd, NULL, 0, 0, dd->store_width+dd->off_w, dd->store_height+dd->off_h, SWP_NOZORDER | SWP_NOMOVE | SWP_ASYNCWINDOWPOS);
 		}
 		/*first time FS, store*/
 		if (!dd->store_width) {
 			dd->store_width = dd->width;
 			dd->store_height = dd->height;
 		}
-		e = InitDirectDraw(dr, dd->store_width, dd->store_height);
+		if (dd->fullscreen) {
+			e = InitDirectDraw(dr, dd->fs_width, dd->fs_height);
+		} else {
+			e = InitDirectDraw(dr, dd->store_width, dd->store_height);
+		}
 	}
 
 	if (bOn) {
@@ -696,12 +769,12 @@ GF_Err DD_Flush(GF_VideoOutput *dr, GF_Window *dest)
 
 	if (!dd) return GF_BAD_PARAM;
 
-	GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[DX] FLushing video output\n"));
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_MMIO, ("[DX] Flushing video output\n"));
 
 #ifndef GPAC_DISABLE_3D
 
 	if (dd->output_3d_type==1) {
-#ifdef GPAC_USE_OGL_ES
+#if defined(GPAC_USE_GLES1X) ||  defined(GPAC_USE_GLES2)
 		if (dd->surface) eglSwapBuffers(dd->egldpy, dd->surface);
 #else
 		SwapBuffers(dd->gl_HDC);
@@ -716,13 +789,13 @@ GF_Err DD_Flush(GF_VideoOutput *dr, GF_Window *dest)
 	if (!dd->fullscreen && dd->windowless) {
 		HDC hdc;
 		/*lock backbuffer HDC*/
-		dr->LockOSContext(dr, 1);
+		dr->LockOSContext(dr, GF_TRUE);
 		/*get window hdc and copy from backbuffer to window*/
 		hdc = GetDC(dd->os_hwnd);
-		BitBlt(hdc, 0, 0, dd->width, dd->height, dd->lock_hdc, 0, 0, SRCCOPY );
+		BitBlt(hdc, 0, 0, dd->width, dd->height, dd->lock_hdc, 0, 0, SRCCOPY);
 		ReleaseDC(dd->os_hwnd, hdc);
 		/*unlock backbuffer HDC*/
-		dr->LockOSContext(dr, 0);
+		dr->LockOSContext(dr, GF_FALSE);
 		return GF_OK;
 	}
 
@@ -774,12 +847,12 @@ GF_Err GetDisplayMode(DDContext *dd)
 {
 	if (dd->switch_res && dd->DirectDrawCreate) {
 		HRESULT hr;
-		Bool temp_dd = 0;;
+		Bool temp_dd = GF_FALSE;
 		if (!dd->pDD) {
 			LPDIRECTDRAW ddraw;
 			dd->DirectDrawCreate(NULL, &ddraw, NULL);
 			ddraw->lpVtbl->QueryInterface(ddraw, &IID_IDirectDraw7, (LPVOID *)&dd->pDD);
-			temp_dd = 1;
+			temp_dd = GF_TRUE;
 		}
 		//we start with a hugde res and downscale
 		dd->fs_width = dd->fs_height = 50000;
@@ -804,7 +877,7 @@ static void *NewDXVideoOutput()
 	memset(driv, 0, sizeof(GF_VideoOutput));
 	GF_REGISTER_MODULE_INTERFACE(driv, GF_VIDEO_OUTPUT_INTERFACE, "DirectX Video Output", "gpac distribution");
 
-	pCtx = gf_malloc(sizeof(DDContext));
+	pCtx = (DDContext*)gf_malloc(sizeof(DDContext));
 	memset(pCtx, 0, sizeof(DDContext));
 	driv->opaque = pCtx;
 	driv->Flush = DD_Flush;
@@ -813,7 +886,11 @@ static void *NewDXVideoOutput()
 	driv->SetFullScreen = DD_SetFullScreen;
 	driv->ProcessEvent = DD_ProcessEvent;
 
+#ifdef UNICODE
+	pCtx->hDDrawLib = LoadLibrary(L"ddraw.dll");
+#else
 	pCtx->hDDrawLib = LoadLibrary("ddraw.dll");
+#endif
 	if (pCtx->hDDrawLib) {
 		pCtx->DirectDrawCreate = (DIRECTDRAWCREATEPROC) GetProcAddress(pCtx->hDDrawLib, "DirectDrawCreate");
 	}
@@ -833,9 +910,15 @@ static void DeleteVideoOutput(void *ifce)
 	GF_VideoOutput *driv = (GF_VideoOutput *) ifce;
 	DDContext *dd = (DDContext *)driv->opaque;
 
+	if (dd->fullscreen) {
+		DD_ShowTaskbar(GF_TRUE);
+	}
+
 	if (dd->hDDrawLib) {
 		FreeLibrary(dd->hDDrawLib);
 	}
+
+	if (dd->caption) gf_free(dd->caption);
 
 	gf_free(dd);
 	gf_free(driv);
@@ -856,8 +939,8 @@ const u32 *QueryInterfaces()
 GPAC_MODULE_EXPORT
 GF_BaseInterface *LoadInterface(u32 InterfaceType)
 {
-	if (InterfaceType == GF_VIDEO_OUTPUT_INTERFACE) return NewDXVideoOutput();
-	if (InterfaceType == GF_AUDIO_OUTPUT_INTERFACE) return NewAudioOutput();
+	if (InterfaceType == GF_VIDEO_OUTPUT_INTERFACE) return (GF_BaseInterface*)NewDXVideoOutput();
+	if (InterfaceType == GF_AUDIO_OUTPUT_INTERFACE) return (GF_BaseInterface*)NewAudioOutput();
 	return NULL;
 }
 /*interface destroy*/
@@ -869,7 +952,7 @@ void ShutdownInterface(GF_BaseInterface *ifce)
 		DeleteVideoOutput((GF_VideoOutput *)ifce);
 		break;
 	case GF_AUDIO_OUTPUT_INTERFACE:
-		DeleteAudioOutput(ifce);
+		DeleteDxAudioOutput(ifce);
 		break;
 	}
 }

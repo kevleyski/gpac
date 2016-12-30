@@ -21,7 +21,7 @@ SRCS := $(OBJS:.o=.c)
 
 EXTRALIBS+=-lcv -lcvaux -lhighgui -lcxcore
 
-LIB=gm_opencv.$(DYN_LIB_SUFFIX)
+LIB=gm_opencv$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
 #LDFLAGS+=-export-symbols opencv.def 
 endif
@@ -31,7 +31,7 @@ all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L../../bin/gcc -lgpac
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L../../bin/gcc -lgpac $(LDFLAGS)
 
 
 clean: 

@@ -20,12 +20,12 @@ OBJS= jack.o
 SRCS := $(OBJS:.o=.c) 
 
 
-LIB=gm_jack.$(DYN_LIB_SUFFIX)
+LIB=gm_jack$(DYN_LIB_SUFFIX)
 
 all: $(LIB)
 
 $(LIB): $(OBJS)
-	$(CC) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L../../bin/gcc -lgpac -L/usr/lib  -ljack
+	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L../../bin/gcc -lgpac -L/usr/lib  -ljack
 
 clean: 
 	rm -f $(OBJS) ../../bin/gcc/$(LIB)

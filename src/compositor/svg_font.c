@@ -224,6 +224,10 @@ void compositor_init_svg_font(GF_Compositor *compositor, GF_Node *node)
 
 	/*register font to font manager*/
 	GF_SAFEALLOC(font, GF_Font);
+	if (!font) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate svg font\n"));
+		return;
+	}
 	e = gf_font_manager_register_font(compositor->font_manager, font);
 	if (e) {
 		gf_free(font);
@@ -365,12 +369,14 @@ void compositor_init_svg_glyph(GF_Compositor *compositor, GF_Node *node)
 
 	if (gf_node_get_tag(node)==TAG_SVG_missing_glyph) {
 		GF_SAFEALLOC(st, SVG_GlyphStack);
+		if (!st) return;
 		goto reg_common;
 	}
 	/*we must have unicode specified*/
 	if (!atts.unicode) return;
 
 	GF_SAFEALLOC(st, SVG_GlyphStack);
+	if (!st) return;
 	utf8 = (u8 *) *atts.unicode;
 	len = gf_utf8_mbstowcs(utf_name, 200, (const char **) &utf8);
 	/*this is a single glyph*/
@@ -385,7 +391,7 @@ void compositor_init_svg_glyph(GF_Compositor *compositor, GF_Node *node)
 	}
 
 reg_common:
-	st->glyph.ID = (u32) (PTR_TO_U_CAST st);
+	st->glyph.ID = (u32)(PTR_TO_U_CAST st);
 	st->font = font;
 	st->glyph.horiz_advance = font->max_advance_h;
 	if (atts.horiz_adv_x) st->glyph.horiz_advance = FIX2INT( gf_ceil(atts.horiz_adv_x->value) );
@@ -518,12 +524,22 @@ void compositor_init_svg_font_face_uri(GF_Compositor *compositor, GF_Node *node)
 
 	/*register font to font manager*/
 	GF_SAFEALLOC(font, GF_Font);
+	if (!font) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate font for svg font face URI\n"));
+		return;
+	}
+	
 	e = gf_font_manager_register_font(compositor->font_manager, font);
 	if (e) {
 		gf_free(font);
 		return;
 	}
 	GF_SAFEALLOC(stack, FontURIStack);
+	if (!stack) {
+		gf_free(font);
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate svg font face URI stack\n"));
+		return;
+	}
 	stack->font = font;
 	stack->compositor = compositor;
 

@@ -143,7 +143,7 @@ GF_Err gf_sm_load_init_qt(GF_SceneLoader *load)
 	gf_node_register((GF_Node *)ni, (GF_Node *)gr);
 	gf_sg_vrml_mf_reset(&ni->type, GF_SG_VRML_MFSTRING);
 	gf_sg_vrml_mf_alloc(&ni->type, GF_SG_VRML_MFSTRING, 1);
-	ni->type.vals[0] = gf_strdup("QTVR");
+	ni->type.vals[0] = gf_strdup("VR");
 
 	/*create ODs*/
 	st = gf_sm_stream_new(load->ctx, 2, GF_STREAM_OD, 1);
@@ -171,9 +171,9 @@ GF_Err gf_sm_load_init_qt(GF_SceneLoader *load)
 		gf_list_add(odU->objectDescriptors, od);
 
 		samp = gf_isom_get_sample(src, tk, i+1, &di);
-		img = gf_f64_open(mi->file_name, "wb");
+		img = gf_fopen(mi->file_name, "wb");
 		gf_fwrite(samp->data, samp->dataLength, 1, img);
-		fclose(img);
+		gf_fclose(img);
 		gf_isom_sample_del(&samp);
 	}
 	gf_isom_delete(src);

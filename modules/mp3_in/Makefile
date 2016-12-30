@@ -34,7 +34,7 @@ endif
 
 SRCS := $(OBJS:.o=.c) 
 
-LIB=gm_mp3_in.$(DYN_LIB_SUFFIX)
+LIB=gm_mp3_in$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
 #LDFLAGS+=-export-symbols mp3_in.def 
 endif
@@ -44,9 +44,9 @@ all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) -L../../bin/gcc -lgpac $(EXTRALIBS)
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) -L../../bin/gcc -lgpac $(EXTRALIBS) $(LDFLAGS)
 ifeq ($(STATICBUILD),yes)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/gm_mp3_in-static.$(DYN_LIB_SUFFIX) $(OBJS) -L../../bin/gcc -lgpac_static $(EXTRALIBS) 
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/gm_mp3_in-static$(DYN_LIB_SUFFIX) $(OBJS) -L../../bin/gcc -lgpac_static $(EXTRALIBS)  $(LDFLAGS)
 endif
 
 

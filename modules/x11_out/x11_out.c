@@ -956,7 +956,9 @@ static GF_Err X11_SetupGLPixmap(GF_VideoOutput *vout, u32 width, u32 height)
 	XWindow *xWin = (XWindow *)vout->opaque;
 
 	if (xWin->glx_context) {
-		glXMakeCurrent(xWin->display, None, NULL);
+		if (xWin->gl_offscreen) glXMakeCurrent(xWin->display, xWin->gl_offscreen, NULL);
+		else glXMakeCurrent(xWin->display, None, NULL);
+
 		glXDestroyContext(xWin->display, xWin->glx_context);
 		xWin->glx_context = NULL;
 	}
@@ -1022,6 +1024,11 @@ static void X11_ReleaseGL(XWindow *xWin)
 static void X11_ReleaseBackBuffer (GF_VideoOutput * vout)
 {
 	X11VID ();
+	if (xWindow->x_data) {
+		gf_free(xWindow->x_data);
+		xWindow->x_data = NULL;
+		if (xWindow->surface) xWindow->surface->data = NULL;
+	}
 #ifdef GPAC_HAS_X11_SHM
 	if (xWindow->shmseginfo) XShmDetach (xWindow->display, xWindow->shmseginfo);
 	if (xWindow->pixmap) {
@@ -1041,8 +1048,6 @@ static void X11_ReleaseBackBuffer (GF_VideoOutput * vout)
 	}
 #endif
 	if (xWindow->surface) {
-		if (xWindow->surface->data)
-			gf_free(xWindow->surface->data);
 		XFree(xWindow->surface);
 		xWindow->surface = NULL;
 	}
@@ -1109,15 +1114,14 @@ GF_Err X11_InitBackBuffer (GF_VideoOutput * vout, u32 VideoWidth, u32 VideoHeigh
 	} else
 #endif
 	{
-		char *data = (char *) gf_malloc(sizeof(char)*size);
+		xWindow->x_data = (char *) gf_malloc(sizeof(char)*size);
 		xWindow->surface = XCreateImage (xWindow->display, xWindow->visual,
 		                                 xWindow->depth, ZPixmap,
 		                                 0,
-		                                 data,
+		                                 xWindow->x_data,
 		                                 VideoWidth, VideoHeight,
 		                                 xWindow->bpp*8, xWindow->bpp*VideoWidth);
 		if (!xWindow->surface) {
-			gf_free(data);
 			return GF_IO_ERR;
 		}
 
@@ -1145,15 +1149,16 @@ GF_Err X11_ProcessEvent (struct _video_out * vout, GF_Event * evt)
 {
 	X11VID ();
 
-	if (!xWindow->setup_done) X11_SetupWindow(vout);
+	X11_SetupWindow(vout);
 
 	if (evt) {
-
 		switch (evt->type) {
 		case GF_EVENT_SET_CURSOR:
 			break;
 		case GF_EVENT_SET_CAPTION:
-			if (!xWindow->par_wnd) XStoreName (xWindow->display, xWindow->wnd, evt->caption.caption);
+			if (!xWindow->par_wnd && xWindow->wnd && evt->caption.caption) {
+				XStoreName(xWindow->display, xWindow->wnd, "");
+			}
 			break;
 		case GF_EVENT_SHOWHIDE:
 			break;
@@ -1342,6 +1347,11 @@ X11_SetupWindow (GF_VideoOutput * vout)
 	const char *sOpt;
 	Bool autorepeat, supported;
 
+	if (xWindow->setup_done) return;
+	xWindow->setup_done = 1;
+
+	XInitThreads();
+
 	xWindow->display = XOpenDisplay (NULL);
 	xWindow->screennum = DefaultScreen (xWindow->display);
 	xWindow->screenptr = DefaultScreenOfDisplay (xWindow->display);
@@ -1401,7 +1411,6 @@ X11_SetupWindow (GF_VideoOutput * vout)
 		                              xWindow->w_width, xWindow->w_height, 0,
 		                              xWindow->depth, InputOutput,
 		                              xWindow->visual, 0, NULL);
-		XMapWindow (xWindow->display, (Window) xWindow->wnd);
 	} else {
 		XWindowAttributes pwa;
 		XGetWindowAttributes(xWindow->display, xWindow->par_wnd, &pwa);
@@ -1411,6 +1420,9 @@ X11_SetupWindow (GF_VideoOutput * vout)
 		                              xWindow->w_width, xWindow->w_height, 0,
 		                              xWindow->depth, InputOutput,
 		                              xWindow->visual, 0, NULL);
+	}
+
+	if (!(xWindow->init_flags & GF_TERM_INIT_HIDE)) {
 		XMapWindow (xWindow->display, (Window) xWindow->wnd);
 	}
 
@@ -1433,8 +1445,9 @@ X11_SetupWindow (GF_VideoOutput * vout)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MMIO, ("[X11] Cannot select input focus\n"));
 	}
 	XSync(xWindow->display, False);
-	XMapWindow (xWindow->display, (Window) xWindow->wnd);
-
+	if (!(xWindow->init_flags & GF_TERM_INIT_HIDE)) {
+		XMapWindow (xWindow->display, (Window) xWindow->wnd);
+	}
 	XSizeHints *Hints = XAllocSizeHints ();
 	Hints->flags = PSize | PMinSize;
 	Hints->min_width = 64;
@@ -1686,7 +1699,6 @@ retry_8bpp:
 	/*turn off xscreensaver*/
 	X11_XScreenSaverState(xWindow, 0);
 
-	xWindow->setup_done = 1;
 	XFree (Hints);
 }
 
@@ -1708,15 +1720,10 @@ GF_Err X11_Setup(struct _video_out *vout, void *os_handle, void *os_display, u32
 void X11_Shutdown (struct _video_out *vout)
 {
 	X11VID ();
+	X11_ReleaseBackBuffer (vout);
 
-	if (xWindow->output_3d_mode==1) {
 #ifdef GPAC_HAS_OPENGL
-		X11_ReleaseGL(xWindow);
-#endif
-	} else {
-		X11_ReleaseBackBuffer (vout);
-	}
-#ifdef GPAC_HAS_OPENGL
+	X11_ReleaseGL(xWindow);
 	if (xWindow->glx_visualinfo)
 		XFree(xWindow->glx_visualinfo);
 	xWindow->glx_visualinfo = NULL;
@@ -1737,6 +1744,7 @@ void X11_Shutdown (struct _video_out *vout)
 
 	XCloseDisplay (xWindow->display);
 	gf_free(xWindow);
+	vout->opaque = NULL;
 }
 
 
@@ -1774,6 +1782,7 @@ void *NewX11VideoOutput ()
 void
 DeleteX11VideoOutput (GF_VideoOutput * vout)
 {
+	if (vout->opaque) gf_free(vout->opaque);
 	gf_free(vout);
 }
 
@@ -1789,7 +1798,7 @@ const u32 *QueryInterfaces()
 	};
 	return si;
 }
-
+	
 
 /*
  * interface create

@@ -1,7 +1,7 @@
 include ../config.mak
 
 #all OS and lib independent
-PLUGDIRS=aac_in ac3_in audio_filter bifs_dec dummy_in soft_raster mp3_in isom_in odf_dec rtp_in timedtext img_in saf_in ismacryp raw_out validator
+PLUGDIRS=aac_in ac3_in amr_dec audio_filter bifs_dec dummy_in soft_raster mp3_in isom_in odf_dec rtp_in timedtext img_in saf_in ismacryp raw_out validator
 
 ifeq ($(DISABLE_DASH_CLIENT), no)
 PLUGDIRS+=mpd_in
@@ -27,8 +27,10 @@ endif
 
 ifneq ($(CONFIG_ZLIB), no)
 PLUGDIRS+=widgetman
+ifeq ($(DISABLE_VRML),no)
 ifeq ($(DISABLE_LOADER_BT),no)
 PLUGDIRS+=osd
+endif
 endif
 endif
 endif
@@ -98,38 +100,37 @@ PLUGDIRS+=dx_hw
 endif
 endif
 
+#OSX plugins
+ifeq ($(CONFIG_DARWIN),yes)
+PLUGDIRS+=vtb_decode
+endif
 
 ifneq ($(CONFIG_FFMPEG), no)
-ifneq ($(CONFIG_LIBAV), new) #we don't support libav newest APIs
 ifeq ($(CONFIG_OPENHEVC),no)
+PLUGDIRS+=ffmpeg_in
+else
+ifneq ($(STATIC_MODULES), yes)
 PLUGDIRS+=ffmpeg_in
 endif
 endif
 endif
 
-ifeq ($(CONFIG_OPENHEVC), yes)
-ifeq ($(CONFIG_FFMPEG), no)
-PLUGDIRS+=openhevc_dec
-endif
-endif
+#openHEVC is disabled in static build
 
 #if static modules are used, disable all previous modules (built-in in libgpac)
 ifeq ($(STATIC_MODULES), yes)
 PLUGDIRS=
+
+else 
+
+ifeq ($(CONFIG_OPENHEVC),yes)
+PLUGDIRS+=openhevc_dec
 endif
 
-ifneq ($(CONFIG_FFMPEG), no)
-ifeq ($(CONFIG_OPENHEVC),yes)
-PLUGDIRS+=ffmpeg_in openhevc_dec
-endif
 endif
 
 
 #all modules below are not (yet) included in static build
-
-ifeq ($(CONFIG_AMR_NB), yes)
-PLUGDIRS+=amr_dec
-endif
 
 ifeq ($(CONFIG_AMR_NB_FT), yes)
 PLUGDIRS+=amr_float_dec

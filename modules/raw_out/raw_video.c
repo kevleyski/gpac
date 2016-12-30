@@ -52,7 +52,7 @@ static GF_Err raw_resize(GF_VideoOutput *dr, u32 w, u32 h)
 	if (rc->pixels) gf_free(rc->pixels);
 	rc->width = w;
 	rc->height = h;
-	rc->pixels = gf_malloc(sizeof(char) * rc->bpp * w * h);
+	rc->pixels = (char*)gf_malloc(sizeof(char) * rc->bpp * w * h);
 	if (!rc->pixels) return GF_OUT_OF_MEM;
 	return GF_OK;
 }
@@ -69,7 +69,7 @@ GF_Err RAW_Setup(GF_VideoOutput *dr, void *os_handle, void *os_display, u32 init
 
 	opt = gf_modules_get_option((GF_BaseInterface *)dr, "RAWVideo", "RawOutput");
 	if (opt && !strcmp(opt, "null")) {
-		rc->passthrough = 1;
+		rc->passthrough = GF_TRUE;
 		dr->Blit = RAW_BlitPassthrough;
 		dr->hw_caps |= GF_VIDEO_HW_HAS_RGB | GF_VIDEO_HW_HAS_RGBA | GF_VIDEO_HW_HAS_STRETCH | GF_VIDEO_HW_HAS_YUV | GF_VIDEO_HW_OPENGL | GF_VIDEO_HW_HAS_YUV_OVERLAY;
 	}
@@ -80,6 +80,34 @@ GF_Err RAW_Setup(GF_VideoOutput *dr, void *os_handle, void *os_display, u32 init
 	} else {
 		rc->bpp = 3;
 		rc->pixel_format = GF_PIXEL_RGB_24;
+		opt = gf_modules_get_option((GF_BaseInterface *)dr, "RAWVideo", "PixelFormat");
+		if (opt) {
+			if (!strcmp(opt, "555")) {
+				rc->bpp = 2;
+				rc->pixel_format = GF_PIXEL_RGB_555;
+			} else if (!strcmp(opt, "565")) {
+				rc->bpp = 2;
+				rc->pixel_format = GF_PIXEL_RGB_565;
+			} else if (!strcmp(opt, "bgr")) {
+				rc->bpp = 3;
+				rc->pixel_format = GF_PIXEL_BGR_24;
+			} else if (!strcmp(opt, "rgb")) {
+				rc->bpp = 3;
+				rc->pixel_format = GF_PIXEL_RGB_24;
+			} else if (!strcmp(opt, "bgr32")) {
+				rc->bpp = 4;
+				rc->pixel_format = GF_PIXEL_BGR_32;
+			} else if (!strcmp(opt, "rgb32")) {
+				rc->bpp = 4;
+				rc->pixel_format = GF_PIXEL_RGB_32;
+			} else if (!strcmp(opt, "rgba")) {
+				rc->bpp = 4;
+				rc->pixel_format = GF_PIXEL_RGBA;
+			} else if (!strcmp(opt, "argb")) {
+				rc->bpp = 4;
+				rc->pixel_format = GF_PIXEL_ARGB;
+			}
+		}
 	}
 	raw_resize(dr, 100, 100);
 	return GF_OK;
@@ -140,7 +168,7 @@ GF_VideoOutput *NewRawVideoOutput()
 	memset(driv, 0, sizeof(GF_VideoOutput));
 	GF_REGISTER_MODULE_INTERFACE(driv, GF_VIDEO_OUTPUT_INTERFACE, "Raw Video Output", "gpac distribution")
 
-	pCtx = gf_malloc(sizeof(RawContext));
+	pCtx = (RawContext*)gf_malloc(sizeof(RawContext));
 	memset(pCtx, 0, sizeof(RawContext));
 
 	driv->opaque = pCtx;
@@ -150,7 +178,7 @@ GF_VideoOutput *NewRawVideoOutput()
 	driv->Setup = RAW_Setup;
 	driv->Shutdown = RAW_Shutdown;
 	driv->ProcessEvent = RAW_ProcessEvent;
-	return (void *)driv;
+	return driv;
 }
 
 void DeleteRawVideoOutput(void *ifce)
@@ -219,15 +247,15 @@ void *NewRawAudioOutput()
 {
 	RawContext *ctx;
 	GF_AudioOutput *driv;
-	ctx = gf_malloc(sizeof(RawContext));
+	ctx = (RawContext*)gf_malloc(sizeof(RawContext));
 	memset(ctx, 0, sizeof(RawContext));
-	driv = gf_malloc(sizeof(GF_AudioOutput));
+	driv = (GF_AudioOutput*)gf_malloc(sizeof(GF_AudioOutput));
 	memset(driv, 0, sizeof(GF_AudioOutput));
 	GF_REGISTER_MODULE_INTERFACE(driv, GF_AUDIO_OUTPUT_INTERFACE, "Raw Audio Output", "gpac distribution")
 
 	driv->opaque = ctx;
 
-	driv->SelfThreaded = 0;
+	driv->SelfThreaded = GF_FALSE;
 	driv->Setup = RAW_AudioSetup;
 	driv->Shutdown = RAW_AudioShutdown;
 	driv->ConfigureOutput = RAW_ConfigureOutput;
@@ -241,7 +269,7 @@ void *NewRawAudioOutput()
 	return driv;
 }
 
-void DeleteAudioOutput(void *ifce)
+static void DeleteAudioOutput(void *ifce)
 {
 	GF_AudioOutput *dr = (GF_AudioOutput *) ifce;
 	RawContext *ctx = (RawContext*)dr->opaque;

@@ -515,7 +515,7 @@ void wxOsmo4Frame::CheckVideoOut()
 	SetWindowStyle(wxDEFAULT_FRAME_STYLE & ~(wxMAXIMIZE_BOX | wxRESIZE_BORDER));
 }
 
-static void wxOsmo4_do_log(void *cbk, u32 level, u32 tool, const char *fmt, va_list list)
+static void wxOsmo4_do_log(void *cbk, GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list list)
 {
 	wxOsmo4Frame *osmo = (wxOsmo4Frame *)cbk;
 
@@ -560,13 +560,13 @@ Bool wxOsmo4Frame::LoadTerminal()
 
 	/*check log file*/
 	const char *str = gf_cfg_get_key(m_user.config, "General", "LogFile");
-	if (str) m_logs = fopen(str, "wt");
+	if (str) m_logs = gf_fopen(str, "wt");
 	gf_log_set_callback(this, wxOsmo4_do_log);
 
 	/*set log level*/
 	gf_log_set_tools_levels( gf_cfg_get_key(m_user.config, "General", "Logs") );
 
-	gf_sys_init(0);
+	gf_sys_init(GF_MemTrackerNone);
 
 	::wxLogMessage(wxT("GPAC configuration file opened - looking for modules"));
 

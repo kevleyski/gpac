@@ -95,8 +95,12 @@ char *js_get_utf8(JSContext *c, jsval val)
 	txt[len]=0;
 	return txt;
 #elif (JS_VERSION>=185)
+	char *result, *txt;
 	if (!JSVAL_CHECK_STRING(val) || JSVAL_IS_NULL(val)) return NULL;
-	return SMJS_CHARS(c, val);
+	txt = SMJS_CHARS(c, val);
+	result = gf_strdup(txt);
+	SMJS_FREE(c, txt);
+	return result;
 #else
 	if (!JSVAL_CHECK_STRING(val) || JSVAL_IS_NULL(val)) return NULL;
 	return gf_strdup( SMJS_CHARS(c, val) );
@@ -422,9 +426,17 @@ static jsval dom_base_node_construct(JSContext *c, GF_JSClass *_class, GF_Node *
 	{
 		html_media_element_js_init(c, new_obj, n);
 	}
-	if (!n->sgprivate->interact) GF_SAFEALLOC(n->sgprivate->interact, struct _node_interactive_ext);
+	if (!n->sgprivate->interact) {
+		GF_SAFEALLOC(n->sgprivate->interact, struct _node_interactive_ext);
+		if (!n->sgprivate->interact) {
+			return JSVAL_NULL;
+		}
+	}
 	if (!n->sgprivate->interact->js_binding) {
 		GF_SAFEALLOC(n->sgprivate->interact->js_binding, struct _node_js_binding);
+		if (!n->sgprivate->interact->js_binding) {
+			return JSVAL_NULL;
+		}
 	}
 	n->sgprivate->interact->js_binding->node = new_obj;
 
@@ -551,6 +563,8 @@ static jsval dom_nodelist_construct(JSContext *c, GF_ParentNode *n)
 	JSObject *new_obj;
 	if (!n) return JSVAL_VOID;
 	GF_SAFEALLOC(nl, DOMNodeList);
+	if (!nl) return JSVAL_NULL;
+	
 	nl->owner = n;
 	if (n->sgprivate->scenegraph->reference_count)
 		n->sgprivate->scenegraph->reference_count++;
@@ -961,7 +975,7 @@ JSBool SMJS_FUNCTION_EXT(gf_sg_js_event_remove_listener, GF_Node *vrml_node)
 		} else if (hdl->children) {
 			txt = (GF_DOMText *) hdl->children->node;
 			if (txt->sgprivate->tag != TAG_DOMText) continue;
-			if (!txt->textContent || strcmp(txt->textContent, callback)) continue;
+			if (!txt->textContent || !callback || strcmp(txt->textContent, callback)) continue;
 		} else {
 			continue;
 		}
@@ -1560,7 +1574,7 @@ return JS_TRUE;
 fortunately a sg cannot be created like that...*/
 DECL_FINALIZE(dom_document_finalize)
 
-GF_SceneGraph *sg = dom_get_doc(c, obj);
+GF_SceneGraph *sg;
 
 sg = (GF_SceneGraph*) SMJS_GET_PRIVATE(c, obj);
 /*the JS proto of the svgClass or a destroyed object*/
@@ -2052,6 +2066,10 @@ static void gf_dom_full_set_attribute(GF_DOMFullNode *node, char *attribute_name
 	}
 	/*create new att*/
 	GF_SAFEALLOC(att, GF_DOMFullAttribute);
+	if (!att) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[DOMJS] Failed to allocate DOM attribute\n"));
+		return;
+	}
 	att->name = gf_strdup(attribute_name);
 	att->data = gf_strdup(attribute_content);
 	if (prev) prev->next = (GF_DOMAttribute*) att;
@@ -2572,7 +2590,7 @@ if (SMJS_ID_IS_INT(id)) {
 		*vp = INT_TO_JSVAL(evt->error_state);
 		return JS_TRUE;
 	case EVENT_JSPROPERTY_DYNAMIC_SCENE:
-		*vp = INT_TO_JSVAL(evt->key_flags ? 1 : 0);
+		*vp = INT_TO_JSVAL(evt->key_flags);
 		return JS_TRUE;
 	case EVENT_JSPROPERTY_URL:
 		s = JS_NewStringCopyZ(c, evt->addon_url ? evt->addon_url : "");
@@ -2915,6 +2933,10 @@ static JSBool SMJS_FUNCTION(xml_http_constructor)
 
 	if (!GF_JS_InstanceOf(c, obj, &dom_rt->xmlHTTPRequestClass, NULL) ) return JS_TRUE;
 	GF_SAFEALLOC(p, XMLHTTPContext);
+	if (!p) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[WHR] Failed to allocate XHR object\n"));
+		return JS_FALSE;
+	}
 	p->c = c;
 	p->_this = obj;
 	p->owning_graph = xml_get_scenegraph(c);
@@ -2945,8 +2967,10 @@ static void xml_http_fire_event(XMLHTTPContext *ctx, GF_EventType evtType)
 
 static void xml_http_state_change(XMLHTTPContext *ctx)
 {
+#ifndef GPAC_DISABLE_VRML
 	GF_SceneGraph *scene;
 	GF_Node *n;
+#endif
 	jsval rval;
 
 	gf_sg_lock_javascript(ctx->c, GF_TRUE);
@@ -3083,6 +3107,10 @@ static void xml_http_sax_start(void *sax_cbck, const char *node_name, const char
 		} else {
 			GF_DOMFullAttribute *att;
 			GF_SAFEALLOC(att, GF_DOMFullAttribute);
+			if (!att) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[XHR] Fail to allocate DOM attribute\n"));
+				continue;
+			}
 			att->tag = TAG_DOM_ATT_any;
 			att->name = gf_strdup(attributes[i].name);
 			att->data_type = (u16) DOM_String_datatype;
@@ -3299,11 +3327,11 @@ static GF_Err xml_http_process_local(XMLHTTPContext *ctx)
 	FILE *responseFile;
 
 	/*opera-style local host*/
-	if (!strnicmp(ctx->url, "file://localhost", 16)) responseFile = gf_f64_open(ctx->url+16, "rb");
+	if (!strnicmp(ctx->url, "file://localhost", 16)) responseFile = gf_fopen(ctx->url+16, "rb");
 	/*regular-style local host*/
-	else if (!strnicmp(ctx->url, "file://", 7)) responseFile = gf_f64_open(ctx->url+7, "rb");
+	else if (!strnicmp(ctx->url, "file://", 7)) responseFile = gf_fopen(ctx->url+7, "rb");
 	/* other types: e.g. "C:\" */
-	else responseFile = gf_f64_open(ctx->url, "rb");
+	else responseFile = gf_fopen(ctx->url, "rb");
 
 	if (!responseFile) {
 		ctx->html_status = 404;
@@ -3320,13 +3348,15 @@ static GF_Err xml_http_process_local(XMLHTTPContext *ctx)
 	par.msg_type = GF_NETIO_WAIT_FOR_REPLY;
 	xml_http_on_data(ctx, &par);
 
-	gf_f64_seek(responseFile, 0, SEEK_END);
-	fsize = gf_f64_tell(responseFile);
-	gf_f64_seek(responseFile, 0, SEEK_SET);
+	gf_fseek(responseFile, 0, SEEK_END);
+	fsize = gf_ftell(responseFile);
+	gf_fseek(responseFile, 0, SEEK_SET);
+
+	ctx->html_status = 200;
 
 	ctx->data = (char *)gf_malloc(sizeof(char)*(size_t)(fsize+1));
 	fsize = fread(ctx->data, sizeof(char), (size_t)fsize, responseFile);
-	fclose(responseFile);
+	gf_fclose(responseFile);
 	ctx->data[fsize] = 0;
 	ctx->size = (u32)fsize;
 
@@ -3401,9 +3431,10 @@ static JSBool SMJS_FUNCTION(xml_http_send)
 	SMJS_FREE(c, data);
 
 	if (!strncmp(ctx->url, "http://", 7)) {
-		u32 flags;
+		u32 flags = GF_NETIO_SESSION_NOTIFY_DATA;
+		if (!ctx->async)
+			flags |= GF_NETIO_SESSION_NOT_THREADED;
 
-		flags = ctx->async ? 0 : GF_NETIO_SESSION_NOT_THREADED;
 		if (ctx->cache != XHR_CACHETYPE_NORMAL) {
 			if (ctx->cache == XHR_CACHETYPE_NONE) {
 				flags |= GF_NETIO_SESSION_NOT_CACHED;
@@ -4651,6 +4682,8 @@ GF_Err gf_sg_new_from_xml_doc(const char *src, GF_SceneGraph **scene)
 	GF_SceneGraph *sg;
 
 	GF_SAFEALLOC(ctx, XMLHTTPContext);
+	if (!ctx) return GF_OUT_OF_MEM;
+
 	ctx->sax = gf_xml_sax_new(xml_http_sax_start, xml_http_sax_end, xml_http_sax_text, ctx);
 	ctx->node_stack = gf_list_new();
 	sg = gf_sg_new();
@@ -4800,6 +4833,10 @@ static void xml_reload_node_start(void *sax_cbck, const char *node_name, const c
 			} else {
 				GF_DOMFullAttribute *att;
 				GF_SAFEALLOC(att, GF_DOMFullAttribute);
+				if (!att) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_SCRIPT, ("[DOMJS] Failed to allocate DOM attribute\n"));
+					continue;
+				}
 				att->tag = TAG_DOM_ATT_any;
 				att->name = gf_strdup(attributes[i].name);
 				att->data = gf_strdup(attributes[i].value);

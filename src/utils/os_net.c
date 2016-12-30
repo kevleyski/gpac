@@ -27,6 +27,8 @@
 
 #if defined(WIN32) || defined(_WIN32_WCE)
 
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+
 #ifdef _WIN32_WCE
 #include <winsock.h>
 
@@ -60,6 +62,7 @@
 
 #endif
 
+#ifndef EISCONN
 /*common win32 redefs*/
 #undef EAGAIN
 #define EAGAIN				WSAEWOULDBLOCK
@@ -73,6 +76,8 @@
 #define EINTR				WSAEINTR
 #undef EBADF
 #define EBADF				WSAEBADF
+#endif
+
 
 #define LASTSOCKERROR WSAGetLastError()
 
@@ -240,10 +245,10 @@ GF_EXPORT
 Bool gf_net_is_ipv6(const char *address)
 {
 	char *sep;
-	if (!address) return 0;
+	if (!address) return GF_FALSE;
 	sep = strchr(address, ':');
 	if (sep) sep = strchr(address, ':');
-	return sep ? 1 : 0;
+	return sep ? GF_TRUE : GF_FALSE;
 }
 
 #ifdef GPAC_HAS_IPV6
@@ -289,11 +294,11 @@ static struct addrinfo *gf_sk_get_ipv6_addr(const char *PeerName, u16 PortNumber
 static Bool gf_sk_ipv6_set_remote_address(GF_Socket *sock, const char *address, u16 PortNumber)
 {
 	struct addrinfo *res = gf_sk_get_ipv6_addr(address, PortNumber, AF_UNSPEC, 0, (sock->flags & GF_SOCK_IS_TCP) ? SOCK_STREAM : SOCK_DGRAM);
-	if (!res) return 0;
+	if (!res) return GF_FALSE;
 	memcpy(&sock->dest_addr, res->ai_addr, res->ai_addrlen);
 	sock->dest_addr_len = (u32) res->ai_addrlen;
 	freeaddrinfo(res);
-	return 1;
+	return GF_TRUE;
 }
 #endif
 
@@ -443,7 +448,7 @@ static void gf_sk_free(GF_Socket *sock)
 	/*if MobileIP socket, unregister it*/
 	if (sock->flags & GF_SOCK_IS_MIP) {
 		sock->flags &= ~GF_SOCK_IS_MIP;
-		gf_net_mobileip_ctrl(0);
+		gf_net_mobileip_ctrl(GF_FALSE);
 	}
 }
 
@@ -490,7 +495,7 @@ GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, cons
 
 	/*turn on MobileIP*/
 	if (local_ip && MobileIPAdd && !strcmp(MobileIPAdd, local_ip) ) {
-		if (gf_net_mobileip_ctrl(1)==GF_OK) {
+		if (gf_net_mobileip_ctrl(GF_TRUE)==GF_OK) {
 			sock->flags |= GF_SOCK_IS_MIP;
 		} else {
 			local_ip = NULL;
@@ -514,7 +519,7 @@ GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, cons
 			sock->socket = NULL_SOCKET;
 			continue;
 		}
-		if (sock->flags & GF_SOCK_NON_BLOCKING) gf_sk_set_block_mode(sock, 1);
+		if (sock->flags & GF_SOCK_NON_BLOCKING) gf_sk_set_block_mode(sock, GF_TRUE);
 		if (aip->ai_family==PF_INET6) sock->flags |= GF_SOCK_IS_IPV6;
 		else sock->flags &= ~GF_SOCK_IS_IPV6;
 
@@ -527,14 +532,14 @@ GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, cons
 			}
 		}
 
-        GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV6] Connecting to %s:%d\n", PeerName, PortNumber));
+		GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV6] Connecting to %s:%d\n", PeerName, PortNumber));
 		ret = connect(sock->socket, aip->ai_addr, (int) aip->ai_addrlen);
 		if (ret == SOCKET_ERROR) {
 			closesocket(sock->socket);
 			sock->socket = NULL_SOCKET;
 			continue;
 		}
-        GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV6] Connected to %s:%d\n", PeerName, PortNumber));
+		GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV6] Connected to %s:%d\n", PeerName, PortNumber));
 
 		memcpy(&sock->dest_addr, aip->ai_addr, aip->ai_addrlen);
 		sock->dest_addr_len = (u32) aip->ai_addrlen;
@@ -566,7 +571,7 @@ GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, cons
 	/*get the server IP*/
 	sock->dest_addr.sin_addr.s_addr = inet_addr(PeerName);
 	if (sock->dest_addr.sin_addr.s_addr==INADDR_NONE) {
-        GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Solving %s address\n", PeerName));
+		GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Solving %s address\n", PeerName));
 		Host = gethostbyname(PeerName);
 		if (Host == NULL) {
 			switch (LASTSOCKERROR) {
@@ -579,12 +584,12 @@ GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, cons
 				return GF_IP_NETWORK_FAILURE;
 			}
 		}
-        GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Host %s found\n", PeerName));
+		GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Host %s found\n", PeerName));
 		memcpy((char *) &sock->dest_addr.sin_addr, Host->h_addr_list[0], sizeof(u32));
 	}
 
 	if (sock->flags & GF_SOCK_IS_TCP) {
-        GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Connecting to %s:%d\n", PeerName, PortNumber));
+		GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Connecting to %s:%d\n", PeerName, PortNumber));
 		ret = connect(sock->socket, (struct sockaddr *) &sock->dest_addr, sizeof(struct sockaddr));
 		if (ret == SOCKET_ERROR) {
 			u32 res = LASTSOCKERROR;
@@ -613,7 +618,7 @@ GF_Err gf_sk_connect(GF_Socket *sock, const char *PeerName, u16 PortNumber, cons
 				return GF_IP_CONNECTION_FAILURE;
 			}
 		}
-        GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Connected to %s:%d\n", PeerName, PortNumber));
+		GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[Sock_IPV4] Connected to %s:%d\n", PeerName, PortNumber));
 	}
 #endif
 	return GF_OK;
@@ -675,10 +680,10 @@ GF_Err gf_sk_bind(GF_Socket *sock, const char *local_ip, u16 port, const char *p
 
 	/*turn on MobileIP*/
 	if (local_ip && MobileIPAdd && !strcmp(MobileIPAdd, local_ip) ) {
-		if (gf_net_mobileip_ctrl(1)==GF_OK) {
+		if (gf_net_mobileip_ctrl(GF_TRUE)==GF_OK) {
 			sock->flags |= GF_SOCK_IS_MIP;
 		} else {
-			res = gf_sk_get_ipv6_addr(NULL, port, af, AI_PASSIVE, type);
+			/*res = */gf_sk_get_ipv6_addr(NULL, port, af, AI_PASSIVE, type);
 			local_ip = NULL;
 		}
 	}
@@ -714,7 +719,7 @@ GF_Err gf_sk_bind(GF_Socket *sock, const char *local_ip, u16 port, const char *p
 #endif
 		}
 
-		if (sock->flags & GF_SOCK_NON_BLOCKING) gf_sk_set_block_mode(sock, 1);
+		if (sock->flags & GF_SOCK_NON_BLOCKING) gf_sk_set_block_mode(sock, GF_TRUE);
 
 		if (peer_name && peer_port)
 			sock->flags |= GF_SOCK_HAS_PEER;
@@ -830,6 +835,7 @@ GF_Err gf_sk_send(GF_Socket *sock, const char *buffer, u32 length)
 {
 	u32 count;
 	s32 res;
+	Bool not_ready = GF_FALSE;
 #ifndef __SYMBIAN32__
 	int ready;
 	struct timeval timeout;
@@ -856,9 +862,10 @@ GF_Err gf_sk_send(GF_Socket *sock, const char *buffer, u32 length)
 			return GF_IP_NETWORK_FAILURE;
 		}
 	}
+
 	//should never happen (to check: is writeability is guaranteed for not-connected sockets)
 	if (!ready || !FD_ISSET(sock->socket, &Group)) {
-		return GF_IP_NETWORK_EMPTY;
+		not_ready = GF_TRUE;
 	}
 #endif
 
@@ -871,6 +878,9 @@ GF_Err gf_sk_send(GF_Socket *sock, const char *buffer, u32 length)
 			res = (s32) send(sock->socket, (char *) buffer+count, length - count, 0);
 		}
 		if (res == SOCKET_ERROR) {
+			if (not_ready)
+				return GF_IP_NETWORK_EMPTY;
+
 			switch (res = LASTSOCKERROR) {
 			case EAGAIN:
 				return GF_IP_SOCK_WOULD_BLOCK;
@@ -928,7 +938,7 @@ GF_Err gf_sk_setup_multicast(GF_Socket *sock, const char *multi_IPAdd, u16 Multi
 #ifdef GPAC_HAS_IPV6
 	struct sockaddr *addr;
 	struct addrinfo *res, *aip;
-	Bool is_ipv6 = 0;
+	Bool is_ipv6 = GF_FALSE;
 	u32 type;
 #endif
 	unsigned long local_add_id;
@@ -942,7 +952,7 @@ GF_Err gf_sk_setup_multicast(GF_Socket *sock, const char *multi_IPAdd, u16 Multi
 
 	/*turn on MobileIP*/
 	if (local_interface_ip && MobileIPAdd && !strcmp(MobileIPAdd, local_interface_ip) ) {
-		if (gf_net_mobileip_ctrl(1)==GF_OK) {
+		if (gf_net_mobileip_ctrl(GF_TRUE)==GF_OK) {
 			sock->flags |= GF_SOCK_IS_MIP;
 		} else {
 			local_interface_ip = NULL;
@@ -951,7 +961,7 @@ GF_Err gf_sk_setup_multicast(GF_Socket *sock, const char *multi_IPAdd, u16 Multi
 
 
 #ifdef GPAC_HAS_IPV6
-	is_ipv6 = gf_net_is_ipv6(multi_IPAdd) || gf_net_is_ipv6(local_interface_ip) ? 1 : 0;
+	is_ipv6 = gf_net_is_ipv6(multi_IPAdd) || gf_net_is_ipv6(local_interface_ip) ? GF_TRUE : GF_FALSE;
 	type = (sock->flags & GF_SOCK_IS_TCP) ? SOCK_STREAM : SOCK_DGRAM;
 
 	if (is_ipv6) {
@@ -985,7 +995,7 @@ GF_Err gf_sk_setup_multicast(GF_Socket *sock, const char *multi_IPAdd, u16 Multi
 #endif
 
 			/*TODO: copy over other properties (recption buffer size & co)*/
-			if (sock->flags & GF_SOCK_NON_BLOCKING) gf_sk_set_block_mode(sock, 1);
+			if (sock->flags & GF_SOCK_NON_BLOCKING) gf_sk_set_block_mode(sock, GF_TRUE);
 
 			memcpy(&sock->dest_addr, aip->ai_addr, aip->ai_addrlen);
 			sock->dest_addr_len = (u32) aip->ai_addrlen;
@@ -1033,10 +1043,12 @@ GF_Err gf_sk_setup_multicast(GF_Socket *sock, const char *multi_IPAdd, u16 Multi
 			/*set TTL*/
 			ret = setsockopt(sock->socket, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, (char *) &TTL, sizeof(TTL));
 			if (ret == SOCKET_ERROR) return GF_IP_CONNECTION_FAILURE;
-			/*Disable loopback*/
+			/*enable loopback*/
 			flag = 1;
 			ret = setsockopt(sock->socket, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, (char *) &flag, sizeof(flag));
-			if (ret == SOCKET_ERROR) return GF_IP_CONNECTION_FAILURE;
+			if (ret == SOCKET_ERROR) {
+				GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[Socket] Cannot disale multicast loop: error %d\n", LASTSOCKERROR));
+			}
 
 			ret = setsockopt(sock->socket, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, (char *) &M_reqV6, sizeof(M_reqV6));
 			if (ret == SOCKET_ERROR) return GF_IP_CONNECTION_FAILURE;
@@ -1048,15 +1060,21 @@ GF_Err gf_sk_setup_multicast(GF_Socket *sock, const char *multi_IPAdd, u16 Multi
 
 	//IPv4 setup
 	sock->socket = socket(AF_INET, (sock->flags & GF_SOCK_IS_TCP) ? SOCK_STREAM : SOCK_DGRAM, 0);
-	if (sock->flags & GF_SOCK_NON_BLOCKING) gf_sk_set_block_mode(sock, 1);
+	if (sock->flags & GF_SOCK_NON_BLOCKING) gf_sk_set_block_mode(sock, GF_TRUE);
 	sock->flags &= ~GF_SOCK_IS_IPV6;
 
 	/*enable address reuse*/
 	optval = 1;
 	ret = setsockopt(sock->socket, SOL_SOCKET, SO_REUSEADDR, SSO_CAST &optval, sizeof(optval));
+	if (ret == SOCKET_ERROR) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[core] Failed to set SO_REUSEADDR: error %d\n", LASTSOCKERROR));
+	}
 #ifdef SO_REUSEPORT
 	optval = 1;
-	setsockopt(sock->socket, SOL_SOCKET, SO_REUSEPORT, SSO_CAST &optval, sizeof(optval));
+	ret = setsockopt(sock->socket, SOL_SOCKET, SO_REUSEPORT, SSO_CAST &optval, sizeof(optval));
+	if (ret == SOCKET_ERROR) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[core] Failed to set SO_REUSEPORT: error %d\n", LASTSOCKERROR));
+	}
 #endif
 
 	if (local_interface_ip) local_add_id = inet_addr(local_interface_ip);
@@ -1065,6 +1083,7 @@ GF_Err gf_sk_setup_multicast(GF_Socket *sock, const char *multi_IPAdd, u16 Multi
 	if (!NoBind) {
 		struct sockaddr_in local_address;
 
+		memset(&local_address, 0, sizeof(struct sockaddr_in ));
 		local_address.sin_family = AF_INET;
 		local_address.sin_addr.s_addr = (u32) local_add_id;
 		local_address.sin_port = htons( MultiPortNumber);
@@ -1094,12 +1113,17 @@ GF_Err gf_sk_setup_multicast(GF_Socket *sock, const char *multi_IPAdd, u16 Multi
 		return GF_IP_CONNECTION_FAILURE;
 	}
 	/*set the Time To Live*/
-	ret = setsockopt(sock->socket, IPPROTO_IP, IP_MULTICAST_TTL, (char *)&TTL, sizeof(TTL));
-	if (ret == SOCKET_ERROR) return GF_IP_CONNECTION_FAILURE;
-	/*Disable loopback*/
+	if (TTL) {
+		ret = setsockopt(sock->socket, IPPROTO_IP, IP_MULTICAST_TTL, (char *)&TTL, sizeof(TTL));
+		if (ret == SOCKET_ERROR) return GF_IP_CONNECTION_FAILURE;
+	}
+
+	/*enable loopback*/
 	flag = 1;
 	ret = setsockopt(sock->socket, IPPROTO_IP, IP_MULTICAST_LOOP, (char *) &flag, sizeof(flag));
-//	if (ret == SOCKET_ERROR) return GF_IP_CONNECTION_FAILURE;
+	if (ret == SOCKET_ERROR) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[Socket] Cannot disale multicast loop: error %d\n", LASTSOCKERROR));
+	}
 
 #ifdef GPAC_HAS_IPV6
 	((struct sockaddr_in *) &sock->dest_addr)->sin_family = AF_INET;
@@ -1141,22 +1165,20 @@ GF_Err gf_sk_receive(GF_Socket *sock, char *buffer, u32 length, u32 startFrom, u
 	timeout.tv_sec = 0;
 	timeout.tv_usec = SOCK_MICROSEC_WAIT;
 
-	res = 0;
-	//TODO - check if this is correct
 	ready = select((int) sock->socket+1, &Group, NULL, NULL, &timeout);
 	if (ready == SOCKET_ERROR) {
 		switch (LASTSOCKERROR) {
 		case EBADF:
-			GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[socket] cannot select, BAD descriptor\n"));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[socket] cannot select, BAD descriptor\n"));
 			return GF_IP_CONNECTION_CLOSED;
 		case EAGAIN:
 			return GF_IP_SOCK_WOULD_BLOCK;
 		case EINTR:
 			/* Interrupted system call, not really important... */
-			GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[socket] network is lost\n"));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[socket] network is lost\n"));
 			return GF_IP_NETWORK_EMPTY;
 		default:
-			GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[socket] cannot select (error %d)\n", LASTSOCKERROR));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[socket] cannot select (error %d)\n", LASTSOCKERROR));
 			return GF_IP_NETWORK_FAILURE;
 		}
 	}
@@ -1175,19 +1197,25 @@ GF_Err gf_sk_receive(GF_Socket *sock, char *buffer, u32 length, u32 startFrom, u
 
 	if (res == SOCKET_ERROR) {
 		res = LASTSOCKERROR;
-		GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[socket] error reading - socket error %d\n",  res));
 		switch (res) {
 		case EAGAIN:
 			return GF_IP_SOCK_WOULD_BLOCK;
 #ifndef __SYMBIAN32__
 		case EMSGSIZE:
+			GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[socket] error reading - socket error %d\n",  res));
 			return GF_OUT_OF_MEM;
 		case ENOTCONN:
+			GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[socket] error reading - not connected\n"));
+			return GF_IP_CONNECTION_CLOSED;
 		case ECONNRESET:
+			GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[socket] error reading - connection reset\n"));
+			return GF_IP_CONNECTION_CLOSED;
 		case ECONNABORTED:
+			GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[socket] error reading - connection aborted\n"));
 			return GF_IP_CONNECTION_CLOSED;
 #endif
 		default:
+			GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[socket] error reading - socket error %d\n",  res));
 			return GF_IP_NETWORK_FAILURE;
 		}
 	}
@@ -1460,8 +1488,6 @@ GF_Err gf_sk_receive_wait(GF_Socket *sock, char *buffer, u32 length, u32 startFr
 	timeout.tv_sec = Second;
 	timeout.tv_usec = SOCK_MICROSEC_WAIT;
 
-	res = 0;
-	//TODO - check if this is correct
 	ready = select((int) sock->socket+1, &Group, NULL, NULL, &timeout);
 	if (ready == SOCKET_ERROR) {
 		switch (LASTSOCKERROR) {
@@ -1549,5 +1575,30 @@ GF_Err gf_sk_send_wait(GF_Socket *sock, const char *buffer, u32 length, u32 Seco
 	return GF_OK;
 }
 
+GF_EXPORT
+u32 gf_htonl(u32 val)
+{
+	return htonl(val);
+}
+
+
+GF_EXPORT
+u32 gf_ntohl(u32 val)
+{
+	return htonl(val);
+}
+
+GF_EXPORT
+u16 gf_htons(u16 val)
+{
+	return htons(val);
+}
+
+
+GF_EXPORT
+u16 gf_tohs(u16 val)
+{
+	return htons(val);
+}
 
 #endif /*GPAC_DISABLE_CORE_TOOLS*/

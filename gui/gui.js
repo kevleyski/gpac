@@ -8,44 +8,7 @@
 
 all_extensions = [];
 
-
-in_drag = 0;
-start_drag_x=start_drag_y=0;
-
-function my_filter_event(evt)
-{
- switch (evt.type) {
- case GF_EVENT_MOUSEDOWN:
-  if (evt.picked) return false;
-  start_drag_x = evt.mouse_x;
-  start_drag_y = evt.mouse_y;
-  if (gpac.navigation != GF_NAVIGATE_NONE) return false;
-  if (!gpac.fullscreen)  in_drag = 1;
-  return true;
- case GF_EVENT_DBLCLICK:
-  return true;
-case GF_EVENT_MOUSEMOVE:
-    if (in_drag) {
-        in_drag = 2;
-        gpac.move_window(evt.mouse_x - start_drag_x, evt.mouse_y - start_drag_y);
-        return true;
-    }
-    return false;
-
-case GF_EVENT_MOUSEUP:
-    if (in_drag == 2) {
-        in_drag = 0;
-        return true;
-    } 
-    in_drag = 0;
-    return false;
- default:
-  return false;
- } 
- return false;
-}
-
-function gw_insert_media_node(node) 
+function gw_insert_media_node(node)
 {
     media_root.children[media_root.children.length] = node;
 }
@@ -73,9 +36,9 @@ function extension_option_setter(_ext) {
         return function (key_name, value) {
         }
     } else {
-        var ext_section = 'GUI.' + _ext.config_id;
         return function (key_name, value) {
-            gpac.set_option(ext_section, key_name, value);
+            this.__gpac_storage.set_option('Config', key_name, value);
+            this.__gpac_storage.save();
         }
     }
 }
@@ -85,16 +48,26 @@ function extension_option_getter(_ext) {
         return function (key_name, default_val) {
         }
     } else {
-        var ext_section = 'GUI.' + _ext.config_id;
         return function (key_name, default_val) {
-            var value = gpac.get_option(ext_section, key_name);
+			if (key_name=='path') return _ext.path;
+            var value = this.__gpac_storage.get_option('Config', key_name);
             if (value == null) {
-                gpac.set_option(ext_section, key_name, default_val);
+                this.set_option(key_name, default_val);
                 value = default_val;
             }
             return value;
         }
     }
+}
+
+function setup_extension_storage(extension) {
+    var storage_name = 'config:' + extension.path + '' + extension.name;
+    gwlog(l_inf, 'loading storage for extension ' + storage_name);
+
+    extension.jsobj.__gpac_storage = gpac.new_storage(storage_name);
+
+    extension.jsobj.get_option = extension_option_getter(extension);
+    extension.jsobj.set_option = extension_option_setter(extension);
 }
 
 //Initialize our GUI
@@ -106,8 +79,8 @@ function initialize() {
 
     min_width = 160;
     min_height = 80;
-    gw_display_width = parseInt(gpac.getOption('General', 'LastWidth'));
-    gw_display_height = parseInt(gpac.getOption('General', 'LastHeight'));
+    gw_display_width = parseInt(gpac.get_option('General', 'LastWidth'));
+    gw_display_height = parseInt(gpac.get_option('General', 'LastHeight'));
     if (!gpac.fullscreen && (!gw_display_width || !gw_display_height)) {
         gw_display_width = 320;
         gw_display_height = 240;
@@ -115,8 +88,8 @@ function initialize() {
     if (!gpac.fullscreen && gw_display_width && gw_display_height) {
         gpac.set_size(gw_display_width, gw_display_height);
     } else {
-        gw_display_width = gpac.get_screen_width();
-        gw_display_height = gpac.get_screen_height();
+        gw_display_width = gpac.screen_width;
+        gw_display_height = gpac.screen_height;
     }
     //request event listeners on the window - GPAC specific BIFS extensions !!! We don't allow using the event proc for size events
     root.addEventListener('resize', on_resize, 0);
@@ -126,11 +99,7 @@ function initialize() {
     Browser.loadScript('gwlib.js', false);
     gwlib_init(ui_root);
 
-    //set background color
-    root.children[0].backColor = gwskin.back_color;
-
-    //register custom event filter
-    gwlib_add_event_filter(my_filter_event);
+	gwskin.enable_background(true);
 
     //what do we do with tooltips ?
 //    gwskin.tooltip_callback = function(over, label) { alert('' + over ? label : ''); };
@@ -170,6 +139,7 @@ function initialize() {
       if ( (typeof extension.requires_gl == 'boolean') && extension.requires_gl && !gwskin.has_opengl) continue;
 
       extension.path = 'extensions/' + list[i].name + '/';
+      extension.jsobj = null;
 
       gwlog(l_deb, 'Loading UI extension ' + extension.name + ' ' + ' icon ' + extension.path + extension.icon + ' Author ' + extension.author);
 
@@ -185,38 +155,36 @@ function initialize() {
 
       extension.icon = insert_dock_icon(extension.name, extension.path + extension.icon);
       extension.icon.ext_description = extension;
-      extension.icon.extension_obj = null;
       extension.icon.on_close = function () {
         this.ext_description.icon = null;
         this.ext_description = null;
       }
       extension.icon.on_click = function () {
-          if (!this.extension_obj) {
-              for (var i=0; i<this.ext_description.execjs.length; i++) {
-                gwlog(l_deb, 'Loading UI extension ' + this.ext_description.name + ' - Executing JS ' + this.ext_description.path + this.ext_description.execjs[i]);
-                if (!i) {
-                    this.extension_obj = Browser.loadScript(this.ext_description.path + this.ext_description.execjs[i]);
-                    this.compatible = (this.extension_obj != null) ? true : false;
-                    if (!this.compatible) break;
-                } else {
-                    Browser.loadScript(this.ext_description.path + this.ext_description.execjs[i]);
-                }
+          var extension = this.ext_description;
+          if (!extension.jsobj) {
+              for (var i = 0; i < extension.execjs.length; i++) {
+                  gwlog(l_deb, 'Loading UI extension ' + extension.name + ' - Executing JS ' + extension.path + extension.execjs[i]);
+                  if (!i) {
+                      extension.jsobj = Browser.loadScript(extension.path + extension.execjs[i]);
+                      extension.compatible = (extension.jsobj != null) ? true : false;
+                      if (!extension.compatible) break;
+
+                      setup_extension_storage(extension);
+                  } else {
+                      Browser.loadScript(extension.path + extension.execjs[i]);
+                  }
               }
 
-              if (this.compatible) {
-                    this.extension_obj.get_option = extension_option_getter(this.ext_description);
-                    this.extension_obj.set_option = extension_option_setter(this.ext_description);
-              }
           }
-          if (!this.compatible) {
-              var w = gw_new_message(null, 'Error', 'Extension ' + this.ext_description.name + ' is not compatible');
+          if (!extension.compatible) {
+              var w = gw_new_message(null, 'Error', 'Extension ' + extension.name + ' is not compatible');
               w.show();
               alert('Error');
               this.parent.disable();
               return;
           }
 
-          if (this.extension_obj && (typeof this.extension_obj.start != 'undefined')) this.extension_obj.start();
+          if (extension.jsobj && (typeof extension.jsobj.start != 'undefined')) extension.jsobj.start();
       } 
     }
     
@@ -258,8 +226,8 @@ function on_resize(evt) {
     gw_display_width = evt.width;
     gw_display_height = evt.height;
     if (!gpac.fullscreen) {
-        gpac.setOption('General', 'LastWidth', '' + gw_display_width);
-        gpac.setOption('General', 'LastHeight', '' + gw_display_height);
+        gpac.set_option('General', 'LastWidth', '' + gw_display_width);
+        gpac.set_option('General', 'LastHeight', '' + gw_display_height);
     }
 /*
     var v = 12;
@@ -283,6 +251,3 @@ function on_resize(evt) {
     layout();
 }
 
-function gw_background_control(enable) {
-    root.children[0].set_bind = enable ? true : false;
-}

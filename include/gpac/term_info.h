@@ -33,12 +33,28 @@
 extern "C" {
 #endif
 
+/*!
+ *	\file <gpac/term_info.h>
+ *	\brief GPAC media object browsing of the player.
+ */
+	
+/*!
+ *\addtogroup terminfo_grp Terminal Info
+ *\ingroup playback_grp
+ *\brief GPAC media object browsing of the player.
+ *
+ *This section documents how a user can get information on running media object in the player.
+ *	@{
+ */
+	
+
 /*
 	OD Browsing API - YOU MUST INCLUDE <gpac/terminal.h> before
 	(this has been separated from terminal.h to limit dependency of core to mpeg4_odf.h header)
 	ALL ITEMS ARE READ-ONLY AND SHALL NOT BE MODIFIED
 */
 #include <gpac/mpeg4_odf.h>
+#include <gpac/terminal.h>
 
 /*returns top-level OD of the presentation*/
 GF_ObjectManager *gf_term_get_root_object(GF_Terminal *term);
@@ -114,7 +130,7 @@ typedef struct
 
 	/*average birate over last second and max bitrate over one second at decoder input - expressed in bits per sec*/
 	u32 avg_bitrate, instant_bitrate, max_bitrate;
-	u32 nb_dec_frames, nb_droped;
+	u32 nb_dec_frames, nb_dropped;
 	u32 first_frame_time, last_frame_time;
 	u64 total_dec_time, irap_total_dec_time;
 	u32 max_dec_time, irap_max_dec_time;
@@ -127,6 +143,7 @@ typedef struct
 	u32 protection;
 
 	u32 lang;
+	const char *lang_code;
 
 	/*name of media if not defined in OD framework*/
 	const char *media_url;
@@ -171,6 +188,7 @@ If @odm is NULL the main scene is dumped
 */
 GF_Err gf_term_dump_scene(GF_Terminal *term, char *rad_name, char **filename, Bool xml_dump, Bool skip_proto, GF_ObjectManager *odm);
 
+/*! @} */
 
 #ifdef __cplusplus
 }

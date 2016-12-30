@@ -131,6 +131,10 @@ static void TraverseShape(GF_Node *node, void *rs, Bool is_destroy)
 #ifndef GPAC_DISABLE_3D
 		/*if we're here we passed culler already*/
 		case TRAVERSE_DRAW_3D:
+			if (!tr_state->visual->type_3d && tr_state->visual->compositor->hybrid_opengl) {
+				tr_state->visual->compositor->root_visual_setup=0;
+				tr_state->visual->compositor->force_type_3d=1;
+			}
 			gf_node_traverse((GF_Node *) shape->geometry, tr_state);
 			break;
 		case TRAVERSE_COLLIDE:
@@ -283,7 +287,7 @@ static void compositor_2d_draw_rectangle(GF_TraverseState *tr_state)
 			ctx->bi->clip = gf_rect_pixelize(&ctx->bi->unclip);
 			gf_irect_intersect(&ctx->bi->clip, &orig_clip);
 
-			res = tr_state->visual->DrawBitmap(tr_state->visual, tr_state, ctx, NULL);
+			res = tr_state->visual->DrawBitmap(tr_state->visual, tr_state, ctx);
 
 			/*strike path*/
 			ctx->bi->unclip = orig_unclip;
@@ -293,7 +297,7 @@ static void compositor_2d_draw_rectangle(GF_TraverseState *tr_state)
 				visual_2d_draw_path(tr_state->visual, ctx->drawable->path, ctx, NULL, NULL, tr_state);
 			}
 		} else {
-			res = tr_state->visual->DrawBitmap(tr_state->visual, tr_state, ctx, NULL);
+			res = tr_state->visual->DrawBitmap(tr_state->visual, tr_state, ctx);
 		}
 		/*if failure retry with raster*/
 		if (res) return;

@@ -67,11 +67,13 @@ static const char * ISOR_MIME_TYPES[] = {
 	"application/x-isomedia", "*", "IsoMedia Files",
 	"video/mp4", "mp4 mpg4", "MPEG-4 Movies",
 	"audio/mp4", "m4a mp4 mpg4", "MPEG-4 Music",
-	"application/mp4", "mp4 mpg4", "MPEG-4 Applications",
+	"application/mp4", "m4i mp4 mpg4", "MPEG-4 Applications",
 	"video/3gpp", "3gp 3gpp", "3GPP/MMS Movies",
 	"audio/3gpp", "3gp 3gpp", "3GPP/MMS Music",
 	"video/3gpp2", "3g2 3gp2", "3GPP2/MMS Movies",
 	"audio/3gpp2", "3g2 3gp2", "3GPP2/MMS Music",
+	"video/iso.segment", "iso", "ISOBMF Fragments",
+	"audio/iso.segment", "iso", "ISOBMF Fragments",
 	NULL
 };
 
@@ -134,10 +136,12 @@ void isor_check_buffer_level(ISOMReader *read)
 	dld_time_remaining = total-done;
 	dld_time_remaining /= Bps;
 
-	//we add 30 seconds to smooth out bitrate variations ..;
-	dld_time_remaining += 30;
-
 	mov_rate = total;
+	if (read->frag_type) {
+		u64 bytesMissing=0;
+		gf_isom_refresh_fragmented(read->mov, &bytesMissing, NULL);
+		mov_rate = (Double) (done + bytesMissing);
+	}
 	dur = gf_isom_get_duration(read->mov);
 	if (dur) {
 		mov_rate /= dur;
@@ -158,12 +162,13 @@ void isor_check_buffer_level(ISOMReader *read)
 			u64 data_offset;
 			u32 di, sn = ch->sample_num ? ch->sample_num : 1;
 			GF_ISOSample *samp = gf_isom_get_sample_info(read->mov, ch->track, sn, &di, &data_offset);
-			if (!samp) continue;
+			if (!samp) {
+				continue;
+			}
 
 			data_offset += samp->dataLength;
 
-			//we only send buffer on/off based on remainging playback time in channel
-#if 0
+#if 1
 			//we don't have enough data
 			if (((data_offset + ch->buffer_min * mov_rate/1000 > done))) {
 				do_buffer = GF_TRUE;
@@ -171,11 +176,14 @@ void isor_check_buffer_level(ISOMReader *read)
 			//we have enough buffer
 			else if ((data_offset + ch->buffer_max * mov_rate/1000 <= done)) {
 				do_buffer = GF_FALSE;
+			} else {
+				do_buffer = ch->buffering;
 			}
-#endif
+			buffer_level = (u32) ( (done - data_offset) / mov_rate * 1000);
+#else
+			//we only send buffer on/off based on remainging playback time in channel
 			time_remain_ch -= (samp->DTS + samp->CTS_Offset);
 			if (time_remain_ch<0) time_remain_ch=0;
-			gf_isom_sample_del(&samp);
 
 			time_remain_ch /= ch->time_scale;
 			if (time_remain_ch && (time_remain_ch < dld_time_remaining)) {
@@ -189,6 +197,9 @@ void isor_check_buffer_level(ISOMReader *read)
 			} else {
 				do_buffer = GF_FALSE;
 			}
+#endif
+
+			gf_isom_sample_del(&samp);
 		}
 
 		if (do_buffer != ch->buffering) {
@@ -261,10 +272,10 @@ void isor_net_io(void *cbk, GF_NETIO_Parameter *param)
 			}
 			return;
 		}
-		e = GF_OK;
 		read->mov = gf_isom_open(local_name, GF_ISOM_OPEN_READ, NULL);
-		if (!read->mov) e = gf_isom_last_error(NULL);
+		if (!read->mov) gf_isom_last_error(NULL);
 		else read->time_scale = gf_isom_get_timescale(read->mov);
+		read->frag_type = gf_isom_is_fragmented(read->mov) ? 1 : 0;
 		if (read->input->query_proxy && read->input->proxy_udta && read->input->proxy_type) {
 			send_proxy_command(read, GF_FALSE, GF_FALSE, GF_OK, NULL, NULL);
 		} else {
@@ -283,7 +294,7 @@ void isor_net_io(void *cbk, GF_NETIO_Parameter *param)
 		if (read->frag_type && (param->reply==1) ) {
 			u64 bytesMissing = 0;
 			gf_mx_p(read->segment_mutex);
-			e = gf_isom_refresh_fragmented(read->mov, &bytesMissing, NULL);
+			gf_isom_refresh_fragmented(read->mov, &bytesMissing, NULL);
 			gf_mx_v(read->segment_mutex);
 		}
 		return;
@@ -432,8 +443,6 @@ GF_Err ISOR_CloseService(GF_InputService *plug)
 	reply = GF_OK;
 
 	read->disconnected = GF_TRUE;
-	if (read->mov) gf_isom_close(read->mov);
-	read->mov = NULL;
 
 	while (gf_list_count(read->channels)) {
 		ISOMChannel *ch = (ISOMChannel *)gf_list_get(read->channels, 0);
@@ -443,6 +452,9 @@ GF_Err ISOR_CloseService(GF_InputService *plug)
 
 	if (read->dnload) gf_service_download_del(read->dnload);
 	read->dnload = NULL;
+
+	if (read->mov) gf_isom_close(read->mov);
+	read->mov = NULL;
 
 	if (read->input->query_proxy && read->input->proxy_udta && read->input->proxy_type) {
 		send_proxy_command(read, GF_TRUE, GF_FALSE, reply, NULL, NULL);
@@ -543,7 +555,6 @@ static GF_Descriptor *ISOR_GetServiceDesc(GF_InputService *plug, u32 expect_type
 	/*no matter what always read text as TTUs*/
 	gf_isom_text_set_streaming_mode(read->mov, 1);
 
-	trackID = 0;
 	if (!sub_url) {
 		trackID = read->play_only_track_id;
 		read->play_only_track_id = 0;
@@ -768,6 +779,10 @@ GF_Err ISOR_ConnectChannel(GF_InputService *plug, LPNETCHANNEL channel, const ch
 	}
 
 	GF_SAFEALLOC(ch, ISOMChannel);
+	if (!ch) {
+		e = GF_OUT_OF_MEM;
+		goto exit;
+	}
 	ch->owner = read;
 	ch->channel = channel;
 	gf_list_add(read->channels, ch);
@@ -782,6 +797,13 @@ GF_Err ISOR_ConnectChannel(GF_InputService *plug, LPNETCHANNEL channel, const ch
 		break;
 	case GF_ISOM_MEDIA_VISUAL:
 		gf_isom_get_reference(ch->owner->mov, ch->track, GF_ISOM_REF_BASE, 1, &ch->base_track);
+		//use base track only if avc/svc or hevc/lhvc. If avc+lhvc we need different rules
+		if ( gf_isom_get_avc_svc_type(ch->owner->mov, ch->base_track, 1) == GF_ISOM_AVCTYPE_AVC_ONLY) {
+			if ( gf_isom_get_hevc_lhvc_type(ch->owner->mov, ch->track, 1) >= GF_ISOM_HEVCTYPE_HEVC_ONLY) {
+				ch->base_track=0;
+			}
+		}
+		
 		ch->next_track = 0;
 		/*in scalable mode add SPS/PPS in-band*/
 		ch->nalu_extract_mode = GF_ISOM_NALU_EXTRACT_INBAND_PS_FLAG /*| GF_ISOM_NALU_EXTRACT_ANNEXB_FLAG*/;
@@ -939,14 +961,6 @@ GF_Err ISOR_ChannelReleaseSLP(GF_InputService *plug, LPNETCHANNEL channel)
 	return GF_OK;
 }
 
-static u64 check_round(ISOMChannel *ch, u64 val_ts, Double val_range, Bool make_greater)
-{
-	Double round_check = (Double) (s64) val_ts;
-	round_check /= ch->time_scale;
-//	if (round_check != val_range) val_ts += make_greater ? 1 : -1;
-	return val_ts;
-}
-
 /*switch channel quality. Return next channel or current channel if error*/
 static
 u32 gf_channel_switch_quality(ISOMChannel *ch, GF_ISOFile *the_file, Bool switch_up)
@@ -984,7 +998,7 @@ u32 gf_channel_switch_quality(ISOMChannel *ch, GF_ISOFile *the_file, Bool switch
 		if (cur_track == ch->base_track)
 			return cur_track;
 		ref_count = gf_isom_get_reference_count(the_file, cur_track, GF_ISOM_REF_SCAL);
-		if (ref_count < 0)
+		if (ref_count <= 0)
 			return cur_track;
 		gf_isom_get_reference(the_file, cur_track, GF_ISOM_REF_SCAL, ref_count, &next_track);
 		if (!next_track)
@@ -1045,7 +1059,7 @@ GF_Err ISOR_ServiceCommand(GF_InputService *plug, GF_NetworkCommand *com)
 		for (i = 0; i < count; i++)
 		{
 			ch = (ISOMChannel *)gf_list_get(read->channels, i);
-			if (gf_isom_has_scalable_layer(read->mov)) {
+			if (ch->base_track && gf_isom_needs_layer_reconstruction(read->mov)) {
 				ch->next_track = gf_channel_switch_quality(ch, read->mov, com->switch_quality.up);
 			}
 		}
@@ -1060,6 +1074,8 @@ GF_Err ISOR_ServiceCommand(GF_InputService *plug, GF_NetworkCommand *com)
 			isor_flush_data(read, 0, 0);
 		return GF_OK;
 	}
+	if (com->command_type == GF_NET_SERVICE_CAN_REVERSE_PLAYBACK)
+		return GF_OK;
 
 	if (!com->base.on_channel) return GF_NOT_SUPPORTED;
 
@@ -1117,17 +1133,22 @@ GF_Err ISOR_ServiceCommand(GF_InputService *plug, GF_NetworkCommand *com)
 		isor_reset_reader(ch);
 		ch->speed = com->play.speed;
 		read->reset_frag_state = 1;
+		if (read->frag_type)
+			read->frag_type = 1;
 		gf_mx_v(read->segment_mutex);
 
 		ch->start = ch->end = 0;
 		if (com->play.speed>0) {
+			Double t;
 			if (com->play.start_range>=0) {
-				ch->start = (u64) (s64) (com->play.start_range * ch->time_scale);
-				ch->start = check_round(ch, ch->start, com->play.start_range, 1);
+				t = com->play.start_range;
+				t *= ch->time_scale;
+				ch->start = (u64) t;
 			}
 			if (com->play.end_range >= com->play.start_range) {
-				ch->end = (u64) (s64) (com->play.end_range*ch->time_scale);
-				ch->end = check_round(ch, ch->end, com->play.end_range, 0);
+				t = com->play.end_range;
+				t *= ch->time_scale;
+				ch->end = (u64) t;
 			}
 		} else if (com->play.speed<0) {
 			Double end = com->play.end_range;
@@ -1177,10 +1198,13 @@ GF_Err ISOR_ServiceCommand(GF_InputService *plug, GF_NetworkCommand *com)
 	}
 	case GF_NET_CHAN_NALU_MODE:
 		ch->nalu_extract_mode = GF_ISOM_NALU_EXTRACT_INBAND_PS_FLAG;
-		ch->disable_seek = 1;
+
 		//when this is set, we work in real scalable (eg N streams reassembled by the player) so only extract the layer. This wll need refinements if we plan to support
 		//several scalable layers ...
-		if (com->nalu_mode.extract_mode==1) {
+		if (com->nalu_mode.extract_mode>=1) {
+			if (com->nalu_mode.extract_mode==2) {
+				ch->disable_seek = 1;
+			}
 			ch->nalu_extract_mode |= GF_ISOM_NALU_EXTRACT_ANNEXB_FLAG | GF_ISOM_NALU_EXTRACT_VDRD_FLAG | GF_ISOM_NALU_EXTRACT_LAYER_ONLY;
 		}
 		gf_isom_set_nalu_extract_mode(ch->owner->mov, ch->track, ch->nalu_extract_mode);
@@ -1215,7 +1239,19 @@ GF_InputService *isor_client_load()
 	ISOMReader *reader;
 	GF_InputService *plug;
 	GF_SAFEALLOC(plug, GF_InputService);
+	if (!plug) return NULL;
 	GF_REGISTER_MODULE_INTERFACE(plug, GF_NET_CLIENT_INTERFACE, "GPAC IsoMedia Reader", "gpac distribution")
+
+	GF_SAFEALLOC(reader, ISOMReader);
+	if (!reader) {
+		gf_free(plug);
+		return NULL;
+	}
+	reader->channels = gf_list_new();
+	reader->segment_mutex = gf_mx_new("ISO Segment");
+
+	plug->priv = reader;
+	
 	plug->RegisterMimeTypes = ISOR_RegisterMimeTypes;
 	plug->CanHandleURL = ISOR_CanHandleURL;
 	plug->ConnectService = ISOR_ConnectService;
@@ -1228,12 +1264,6 @@ GF_InputService *isor_client_load()
 	/*we do support pull mode*/
 	plug->ChannelGetSLP = ISOR_ChannelGetSLP;
 	plug->ChannelReleaseSLP = ISOR_ChannelReleaseSLP;
-
-	GF_SAFEALLOC(reader, ISOMReader);
-	reader->channels = gf_list_new();
-	reader->segment_mutex = gf_mx_new("ISO Segment");
-
-	plug->priv = reader;
 	return plug;
 }
 

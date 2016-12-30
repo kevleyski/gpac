@@ -22,7 +22,7 @@ OBJS= wiiis.o
 
 SRCS := $(OBJS:.o=.c) 
 
-LIB=gm_wiiis.$(DYN_LIB_SUFFIX)
+LIB=gm_wiiis$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
 #LDFLAGS+=-export-symbols wiiis.def 
 endif
@@ -32,7 +32,7 @@ all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L../../bin/gcc -lgpac
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L../../bin/gcc -lgpac $(LDFLAGS)
 
 clean: 
 	rm -f $(OBJS) ../../bin/gcc/$(LIB)

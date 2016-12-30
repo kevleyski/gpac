@@ -32,6 +32,7 @@
 #include "media_memory.h"
 #include "media_control.h"
 #include <gpac/nodes_svg.h>
+#include <gpac/network.h>
 
 
 #ifndef GPAC_DISABLE_SVG
@@ -43,6 +44,8 @@ static GF_MediaObject *get_sync_reference(GF_Scene *scene, XMLRI *iri, u32 o_typ
 	GF_Node *ref = NULL;
 
 	u32 stream_id = 0;
+	if (post_pone) *post_pone = GF_FALSE;
+	
 	if (iri->type==XMLRI_STREAMID) {
 		stream_id = iri->lsr_stream_id;
 	} else if (!iri->string) {
@@ -209,188 +212,254 @@ GF_MediaObject *gf_mo_new()
 	return mo;
 }
 
-
 GF_EXPORT
 Bool gf_mo_get_visual_info(GF_MediaObject *mo, u32 *width, u32 *height, u32 *stride, u32 *pixel_ar, u32 *pixelFormat, Bool *is_flipped)
 {
-	GF_CodecCapability cap;
 	if ((mo->type != GF_MEDIA_OBJECT_VIDEO) && (mo->type!=GF_MEDIA_OBJECT_TEXT)) return GF_FALSE;
 
-	if (width) {
-		cap.CapCode = GF_CODEC_WIDTH;
-		gf_codec_get_capability(mo->odm->codec, &cap);
-		*width = cap.cap.valueInt;
-	}
-	if (height) {
-		cap.CapCode = GF_CODEC_HEIGHT;
-		gf_codec_get_capability(mo->odm->codec, &cap);
-		*height = cap.cap.valueInt;
-	}
-	if (mo->type==GF_MEDIA_OBJECT_TEXT) return GF_TRUE;
-
-	if (is_flipped) {
-		cap.CapCode = GF_CODEC_FLIP;
-		cap.cap.valueInt = 0;
-		gf_codec_get_capability(mo->odm->codec, &cap);
-		*is_flipped = cap.cap.valueInt ? GF_TRUE : GF_FALSE;
-	}
-
-	if (stride) {
-		cap.CapCode = GF_CODEC_STRIDE;
-		gf_codec_get_capability(mo->odm->codec, &cap);
-		*stride = cap.cap.valueInt;
-	}
-	if (pixelFormat) {
-		cap.CapCode = GF_CODEC_PIXEL_FORMAT;
-		gf_codec_get_capability(mo->odm->codec, &cap);
-		*pixelFormat = cap.cap.valueInt;
-
-		if (mo->odm && mo->odm->parentscene->is_dynamic_scene) {
-#ifndef GPAC_DISABLE_VRML
-			const char *name = gf_node_get_name(gf_event_target_get_node(gf_mo_event_target_get(mo, 0)));
-			if (name && !strcmp(name, "DYN_VIDEO")) {
-				const char *opt;
-				u32 r, g, b, a;
-				M_Background2D *back = (M_Background2D *) gf_sg_find_node_by_name(mo->odm->parentscene->graph, "DYN_BACK");
-				if (back) {
-					switch (cap.cap.valueInt) {
-					case GF_PIXEL_ARGB:
-					case GF_PIXEL_RGBA:
-					case GF_PIXEL_YUVA:
-						opt = gf_cfg_get_key(mo->odm->term->user->config, "Compositor", "BackColor");
-						if (!opt) {
-							gf_cfg_set_key(mo->odm->term->user->config, "Compositor", "BackColor", "FF999999");
-							opt = "FF999999";
-						}
-						sscanf(opt, "%02X%02X%02X%02X", &a, &r, &g, &b);
-						back->backColor.red = INT2FIX(r)/255;
-						back->backColor.green = INT2FIX(g)/255;
-						back->backColor.blue = INT2FIX(b)/255;
-						break;
-					default:
-						back->backColor.red = back->backColor.green = back->backColor.blue = 0;
-						break;
-					}
-					gf_node_dirty_set((GF_Node *)back, 0, GF_TRUE);
-				}
-			}
-#endif
-		}
-	}
-	/*get PAR settings*/
-	if (pixel_ar) {
-		cap.CapCode = GF_CODEC_PAR;
-		gf_codec_get_capability(mo->odm->codec, &cap);
-		*pixel_ar = cap.cap.valueInt;
-		if (! (*pixel_ar & 0x0000FFFF)) *pixel_ar = 0;
-		if (! (*pixel_ar & 0xFFFF0000)) *pixel_ar = 0;
-
-		/**/
-		if (! *pixel_ar) {
-			GF_Channel *ch;
-			GF_NetworkCommand com;
-			com.base.command_type = GF_NET_CHAN_GET_PIXEL_AR;
-			ch = (GF_Channel *)gf_list_get(mo->odm->channels, 0);
-			if (!ch) return GF_FALSE;
-
-			com.base.on_channel = ch;
-			com.par.hSpacing = com.par.vSpacing = 0;
-			if (gf_term_service_command(ch->service, &com) == GF_OK) {
-				if ((com.par.hSpacing>65535) || (com.par.vSpacing>65535)) {
-					com.par.hSpacing>>=16;
-					com.par.vSpacing>>=16;
-				}
-				if (com.par.hSpacing|| com.par.vSpacing)
-					*pixel_ar = (com.par.hSpacing<<16) | com.par.vSpacing;
-			}
-		}
-	}
+	if (width) *width = mo->width;
+	if (height) *height = mo->height;
+	if (stride) *stride = mo->stride;
+	if (pixel_ar) *pixel_ar = mo->pixel_ar;
+	if (pixelFormat) *pixelFormat = mo->pixelformat;
+	if (is_flipped) *is_flipped = mo->is_flipped;
 	return GF_TRUE;
+}
+
+GF_EXPORT
+void gf_mo_get_nb_views(GF_MediaObject *mo, int * nb_views)
+{
+	if (mo) *nb_views = mo->nb_views;
+}
+
+GF_EXPORT
+
+void gf_mo_get_nb_layers(GF_MediaObject *mo, int * nb_layers)
+{
+	if (mo) *nb_layers = mo->nb_layers;
 }
 
 GF_EXPORT
 Bool gf_mo_get_audio_info(GF_MediaObject *mo, u32 *sample_rate, u32 *bits_per_sample, u32 *num_channels, u32 *channel_config)
 {
-	GF_CodecCapability cap;
 	if (!mo->odm || !mo->odm->codec || (mo->type != GF_MEDIA_OBJECT_AUDIO)) return GF_FALSE;
 
-	if (mo->odm->term->bench_mode==2) {
-		if (sample_rate) *sample_rate = 44100;
-		if (bits_per_sample) *bits_per_sample = 16;
-		if (num_channels) *num_channels = 2;
-		if (channel_config) *channel_config = 0;
-		return GF_TRUE;
-	}
-	if (sample_rate) {
-		cap.CapCode = GF_CODEC_SAMPLERATE;
-		gf_codec_get_capability(mo->odm->codec, &cap);
-		*sample_rate = cap.cap.valueInt;
-	}
-	if (num_channels) {
-		cap.CapCode = GF_CODEC_NB_CHAN;
-		gf_codec_get_capability(mo->odm->codec, &cap);
-		*num_channels = cap.cap.valueInt;
-	}
-	if (bits_per_sample) {
-		cap.CapCode = GF_CODEC_BITS_PER_SAMPLE;
-		gf_codec_get_capability(mo->odm->codec, &cap);
-		*bits_per_sample = cap.cap.valueInt;
-	}
-	if (channel_config) {
-		cap.CapCode = GF_CODEC_CHANNEL_CONFIG;
-		gf_codec_get_capability(mo->odm->codec, &cap);
-		*channel_config = cap.cap.valueInt;
-	}
+	if (sample_rate) *sample_rate = mo->sample_rate;
+	if (bits_per_sample) *bits_per_sample = mo->bits_per_sample;
+	if (num_channels) *num_channels = mo->num_channels;
+	if (channel_config) *channel_config = mo->channel_config;
 	return GF_TRUE;
+}
+
+static void gf_mo_update_visual_info(GF_MediaObject *mo)
+{
+	GF_Channel *ch;
+	GF_NetworkCommand com;
+
+	GF_CodecCapability cap;
+	if ((mo->type != GF_MEDIA_OBJECT_VIDEO) && (mo->type!=GF_MEDIA_OBJECT_TEXT)) return;
+
+	cap.CapCode = GF_CODEC_WIDTH;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->width = cap.cap.valueInt;
+
+	cap.CapCode = GF_CODEC_HEIGHT;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->height = cap.cap.valueInt;
+
+	if (mo->type==GF_MEDIA_OBJECT_TEXT) return;
+
+	cap.CapCode = GF_CODEC_FLIP;
+	cap.cap.valueInt = 0;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->is_flipped = cap.cap.valueInt ? GF_TRUE : GF_FALSE;
+
+	cap.CapCode = GF_CODEC_STRIDE;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->stride = cap.cap.valueInt;
+
+	cap.CapCode = GF_CODEC_PIXEL_FORMAT;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->pixelformat = cap.cap.valueInt;
+
+	cap.CapCode = GF_CODEC_FPS;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->odm->codec->fps = cap.cap.valueFloat;
+
+	cap.CapCode = GF_CODEC_NBVIEWS;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->nb_views = cap.cap.valueInt;
+
+	cap.CapCode = GF_CODEC_NBLAYERS;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->nb_layers = cap.cap.valueInt;
+
+	if (mo->odm && mo->odm->parentscene->is_dynamic_scene) {
+#ifndef GPAC_DISABLE_VRML
+		const char *name = gf_node_get_name(gf_event_target_get_node(gf_mo_event_target_get(mo, 0)));
+		if (name && !strcmp(name, "DYN_VIDEO1")) {
+			const char *opt;
+			u32 r, g, b, a;
+			M_Background2D *back = (M_Background2D *) gf_sg_find_node_by_name(mo->odm->parentscene->graph, "DYN_BACK");
+			if (back) {
+				switch (cap.cap.valueInt) {
+				case GF_PIXEL_ARGB:
+				case GF_PIXEL_RGBA:
+				case GF_PIXEL_YUVA:
+					opt = gf_cfg_get_key(mo->odm->term->user->config, "Compositor", "BackColor");
+					if (!opt) {
+						gf_cfg_set_key(mo->odm->term->user->config, "Compositor", "BackColor", "FF999999");
+						opt = "FF999999";
+					}
+					sscanf(opt, "%02X%02X%02X%02X", &a, &r, &g, &b);
+					back->backColor.red = INT2FIX(r)/255;
+					back->backColor.green = INT2FIX(g)/255;
+					back->backColor.blue = INT2FIX(b)/255;
+					break;
+				default:
+					back->backColor.red = back->backColor.green = back->backColor.blue = 0;
+					break;
+				}
+				gf_node_dirty_set((GF_Node *)back, 0, GF_TRUE);
+			}
+		}
+#endif
+	}
+	/*get PAR settings*/
+	cap.CapCode = GF_CODEC_PAR;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->pixel_ar = cap.cap.valueInt;
+	if (! (mo->pixel_ar & 0x0000FFFF)) mo->pixel_ar = 0;
+	if (! (mo->pixel_ar & 0xFFFF0000)) mo->pixel_ar = 0;
+
+	memset(&com, 0, sizeof(GF_NetworkCommand));
+	ch = (GF_Channel *)gf_list_get(mo->odm->channels, 0);
+	if (!ch) return;
+	com.base.on_channel = ch;
+
+	/**/
+	if (! mo->pixel_ar) {
+		com.base.command_type = GF_NET_CHAN_GET_PIXEL_AR;
+		if (gf_term_service_command(ch->service, &com) == GF_OK) {
+			if ((com.par.hSpacing>65535) || (com.par.vSpacing>65535)) {
+				com.par.hSpacing>>=16;
+				com.par.vSpacing>>=16;
+			}
+			if (com.par.hSpacing|| com.par.vSpacing)
+				mo->pixel_ar = (com.par.hSpacing<<16) | com.par.vSpacing;
+		}
+	}
+
+	com.base.command_type = GF_NET_CHAN_GET_SRD;
+	if ((gf_term_service_command(ch->service, &com) == GF_OK)) {
+		//regular SRD object
+		if (com.srd.w && com.srd.h) {
+			mo->srd_x = com.srd.x;
+			mo->srd_y = com.srd.y;
+			mo->srd_w = com.srd.w;
+			mo->srd_h = com.srd.h;
+
+			if (mo->odm->parentscene->is_dynamic_scene && !mo->odm->parentscene->is_srd) {
+				mo->odm->parentscene->is_srd = GF_TRUE;
+			}
+		}
+		// SRD object with no size but global scene size: HEVC tiled bas object
+		else if (com.srd.width && com.srd.height) {
+			if (mo->odm->parentscene->is_dynamic_scene && !mo->odm->parentscene->is_srd) {
+				mo->odm->parentscene->is_tiled_srd = GF_TRUE;
+			}
+		}
+	}
+}
+
+static void gf_mo_update_audio_info(GF_MediaObject *mo)
+{
+	GF_CodecCapability cap;
+	if (!mo->odm || !mo->odm->codec || (mo->type != GF_MEDIA_OBJECT_AUDIO)) return;
+
+	if (mo->odm->term->bench_mode==2) {
+		mo->sample_rate = 44100;
+		mo->bits_per_sample = 16;
+		mo->num_channels = 2;
+		mo->channel_config = 0;
+		return;
+	}
+	cap.CapCode = GF_CODEC_SAMPLERATE;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->sample_rate = cap.cap.valueInt;
+
+	cap.CapCode = GF_CODEC_NB_CHAN;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->num_channels = cap.cap.valueInt;
+
+	cap.CapCode = GF_CODEC_BITS_PER_SAMPLE;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->bits_per_sample = cap.cap.valueInt;
+
+	cap.CapCode = GF_CODEC_CHANNEL_CONFIG;
+	gf_codec_get_capability(mo->odm->codec, &cap);
+	mo->channel_config = cap.cap.valueInt;
+
+	mo->odm->codec->bytes_per_sec = mo->sample_rate * mo->num_channels * mo->bits_per_sample / 8;
 }
 
 void gf_mo_update_caps(GF_MediaObject *mo)
 {
-	GF_CodecCapability cap;
-
 	mo->flags &= ~GF_MO_IS_INIT;
 
 	if (mo->type == GF_MEDIA_OBJECT_VIDEO) {
-		cap.CapCode = GF_CODEC_FPS;
-		gf_codec_get_capability(mo->odm->codec, &cap);
-		mo->odm->codec->fps = cap.cap.valueFloat;
-	}
-	else if (mo->type == GF_MEDIA_OBJECT_AUDIO) {
-		u32 sr, nb_ch, bps;
-		sr = nb_ch = bps = 0;
-		gf_mo_get_audio_info(mo, &sr, &bps, &nb_ch, NULL);
-		mo->odm->codec->bytes_per_sec = sr * nb_ch * bps / 8;
+		gf_mo_update_visual_info(mo);
+	} else if (mo->type == GF_MEDIA_OBJECT_AUDIO) {
+		gf_mo_update_audio_info(mo);
 	}
 }
 
+static Bool gf_odm_check_cb_resize(GF_MediaObject *mo, GF_Codec *codec)
+{
+	/*resize requested - if last frame destroy CB and force a decode*/
+	if (codec->force_cb_resize && (codec->CB->UnitCount<=1)) {
+		GF_CMUnit *CU = gf_cm_get_output(codec->CB);
+		if (!CU || (CU->TS==mo->timestamp)) {
+			GF_LOG(GF_LOG_INFO, GF_LOG_CODEC, ("[%s] ODM%d: Resizing output buffer %d -> %d\n", codec->decio->module_name, codec->odm->OD->objectDescriptorID, codec->CB->UnitSize, codec->force_cb_resize));
+			gf_codec_resize_composition_buffer(codec, codec->force_cb_resize);
+			codec->force_cb_resize=0;
+			//decode and resize CB
+			return GF_TRUE;
+		}
+	}
+	return GF_FALSE;
+}
 
 GF_EXPORT
-char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, Bool *eos, u32 *timestamp, u32 *size, s32 *ms_until_pres, s32 *ms_until_next)
+char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, u32 upload_time_ms, Bool *eos, u32 *timestamp, u32 *size, s32 *ms_until_pres, s32 *ms_until_next, GF_MediaDecoderFrame **outFrame)
 {
 	GF_Codec *codec;
 	u32 force_decode_mode = 0;
 	u32 obj_time;
 	GF_CMUnit *CU;
 	s32 diff;
-	Bool bench_mode;
+	Bool bench_mode, skip_resync;
 
 	*eos = GF_FALSE;
 	*timestamp = mo->timestamp;
 	*size = mo->framesize;
 	if (ms_until_pres) *ms_until_pres = mo->ms_until_pres;
 	if (ms_until_next) *ms_until_next = mo->ms_until_next;
+	if (outFrame) *outFrame = NULL;
 
-	if (!gf_odm_lock_mo(mo))
+	if (!gf_odm_lock_mo(mo)) {
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] ODM %d: Failed to lock MO, returning\n", mo->odm ? mo->odm->OD->objectDescriptorID : 0));
 		return NULL;
+	}
 
 	if (!mo->odm->codec || !mo->odm->codec->CB) {
 		gf_odm_lock(mo->odm, 0);
 		return NULL;
 	}
 
-
 	/*if frame locked return it*/
 	if (mo->nb_fetch) {
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] ODM %d: CU already fetched, returning\n", mo->odm->OD->objectDescriptorID));
 		mo->nb_fetch ++;
 		gf_odm_lock(mo->odm, 0);
 		return mo->frame;
@@ -402,6 +471,7 @@ char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, Bool *eos, u32
 
 	/*not running and no resync (ie audio)*/
 	if (!resync && !gf_cm_is_running(codec->CB)) {
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] ODM %d: CB not running, returning\n", mo->odm->OD->objectDescriptorID));
 		gf_odm_lock(mo->odm, 0);
 		return NULL;
 	}
@@ -411,26 +481,21 @@ char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, Bool *eos, u32
 	bench_mode = mo->odm->term->bench_mode;
 
 	/*resize requested - if last frame destroy CB and force a decode*/
-	if (codec->force_cb_resize && (codec->CB->UnitCount<=1)) {
-		CU = gf_cm_get_output(codec->CB);
-		if (!CU || (CU->TS==mo->timestamp)) {
-			GF_LOG(GF_LOG_INFO, GF_LOG_CODEC, ("[%s] ODM%d: Resizing output buffer %d -> %d\n", codec->decio->module_name, codec->odm->OD->objectDescriptorID, codec->CB->UnitSize, codec->force_cb_resize));
-			gf_codec_resize_composition_buffer(codec, codec->force_cb_resize);
-			codec->force_cb_resize=0;
-            //decode and resize CB
-			force_decode_mode = 1;
-		}
+	if (gf_odm_check_cb_resize(mo, codec)) {
+		force_decode_mode = 1;
 	}
 
 	/*fast forward, bench mode with composition memory: force one decode if no data is available*/
-    if (! *eos && ((codec->ck->speed > FIX_ONE) || (codec->odm->term->bench_mode && !codec->CB->no_allocation) || (codec->type==GF_STREAM_AUDIO) ) ) {
-        force_decode_mode = 2;
-    }
+	if (! *eos && ((codec->ck->speed > FIX_ONE) || (codec->odm->term->bench_mode && !codec->CB->no_allocation) || (codec->type==GF_STREAM_AUDIO) ) ) {
+		force_decode_mode = 2;
+	}
 
 	if (force_decode_mode) {
 		u32 retry = 100;
 		gf_odm_lock(mo->odm, 0);
 		while (retry) {
+			gf_odm_check_cb_resize(mo, codec);
+			
 			if (gf_term_lock_codec(codec, GF_TRUE, GF_TRUE)) {
 				gf_codec_process(codec, 1);
 				gf_term_lock_codec(codec, GF_FALSE, GF_TRUE);
@@ -440,16 +505,18 @@ char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, Bool *eos, u32
 			CU = gf_cm_get_output(codec->CB);
 			if (CU)
 				break;
-
+			
 			retry--;
 			//we will wait max 100 ms for the CB to be re-fill
 			gf_sleep(1);
 		}
 		if (!retry && (force_decode_mode==1)) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[ODM%d] At %d could not resize, decode and fetch next frame in 100 ms - blank frame after TS %d\n", mo->odm->OD->objectDescriptorID, gf_clock_time(codec->ck), mo->timestamp));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[ODM%d] At %d could not resize, decode and fetch next frame in 100 ms - blank frame after TS %u\n", mo->odm->OD->objectDescriptorID, gf_clock_time(codec->ck), mo->timestamp));
 		}
-		if (!gf_odm_lock_mo(mo))
+		if (!gf_odm_lock_mo(mo)) {
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] ODM %d: Failed to lock ODM\n", mo->odm->OD->objectDescriptorID));
 			return NULL;
+		}
 	}
 
 	/*new frame to fetch, lock*/
@@ -457,6 +524,7 @@ char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, Bool *eos, u32
 	/*no output*/
 	if (!CU || (CU->RenderedLength == CU->dataLength)) {
 		gf_odm_lock(mo->odm, 0);
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] No CU available\n", mo->odm->OD->objectDescriptorID));
 		return NULL;
 	}
 
@@ -479,13 +547,36 @@ char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, Bool *eos, u32
 	/*resync*/
 	obj_time = gf_clock_time(codec->ck);
 
+	skip_resync = GF_FALSE;
 	//no drop mode, only for speed = 1: all frames are presented, we discard the current output only if already presented and next frame time is mature
-	if ((codec->ck->speed==1) && !(mo->odm->term->flags & GF_TERM_DROP_LATE_FRAMES) && (mo->type==GF_MEDIA_OBJECT_VIDEO)) {
+	if ((codec->ck->speed == FIX_ONE) && (mo->type==GF_MEDIA_OBJECT_VIDEO)  && !(codec->flags & GF_ESM_CODEC_IS_LOW_LATENCY) ) {
+
+
+		if (!(mo->odm->term->flags & GF_TERM_DROP_LATE_FRAMES)) {
+			//if the next AU is at most 1 sec from the current clock use no drop mode
+//			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] At %d frame TS %u next frame TS %d next data length %d (%d in CB)\n", mo->odm->OD->objectDescriptorID, obj_time, CU->TS, CU->next->TS, CU->next->dataLength, codec->CB->UnitCount));
+			if (CU->next->dataLength && (CU->next->TS + 1000 >= obj_time)) {
+				skip_resync = GF_TRUE;
+			} else {
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] At %u frame TS %u next frame TS %d too late in no-drop mode, enabling drop - resync mode %d\n", mo->odm->OD->objectDescriptorID, obj_time, CU->TS, CU->next->TS, resync));
+			}
+		}
+	}
+
+	if (skip_resync) {
 		resync=GF_MO_FETCH;
-		if (/*gf_clock_is_started(mo->odm->codec->ck) && */ (mo->timestamp==CU->TS) && CU->next->dataLength && (CU->next->TS <= obj_time) ) {
+		//we are in no resync mode, drop current frame once played and object time just matured
+		//do it only if clock is started or if compositor step mode is set
+		//the time threshold for fecthing should is given by the caller
+		if ( (gf_clock_is_started(codec->ck) || mo->odm->term->compositor->step_mode)
+
+			&& (mo->timestamp==CU->TS) && CU->next->dataLength && (CU->next->TS + upload_time_ms <= obj_time) ) {
+			
 			gf_cm_drop_output(codec->CB);
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] Switching to next CU CTS %u now %u\n", mo->odm->OD->objectDescriptorID, CU->next->TS, obj_time));
 			CU = gf_cm_get_output(codec->CB);
 			if (!CU) {
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] No next CU available, skipping\n", mo->odm->OD->objectDescriptorID));
 				gf_odm_lock(mo->odm, 0);
 				return NULL;
 			}
@@ -493,10 +584,12 @@ char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, Bool *eos, u32
 	}
 
 	if (resync) {
-		u32 nb_droped = 0;
+		u32 nb_dropped = 0;
 		while (1) {
-			if (CU->TS*codec->ck->speed >= obj_time*codec->ck->speed)
+			if (codec->ck->speed > 0 ? CU->TS >= obj_time : CU->TS <= obj_time )
 				break;
+
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] Try to drop frame TS %u next frame TS %u length %d obj time %u\n", mo->odm->OD->objectDescriptorID, CU->TS, CU->next->TS, CU->next->dataLength, obj_time));
 
 			if (!CU->next->dataLength) {
 				if (force_decode_mode) {
@@ -507,23 +600,24 @@ char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, Bool *eos, u32
 						gf_term_lock_codec(codec, GF_FALSE, GF_TRUE);
 					}
 					gf_odm_lock(mo->odm, 1);
-					if (!CU->next->dataLength)
+					if (!CU->next->dataLength) {
 						break;
+					}
 				} else {
 					break;
 				}
 			}
 
 			/*figure out closest time*/
-			if (codec->ck->speed*CU->next->TS > codec->ck->speed*obj_time) {
+			if (codec->ck->speed > 0 ? CU->next->TS > obj_time : CU->next->TS < obj_time) {
 				*eos = GF_FALSE;
 				break;
 			}
 
-			nb_droped ++;
-			if (nb_droped>1) {
-				GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[ODM%d] At OTB %u dropped frame TS %u\n", mo->odm->OD->objectDescriptorID, obj_time, CU->TS));
-				codec->nb_droped++;
+			nb_dropped ++;
+			if (nb_dropped>=1) {
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] At OTB %u dropped frame TS %u\n", mo->odm->OD->objectDescriptorID, obj_time, CU->TS));
+				codec->nb_dropped++;
 			}
 			/*discard*/
 			CU->RenderedLength = CU->dataLength = 0;
@@ -537,13 +631,16 @@ char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, Bool *eos, u32
 
 	mo->framesize = CU->dataLength - CU->RenderedLength;
 	mo->frame = CU->data + CU->RenderedLength;
+	mo->media_frame = CU->frame;
 
 	if (CU->next->dataLength) {
 		diff = (s32) (CU->next->TS) - (s32) obj_time;
-		mo->ms_until_next = FIX2INT(diff * mo->speed);
 	} else  {
-		mo->ms_until_next = 1;
+		diff = mo->odm->codec->min_frame_dur;
 	}
+//	fprintf(stderr, "diff is %d ms\n", diff);
+	mo->ms_until_next = FIX2INT(diff * mo->speed);
+
 	diff = (mo->speed >= 0) ? (s32) (CU->TS) - (s32) obj_time : (s32) obj_time - (s32) (CU->TS);
 	mo->ms_until_pres = FIX2INT(diff * mo->speed);
 
@@ -559,24 +656,32 @@ char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, Bool *eos, u32
 			while (s && s->root_od->addon) {
 				s = s->root_od->parentscene;
 			}
-			s->root_od->media_current_time = mo->odm->media_current_time;
+			if (s && s->root_od)
+				s->root_od->media_current_time = mo->odm->media_current_time;
+		}
+
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d (%s)] At OTB %u fetch frame TS %u size %d (previous TS %u) - %d unit in CB - UTC "LLU" ms - %d ms until CTS is due - %d ms until next frame\n", mo->odm->OD->objectDescriptorID, mo->odm->net_service->url, gf_clock_time(codec->ck), CU->TS, mo->framesize, mo->timestamp, codec->CB->UnitCount, gf_net_get_utc(), mo->ms_until_pres, mo->ms_until_next ));
+
+		if (CU->sender_ntp) {
+			s32 ntp_diff = gf_net_get_ntp_diff_ms(CU->sender_ntp);
+			GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[ODM%d (%s)] Frame TS %u NTP diff with sender %d ms\n", mo->odm->OD->objectDescriptorID, mo->odm->net_service->url, CU->TS, ntp_diff));
 		}
 
 		mo->timestamp = CU->TS;
 		/*signal EOS after rendering last frame, not while rendering it*/
 		*eos = GF_FALSE;
 
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d (%s)] At OTB %u fetch frame TS %u size %d (previous TS %d) - %d unit in CB - UTC "LLU" ms - %d ms until CTS is due - %d ms until next frame\n", mo->odm->OD->objectDescriptorID, mo->odm->net_service->url, gf_clock_time(codec->ck), CU->TS, mo->framesize, mo->timestamp, codec->CB->UnitCount, gf_net_get_utc(), mo->ms_until_pres, mo->ms_until_next ));
 	} else if (*eos) {
 		//already rendered the last frame, consider we no longer have pending late frame on this stream
 		mo->ms_until_pres = 0;
+	} else {
+//		GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d (%s)] At OTB %u same frame fetch TS %u\n", mo->odm->OD->objectDescriptorID, mo->odm->net_service->url, obj_time, CU->TS ));
 	}
 
 	/*also adjust CU time based on consummed bytes in input, since some codecs output very large audio chunks*/
 	if (codec->bytes_per_sec) mo->timestamp += CU->RenderedLength * 1000 / codec->bytes_per_sec;
 
 	if (bench_mode) {
-//		mo->timestamp = gf_clock_time(codec->ck);
 		mo->ms_until_pres = -1;
 		mo->ms_until_next = 1;
 	}
@@ -587,20 +692,37 @@ char *gf_mo_fetch_data(GF_MediaObject *mo, GF_MOFetchMode resync, Bool *eos, u32
 	*size = mo->framesize;
 	if (ms_until_pres) *ms_until_pres = mo->ms_until_pres;
 	if (ms_until_next) *ms_until_next = mo->ms_until_next;
+	if (outFrame) *outFrame = mo->media_frame;
+
 	gf_term_service_media_event(mo->odm, GF_EVENT_MEDIA_TIME_UPDATE);
 
 	gf_odm_lock(mo->odm, 0);
-	if (codec->direct_vout) return (char *) codec->CB->pY;
+	if (mo->media_frame)
+		return (char *) mo->media_frame;
+
+	if (codec->direct_vout)
+		return (char *) codec->CB->pY;
 	return mo->frame;
 }
 
 GF_EXPORT
-GF_Err gf_mo_get_raw_image_planes(GF_MediaObject *mo, u8 **pY_or_RGB, u8 **pU, u8 **pV)
+GF_Err gf_mo_get_raw_image_planes(GF_MediaObject *mo, u8 **pY_or_RGB, u8 **pU, u8 **pV, u32 *stride_luma_rgb, u32 *stride_chroma)
 {
+	u32 stride;
 	if (!mo || !mo->odm || !mo->odm->codec) return GF_BAD_PARAM;
-	*pY_or_RGB = mo->odm->codec->CB->pY;
-	*pU = mo->odm->codec->CB->pU;
-	*pV = mo->odm->codec->CB->pV;
+	if (mo->odm->codec->direct_vout) {
+		*pY_or_RGB = mo->odm->codec->CB->pY;
+		*pU = mo->odm->codec->CB->pU;
+		*pV = mo->odm->codec->CB->pV;
+		return GF_OK;
+	}
+	if (!mo->odm->codec->direct_frame_output || !mo->media_frame)
+		return GF_BAD_PARAM;
+
+	mo->media_frame->GetPlane(mo->media_frame, 0, (const char **) pY_or_RGB, stride_luma_rgb);
+	mo->media_frame->GetPlane(mo->media_frame, 1, (const char **) pU, &stride);
+	mo->media_frame->GetPlane(mo->media_frame, 2, (const char **) pV, &stride);
+	*stride_chroma = stride;
 	return GF_OK;
 }
 
@@ -610,7 +732,8 @@ void gf_mo_release_data(GF_MediaObject *mo, u32 nb_bytes, s32 drop_mode)
 #if 0
 	u32 obj_time;
 #endif
-	if (!gf_odm_lock_mo(mo)) return;
+	if (!gf_odm_lock_mo(mo))
+		return;
 
 	if (!mo->nb_fetch || !mo->odm->codec) {
 		gf_odm_lock(mo->odm, 0);
@@ -626,7 +749,7 @@ void gf_mo_release_data(GF_MediaObject *mo, u32 nb_bytes, s32 drop_mode)
 			drop_mode=1;
 		else
 	*/
-	if (mo->odm->codec->CB->no_allocation)
+	if (mo->odm->codec->CB->no_allocation && (mo->odm->codec->CB->Capacity==1) )
 		drop_mode = 1;
 
 
@@ -654,7 +777,7 @@ void gf_mo_release_data(GF_MediaObject *mo, u32 nb_bytes, s32 drop_mode)
 		if (mo->odm->codec->CB->output->RenderedLength == mo->odm->codec->CB->output->dataLength) {
 			if (drop_mode) {
 				gf_cm_drop_output(mo->odm->codec->CB);
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] At OTB %u drop frame TS %u\n", mo->odm->OD->objectDescriptorID, gf_clock_time(mo->odm->codec->ck), mo->timestamp));
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM%d] At OTB %u released frame TS %u\n", mo->odm->OD->objectDescriptorID, gf_clock_time(mo->odm->codec->ck), mo->timestamp));
 			} else {
 				/*we cannot drop since we don't know the speed of the playback (which can even be frame by frame)*/
 
@@ -690,6 +813,23 @@ void gf_mo_get_object_time(GF_MediaObject *mo, u32 *obj_time)
 	gf_odm_lock(mo->odm, 0);
 }
 
+GF_EXPORT
+s32 gf_mo_get_clock_drift(GF_MediaObject *mo)
+{
+	s32 res = 0;
+	if (!gf_odm_lock_mo(mo)) return 0;
+
+	/*regular media codec...*/
+	if (mo->odm->codec) {
+		res = mo->odm->codec->ck->drift;
+	}
+	/*BIFS object */
+	else if (mo->odm->subscene && mo->odm->subscene->scene_codec) {
+		res = mo->odm->subscene->scene_codec->ck->drift;
+	}
+	gf_odm_lock(mo->odm, 0);
+	return res;
+}
 
 GF_EXPORT
 void gf_mo_play(GF_MediaObject *mo, Double clipBegin, Double clipEnd, Bool can_loop)
@@ -1192,7 +1332,7 @@ u32 gf_mo_get_last_frame_time(GF_MediaObject *mo)
 GF_EXPORT
 Bool gf_mo_is_private_media(GF_MediaObject *mo)
 {
-	if (mo->odm && mo->odm->codec && mo->odm->codec->decio && (mo->odm->codec->decio->InterfaceType==GF_PRIVATE_MEDIA_DECODER_INTERFACE)) return GF_TRUE;
+	if (mo && mo->odm && mo->odm->codec && mo->odm->codec->decio && (mo->odm->codec->decio->InterfaceType==GF_PRIVATE_MEDIA_DECODER_INTERFACE)) return GF_TRUE;
 	return GF_FALSE;
 }
 
@@ -1213,7 +1353,7 @@ GF_EXPORT
 Bool gf_mo_is_raw_memory(GF_MediaObject *mo)
 {
 	if (!mo->odm || !mo->odm->codec) return GF_FALSE;
-	return mo->odm->codec->direct_vout;
+	return mo->odm->codec->direct_frame_output || mo->odm->codec->direct_vout ;
 }
 
 GF_EXPORT
@@ -1361,4 +1501,82 @@ void gf_mo_del(GF_MediaObject *mo)
 	gf_list_del(mo->evt_targets);
 	gf_free(mo);
 }
+
+
+Bool gf_mo_get_srd_info(GF_MediaObject *mo, GF_MediaObjectVRInfo *vr_info)
+{
+	GF_Scene *scene;
+	if (!vr_info) return GF_FALSE;
+	if (!gf_odm_lock_mo(mo)) return GF_FALSE;
+	
+	scene = mo->odm->subscene ? mo->odm->subscene : mo->odm->parentscene;
+	memset(vr_info, 0, sizeof(GF_MediaObjectVRInfo));
+
+	vr_info->srd_x = mo->srd_x;
+	vr_info->srd_y = mo->srd_y;
+	vr_info->srd_w = mo->srd_w;
+	vr_info->srd_h = mo->srd_h;
+	vr_info->srd_min_x = scene->srd_min_x;
+	vr_info->srd_min_y = scene->srd_min_y;
+	vr_info->srd_max_x = scene->srd_max_x;
+	vr_info->srd_max_y = scene->srd_max_y;
+	vr_info->is_tiled_srd = scene->is_tiled_srd;
+	
+	gf_sg_get_scene_size_info(scene->graph, &vr_info->scene_width, &vr_info->scene_height);
+
+	gf_odm_lock(mo->odm, 0);
+	return (!scene->vr_type && !scene->is_srd) ? GF_FALSE : GF_TRUE;
+}
+
+/*sets quality hint for this media object  - quality_rank is between 0 (min quality) and 100 (max quality)*/
+void gf_mo_hint_quality_degradation(GF_MediaObject *mo, u32 quality_degradation)
+{
+	if (!gf_odm_lock_mo(mo)) return;
+	if (!mo->odm || !mo->odm->codec) {
+		gf_odm_lock(mo->odm, 0);
+		return;
+	}
+	if (mo->quality_degradation_hint != quality_degradation) {
+		GF_NetworkCommand com;
+		memset(&com, 0, sizeof(GF_NetworkCommand));
+		com.base.command_type = GF_NET_SERVICE_QUALITY_SWITCH;
+		com.base.on_channel = gf_list_get(mo->odm->codec->inChannels, 0);
+		com.switch_quality.quality_degradation = quality_degradation;
+		gf_term_service_command(mo->odm->net_service, &com);
+		
+		mo->quality_degradation_hint = quality_degradation;
+	}
+
+	gf_odm_lock(mo->odm, 0);
+}
+
+void gf_mo_hint_visible_rect(GF_MediaObject *mo, u32 min_x, u32 max_x, u32 min_y, u32 max_y)
+{
+	
+	if (!gf_odm_lock_mo(mo)) return;
+	if (!mo->odm || !mo->odm->codec) {
+		gf_odm_lock(mo->odm, 0);
+		return;
+	}
+	if ((mo->view_min_x!=min_x) || (mo->view_max_x!=max_x) || (mo->view_min_y!=min_y) || (mo->view_max_y!=max_y)) {
+		GF_NetworkCommand com;
+		mo->view_min_x = min_x;
+		mo->view_max_x = max_x;
+		mo->view_min_y = min_y;
+		mo->view_max_y = max_y;
+		
+		memset(&com, 0, sizeof(GF_NetworkCommand));
+		com.base.command_type = GF_NET_CHAN_VISIBILITY_HINT;
+		com.base.on_channel = gf_list_get(mo->odm->codec->inChannels, 0);
+		com.visibility_hint.min_x = min_x;
+		com.visibility_hint.max_x = max_x;
+		com.visibility_hint.min_y = min_y;
+		com.visibility_hint.max_y = max_y;
+		gf_term_service_command(mo->odm->net_service, &com);
+	}
+	
+	gf_odm_lock(mo->odm, 0);
+}
+
+
 

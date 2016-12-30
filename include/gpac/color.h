@@ -37,7 +37,12 @@ extern "C" {
 
 
 /*!
- *\addtogroup color_grp color
+ *	\file <gpac/color.h>
+ *	\brief Color conversion.
+ */
+	
+/*!
+ *\addtogroup color_grp Color
  *\ingroup utils_grp
  *\brief Color tools
  *
@@ -65,12 +70,14 @@ typedef struct
 	s32 pitch_y;
 	/*!Pixel format of the video framebuffer*/
 	u32 pixel_format;
-	/*!pointer to the begining of the video memory (top-left corner)*/
+	/*!pointer to the beginning of the video memory (top-left corner)*/
 	char *video_buffer;
 	/*!indicates that the video data reside on systems memory or video card one*/
 	Bool is_hardware_memory;
 	/*!indicates U and V (and optional alpha) buffers in case of planar video with separated component. If not set, all components are in the video_buffer pointer*/
 	char *u_ptr, *v_ptr, *a_ptr;
+	/*! alpha value for this surface*/
+	u8 global_alpha;
 } GF_VideoSurface;
 
 /*!\brief Video Window object
@@ -147,7 +154,7 @@ typedef u32 GF_Color;
 
 /*!Parses color from HTML name or hexa representation
  *\param name name of the color to parse
- *\return @GF_Color value with alpha set to 0xFF if successfull, 0 otherwise
+ *\return GF_Color value with alpha set to 0xFF if successfull, 0 otherwise
 */
 GF_Color gf_color_parse(const char *name);
 
@@ -256,7 +263,6 @@ typedef struct
 GF_Err gf_stretch_bits(GF_VideoSurface *dst, GF_VideoSurface *src, GF_Window *dst_wnd, GF_Window *src_wnd, u8 alpha, Bool flip, GF_ColorKey *colorKey, GF_ColorMatrix * cmat);
 
 
-
 /*!\brief copies YUV 420 10 bits to YUV destination (only YUV420 8 bits supported)
  *
  * Software stretch of source surface ont destination surface.
@@ -268,11 +274,18 @@ GF_Err gf_stretch_bits(GF_VideoSurface *dst, GF_VideoSurface *src, GF_Window *ds
  *\param src_width source width in pixels
  *\param src_height source height in pixels
  *\param src_wnd source rectangle. If null the entire source surface is used
+ *\param swap_uv If GF_TRUE, swaps U and V components.
  *\return error code if any
  */
 GF_Err gf_color_write_yv12_10_to_yuv(GF_VideoSurface *vs_dst,  unsigned char *pY, unsigned char *pU, unsigned char*pV, u32 src_stride, u32 src_width, u32 src_height, const GF_Window *src_wnd, Bool swap_uv);
 
 /*! @} */
+
+
+GF_Err gf_color_write_yuv422_10_to_yuv422(GF_VideoSurface *vs_dst,  unsigned char *pY, unsigned char *pU, unsigned char*pV, u32 src_stride, u32 src_width, u32 src_height, const GF_Window *src_wnd, Bool swap_uv);
+GF_Err gf_color_write_yuv444_10_to_yuv444(GF_VideoSurface *vs_dst,  unsigned char *pY, unsigned char *pU, unsigned char*pV, u32 src_stride, u32 src_width, u32 src_height, const GF_Window *src_wnd, Bool swap_uv);
+GF_Err gf_color_write_yuv422_10_to_yuv(GF_VideoSurface *vs_dst, unsigned char *pY, unsigned char *pU, unsigned char*pV, u32 src_stride, u32 src_width, u32 src_height, const GF_Window *src_wnd, Bool swap_uv);
+GF_Err gf_color_write_yuv444_10_to_yuv(GF_VideoSurface *vs_dst, unsigned char *pY, unsigned char *pU, unsigned char*pV, u32 src_stride, u32 src_width, u32 src_height, const GF_Window *src_wnd, Bool swap_uv);
 
 
 #ifdef __cplusplus

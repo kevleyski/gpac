@@ -32,6 +32,20 @@
 extern "C" {
 #endif
 
+/*!
+ *	\file <gpac/ietf.h>
+ *	\brief Tools for real-time streaming over IP using RTP/RTCP/RTSP/SDP .
+ */
+	
+/*!
+ *	\addtogroup ietf_grp RTP Streaming
+ *	\ingroup media_grp
+ *	\brief  Tools for real-time streaming over IP using RTP/RTCP/RTSP/SDP.
+ *
+ *This section documents the tools used for real-time streaming over IP using RTP/RTCP/RTSP/SDP.
+ *	@{
+ */
+
 #include <gpac/list.h>
 
 #ifndef GPAC_DISABLE_STREAMING
@@ -352,6 +366,7 @@ typedef struct
 	char *Session;
 	u32 SessionTimeOut;
 	Double Speed;
+	u32 StreamID; //only when sess->satip is true
 	char *Timestamp;
 	/*nota : RTSP allows several configurations for a single channel (multicast and
 	unicast , ...). Usually only 1*/
@@ -395,7 +410,7 @@ are closed. As this lib doesn't maintain the number of valid streams
 you MUST call reset when all your streams are shutdown (either requested through
 TEARDOWN or signaled through RTCP BYE packets for RTP, or any other signaling means
 for other protocols)
-reset connection will destroy the socket - this is isefull in case of timeouts, because
+reset connection will destroy the socket - this is useful in case of timeouts, because
 some servers do not restart with the right CSeq...*/
 void gf_rtsp_session_reset(GF_RTSPSession *sess, Bool ResetConnection);
 
@@ -512,6 +527,9 @@ typedef struct tagRTP_HEADER {
 	u32 SSRC;
 	/*in our basic client, CSRC should always be NULL*/
 	u32 CSRC[16];
+
+	/*internal to out lib*/
+	u64 recomputed_ntp_ts;
 } GF_RTPHeader;
 
 
@@ -602,7 +620,7 @@ returns amount of data read (raw UDP packet size)*/
 u32 gf_rtp_read_rtp(GF_RTPChannel *ch, char *buffer, u32 buffer_size);
 u32 gf_rtp_read_rtcp(GF_RTPChannel *ch, char *buffer, u32 buffer_size);
 
-/*decodes an RTP packet and gets the begining of the RTP payload*/
+/*decodes an RTP packet and gets the beginning of the RTP payload*/
 GF_Err gf_rtp_decode_rtp(GF_RTPChannel *ch, char *pck, u32 pck_size, GF_RTPHeader *rtp_hdr, u32 *PayloadStart);
 
 /*decodes an RTCP packet and update timing info, send RR too*/
@@ -1076,7 +1094,7 @@ enum
 	GF_RTP_PAYT_H264_SVC,
 	/*use HEVC/H265 transport - no RFC yet, only draft*/
 	GF_RTP_PAYT_HEVC,
-	GF_RTP_PAYT_SHVC
+	GF_RTP_PAYT_LHVC
 };
 
 
@@ -1092,7 +1110,7 @@ enum
 	You should ONLY modify the GF_SLHeader while packetizing, all the rest is private
 	to the tool.
 	Also note that AU start/end is automatically updated, therefore you should only
-	set CTS-DTS-OCR-sequenceNumber (which is automatically incremented when spliting a payload)
+	set CTS-DTS-OCR-sequenceNumber (which is automatically incremented when splitting a payload)
 	-padding-idle infos
 	SL flags are computed on the fly, but you may wish to modify them in case of
 	packet drop/... at the encoder side
@@ -1195,7 +1213,7 @@ typedef struct __tag_rtp_packetizer GP_RTPPacketizer;
 		@offset_from_orig: start offset in input buffer
 	@OnData: to call each time data is added to current RTP packet (either extra data from payload or
 		data from input when not using referencing)
-		@is_head: signal the data added MUST be inserted at the begining of the payload. Otherwise data
+		@is_head: signal the data added MUST be inserted at the beginning of the payload. Otherwise data
 		is concatenated as received
 */
 GP_RTPPacketizer *gf_rtp_builder_new(u32 rtp_payt,
@@ -1340,6 +1358,8 @@ void gf_rtp_depacketizer_get_slconfig(GF_RTPDepacketizer *rtp, GF_SLConfig *sl);
 
 
 #endif /*GPAC_DISABLE_STREAMING*/
+
+/*! @} */
 
 #ifdef __cplusplus
 }

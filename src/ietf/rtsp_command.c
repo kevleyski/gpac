@@ -35,6 +35,7 @@ GF_RTSPCommand *gf_rtsp_command_new()
 {
 	GF_RTSPCommand *tmp;
 	GF_SAFEALLOC(tmp, GF_RTSPCommand);
+	if (!tmp) return NULL;
 	tmp->Xtensions = gf_list_new();
 	tmp->Transports = gf_list_new();
 	return tmp;
@@ -551,7 +552,7 @@ GF_Err gf_rtsp_get_command(GF_RTSPSession *sess, GF_RTSPCommand *com)
 	if (sess->last_session_id && com->Session && !strcmp(com->Session, sess->last_session_id)
 	        && com->Connection && !stricmp(com->Connection, "Close")) {
 
-		gf_rtsp_session_reset(sess, 0);
+		gf_rtsp_session_reset(sess, GF_FALSE);
 		//destroy the socket
 		if (sess->connection) gf_sk_del(sess->connection);
 		sess->connection = NULL;

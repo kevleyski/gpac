@@ -26,6 +26,21 @@
 #ifndef _GF_MPEG_TS_H_
 #define _GF_MPEG_TS_H_
 
+/*!
+ *	\file <gpac/mpegts.h>
+ *	\brief MPEG-TS demultiplexer and multiplexer APIs
+ */
+
+/*!
+ *	\addtogroup m2ts_grp MPEG-2 TS
+ *	\ingroup media_grp
+ *	\brief MPEG-TS demultiplexer and multiplexer APIs.
+ *
+ *This section documents the MPEG-TS demultiplexer and multiplexer APIs.
+ *	@{
+ */
+
+
 #include <gpac/list.h>
 #include <gpac/network.h>
 #include <gpac/thread.h>
@@ -215,8 +230,10 @@ enum
 	GF_M2TS_VIDEO_H264				= 0x1B,
 	GF_M2TS_VIDEO_SVC				= 0x1F,
 	GF_M2TS_VIDEO_HEVC				= 0x24,
-	//NOT NORMATIVE YET!!!
-	GF_M2TS_VIDEO_SHVC				= 0x27,
+	GF_M2TS_VIDEO_SHVC				= 0x28,
+	GF_M2TS_VIDEO_SHVC_TEMPORAL		= 0x29,
+	GF_M2TS_VIDEO_MHVC				= 0x2A,
+	GF_M2TS_VIDEO_MHVC_TEMPORAL		= 0x2B,
 
 	GF_M2TS_VIDEO_DCII				= 0x80,
 	GF_M2TS_AUDIO_AC3				= 0x81,
@@ -268,7 +285,15 @@ typedef struct __gf_dvb_tuner GF_Tuner;
 #define GF_M2TS_MAX_SERVICES	65535
 
 /*Maximum size of the buffer in UDP */
-#define UDP_BUFFER_SIZE	0x4000
+#ifdef WIN32
+#define GF_M2TS_UDP_BUFFER_SIZE	0x80000
+#else
+//fixme - issues on linux and OSX with large stack size
+//we need to change default stack size for TS thread
+#define GF_M2TS_UDP_BUFFER_SIZE	0x40000
+#endif
+
+#define GF_M2TS_MAX_PCR	2576980377811ULL
 
 /*returns readable name for given stream type*/
 const char *gf_m2ts_get_stream_name(u32 streamType);
@@ -341,7 +366,7 @@ enum
 	GF_M2TS_EVT_INT_UPDATE,
 	/*PES packet has been received - assoctiated parameter: PES packet*/
 	GF_M2TS_EVT_PES_PCK,
-	/*PCR has been received - assoctiated parameter: PES packet with no data*/
+	/*PCR has been received - associated parameter: PES packet with no data*/
 	GF_M2TS_EVT_PES_PCR,
 	/*PTS/DTS/PCR info - assoctiated parameter: PES packet with no data*/
 	GF_M2TS_EVT_PES_TIMING,
@@ -509,6 +534,7 @@ typedef struct
 	Bool force_reload;
 	Bool is_paused;
 	Bool is_discontinuity;
+	u64 ntp;
 } GF_M2TS_TemiTimecodeDescriptor;
 
 
@@ -547,6 +573,9 @@ typedef struct
 	Bool is_scalable;
 
 	GF_M2TS_MetadataPointerDescriptor *metadata_pointer_descriptor;
+
+	/*continuity counter check for pure PCR PIDs*/
+	s16 pcr_cc;
 } GF_M2TS_Program;
 
 /*ES flags*/
@@ -566,6 +595,8 @@ enum
 	GF_M2TS_ES_IS_MPE = 1<<5,
 	/*stream is used to send PCR to upper layer*/
 	GF_M2TS_INHERIT_PCR = 1<<6,
+	/*siugnals the stream is used to send the PCR, but is not the original PID carrying it*/
+	GF_M2TS_FAKE_PCR = 1<<7,
 
 	/*all flags above this mask are used by importers & co*/
 	GF_M2TS_ES_STATIC_FLAGS_MASK = 0x0000FFFF,
@@ -865,6 +896,7 @@ struct tag_m2ts_demux
 	Bool force_file_refresh;
 	/*net playing*/
 	GF_Socket *sock;
+	Bool sock_is_delegate;
 
 #ifdef GPAC_HAS_LINUX_DVB
 	/*dvb playing*/
@@ -959,6 +991,7 @@ struct tag_m2ts_demux
 GF_M2TS_Demuxer *gf_m2ts_demux_new();
 void gf_m2ts_demux_del(GF_M2TS_Demuxer *ts);
 void gf_m2ts_reset_parsers(GF_M2TS_Demuxer *ts);
+void gf_m2ts_reset_parsers_for_program(GF_M2TS_Demuxer *ts, GF_M2TS_Program *prog);
 GF_ESD *gf_m2ts_get_esd(GF_M2TS_ES *es);
 GF_Err gf_m2ts_set_pes_framing(GF_M2TS_PES *pes, u32 mode);
 u32 gf_m2ts_pes_get_framing_mode(GF_M2TS_PES *pes);
@@ -973,6 +1006,8 @@ GF_M2TS_SDT *gf_m2ts_get_sdt_info(GF_M2TS_Demuxer *ts, u32 program_id);
 
 Bool gf_m2ts_crc32_check(char *data, u32 len);
 
+/*aborts parsing of the current data (typically needed when parsing done by a different thread). If force_reset_pes is set, all pending pes data is discarded*/
+void gf_m2ts_abort_parsing(GF_M2TS_Demuxer *ts, Bool force_reset_pes);
 
 
 typedef struct
@@ -1098,6 +1133,9 @@ typedef struct __m2ts_mux_stream {
 	/*multiplexer time - NOT THE PCR*/
 	GF_M2TS_Time time;
 
+	GF_M2TS_Time next_time;
+	Bool pcr_only_mode;
+
 	/*table tools*/
 	GF_M2TS_Mux_Table *tables;
 	/*total table sizes for bitrate estimation (PMT/PAT/...)*/
@@ -1109,6 +1147,7 @@ typedef struct __m2ts_mux_stream {
 	u32 refresh_rate_ms;
 	Bool table_needs_update;
 	Bool table_needs_send;
+	Bool force_single_au;
 
 	/*minimal amount of bytes we are allowed to copy frome next AU in the current PES. If no more than this
 	is available in PES, don't copy from next*/
@@ -1215,6 +1254,16 @@ enum
 	GF_SEG_BOUNDARY_FORCE_PCR,
 };
 
+/*AU packing per pes configuration*/
+typedef enum
+{
+	/*only audio AUs are packed in a single PES, video and systems are not (recommended default)*/
+	GF_M2TS_PACK_AUDIO_ONLY,
+	/*never pack AUs in a single PES*/
+	GF_M2TS_PACK_NONE,
+	/*always try to pack AUs in a single PES*/
+	GF_M2TS_PACK_ALL
+} GF_M2TS_PackMode;
 
 struct __m2ts_mux {
 	GF_M2TS_Mux_Program *programs;
@@ -1255,7 +1304,9 @@ struct __m2ts_mux {
 
 	Bool force_pat;
 
-	Bool one_au_per_pes;
+	GF_M2TS_PackMode au_pes_mode;
+
+	Bool enable_forced_pcr;
 
 	Bool eos_found;
 	u64 last_br_time_us;
@@ -1299,9 +1350,9 @@ const char *gf_m2ts_mux_process(GF_M2TS_Mux *muxer, u32 *status, u32 *usec_till_
 u32 gf_m2ts_get_sys_clock(GF_M2TS_Mux *muxer);
 u32 gf_m2ts_get_ts_clock(GF_M2TS_Mux *muxer);
 
-/*set muxer in/out single-au pes mode. In this mode, each PES contains one and only one AU*/
-GF_Err gf_m2ts_mux_use_single_au_pes_mode(GF_M2TS_Mux *muxer, Bool strict_au_pes_mode);
+GF_Err gf_m2ts_mux_use_single_au_pes_mode(GF_M2TS_Mux *muxer, GF_M2TS_PackMode au_pes_mode);
 GF_Err gf_m2ts_mux_set_initial_pcr(GF_M2TS_Mux *muxer, u64 init_pcr_value);
+GF_Err gf_m2ts_mux_enable_pcr_only_packets(GF_M2TS_Mux *muxer, Bool enable_forced_pcr);
 
 /*user inteface functions*/
 GF_Err gf_m2ts_program_stream_update_ts_scale(GF_ESInterface *_self, u32 time_scale);
@@ -1340,9 +1391,6 @@ struct __gf_dvb_tuner {
 };
 
 
-// DVB buffer size 188x20
-#define DVB_BUFFER_SIZE 3760
-
 #endif //GPAC_HAS_LINUX_DVB
 
 
@@ -1357,5 +1405,6 @@ GF_Err gf_m2ts_demuxer_close(GF_M2TS_Demuxer *ts);
 /*quick hack to get M2TS over IP or UDP socket*/
 GF_Err gf_m2ts_get_socket(const char *url, const char *mcast_ifce_or_mobileip, u32 buf_size, GF_Socket **out_socket);
 
+/*! @} */
 
 #endif	//_GF_MPEG_TS_H_

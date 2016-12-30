@@ -29,7 +29,7 @@
 
 /*!
  *	\file <gpac/path2d.h>
- *	\brief 2D Vectorial Path functions.
+ *	\brief 2D Vectorial Path.
  */
 
 
@@ -43,9 +43,9 @@ extern "C" {
 
 
 /*!
- *\addtogroup path_grp path2d
- *\ingroup utils_grp
- *\brief Vectorial 2D Path manipulation functions
+ *\addtogroup path_grp 2D Vector Path
+ *\ingroup math_grp
+ *\brief Vectorial 2D Path manipulation
  *
  *This section documents the 2D path object used in the GPAC framework.
  *	@{
@@ -557,7 +557,7 @@ enum
  */
 typedef struct
 {
-	/*begining of the structure is casted in MFFloat in BIFS, DO NOT CHANGE ORDER*/
+	/*beginning of the structure is casted in MFFloat in BIFS, DO NOT CHANGE ORDER*/
 
 	/*! Number of dashes in the pattern*/
 	u32 num_dash;

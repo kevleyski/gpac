@@ -119,7 +119,7 @@ base_object_type_error: /*error case*/
 			break;
 		}
 		a_cfg.base_object_type = GF_M4A_AAC_LC;
-		a_cfg.has_sbr = 0;
+		a_cfg.has_sbr = GF_FALSE;
 		a_cfg.nb_chan = a_cfg.nb_chan > 2 ? 1 : a_cfg.nb_chan;
 
 		gf_m4a_write_config(&a_cfg, &dsi, &dsi_len);
@@ -139,7 +139,7 @@ base_object_type_error: /*error case*/
 	ctx->num_samples = 1024;
 	ctx->out_size = 2 * ctx->num_samples * ctx->num_channels;
 	ctx->ES_ID = esd->ESID;
-	ctx->signal_mc = ctx->num_channels>2 ? 1 : 0;
+	ctx->signal_mc = ctx->num_channels>2 ? GF_TRUE : GF_FALSE;
 	return GF_OK;
 }
 
@@ -322,7 +322,7 @@ static GF_Err FAAD_ProcessData(GF_MediaDecoder *ifcg,
 	/*FAAD froces us to decode a frame to get channel cfg*/
 	if (ctx->signal_mc) {
 		s32 ch, idx;
-		ctx->signal_mc = 0;
+		ctx->signal_mc = GF_FALSE;
 		idx = 0;
 		/*NOW WATCH OUT!! FAAD may very well decide to output more channels than indicated!!!*/
 		ctx->num_channels = ctx->info.channels;
@@ -432,7 +432,10 @@ static u32 FAAD_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd
 		return GF_CODEC_NOT_SUPPORTED;
 	}
 	/*this codec currently requires AAC config in ESD*/
-	if (!esd->decoderConfig->decoderSpecificInfo || !esd->decoderConfig->decoderSpecificInfo->data) return GF_CODEC_NOT_SUPPORTED;
+	if (!esd->decoderConfig->decoderSpecificInfo || !esd->decoderConfig->decoderSpecificInfo->data) {
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[FAAD] DecoderSpecificInfo missing - cannot initialize\n"));
+		return GF_CODEC_NOT_SUPPORTED;
+	}
 #ifndef GPAC_DISABLE_AV_PARSERS
 	if (gf_m4a_get_config(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, &a_cfg) != GF_OK) return GF_CODEC_NOT_SUPPORTED;
 
@@ -463,7 +466,12 @@ GF_BaseDecoder *NewFAADDec()
 	FAADDec *dec;
 
 	GF_SAFEALLOC(ifce, GF_MediaDecoder);
+	if (!ifce) return NULL;
 	GF_SAFEALLOC(dec, FAADDec);
+	if (!dec) {
+		gf_free(dec);
+		return NULL;
+	}
 	GF_REGISTER_MODULE_INTERFACE(ifce, GF_MEDIA_DECODER_INTERFACE, "FAAD2 Decoder", "gpac distribution")
 
 	ifce->privateStack = dec;

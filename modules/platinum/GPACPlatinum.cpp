@@ -1617,7 +1617,7 @@ Bool GF_UPnP::LoadJS(GF_TermExtJS *param)
 		if (!sep[1]) continue;
 		strcpy(szFriendlyName, sep+1);
 
-		FILE *f = gf_f64_open(szFile, "rt");
+		FILE *f = gf_fopen(szFile, "rt");
 		if (!f) continue;
 
 
@@ -1625,9 +1625,9 @@ Bool GF_UPnP::LoadJS(GF_TermExtJS *param)
 		device->js_source = szFile;
 
 		jsval aval;
-		gf_f64_seek(f, 0, SEEK_END);
-		u32 size = (u32) gf_f64_tell(f);
-		gf_f64_seek(f, 0, SEEK_SET);
+		gf_fseek(f, 0, SEEK_END);
+		u32 size = (u32) gf_ftell(f);
+		gf_fseek(f, 0, SEEK_SET);
 		char *buf = (char*)gf_malloc(sizeof(char)*(size+1));
 		size = (u32) fread(buf, 1, size, f);
 		buf[size]=0;
@@ -1638,7 +1638,7 @@ Bool GF_UPnP::LoadJS(GF_TermExtJS *param)
 			gf_list_del_item(m_Devices, device);
 			delete device;
 		}
-		fclose(f);
+		gf_fclose(f);
 		gf_free(buf);
 	}
 	return GF_TRUE;
@@ -1655,15 +1655,9 @@ static Bool upnp_process(GF_TermExt *termext, u32 action, void *param)
 	case GF_TERM_EXT_START:
 		opt = gf_modules_get_option((GF_BaseInterface*)termext, "UPnP", "Enabled");
 		if (!opt) {
-#ifdef GPAC_CONFIG_DARWIN
+			//UPnP is disabled by default on all platforms until we have a more stable state on load and exit
 			opt = "no";
-			GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[UPnP] Disabling UPnP - to enable it, modify section [UPnP] key \"Enabled\" in /Users/yourname/.gpacrc"));
-#else
-//			opt = "yes";
-			//UPnP is disabkled by default on all platforms until we have a more stable state on load and exit
-			opt = "no";
-			GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[UPnP] Disabling UPnP - to enable it, modify section [UPnP] key \"Enabled\" in /Users/yourname/.gpacrc"));
-#endif
+			GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[UPnP] Disabling UPnP - to enable it, modify section [UPnP] key \"Enabled\" in GPAC config file\n"));
 			gf_modules_set_option((GF_BaseInterface*)termext, "UPnP", "Enabled", opt);
 		}
 		if (!strcmp(opt, "yes")) {

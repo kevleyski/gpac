@@ -32,13 +32,13 @@ extern "C" {
 
 /*!
  *	\file <gpac/thread.h>
- *	\brief threading functions.
+ *	\brief Threading and Mutual Exclusion
  */
 
 /*!
-*	\addtogroup thr_grp threading
+*	\addtogroup thr_grp Threading
 *	\ingroup utils_grp
-*	\brief Threading and Mutual Exclusion Functions
+*	\brief Threading and Mutual Exclusion
 *
 *This section documents the threading of the GPAC framework. These provide an easy way to implement
 *safe multithreaded tools.
@@ -105,7 +105,7 @@ typedef u32 (*gf_thread_run)(void *par);
  */
 GF_Err gf_th_run(GF_Thread *th, gf_thread_run run, void *par);
 /*!
- *\brief thread stoping
+ *\brief thread stopping
  *
  *Waits for the thread exit until return
  *\param th the thread object
@@ -254,7 +254,7 @@ GF_Semaphore *gf_sema_new(u32 MaxCount, u32 InitCount);
  */
 void gf_sema_del(GF_Semaphore *sm);
 /*
- *\brief semaphore notification. 
+ *\brief semaphore notification.
  *
  *Notifies the semaphore of a certain amount of releases.
  *\param sm the semaphore object

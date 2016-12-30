@@ -33,6 +33,7 @@ int dc_audio_encoder_open(AudioOutputFile *audio_output_file, AudioDataConf *aud
 {
 	AVDictionary *opts = NULL;
 
+	audio_output_file->audio_data_conf = audio_data_conf;
 	audio_output_file->fifo = av_fifo_alloc(2 * MAX_AUDIO_PACKET_SIZE);
 	audio_output_file->aframe = FF_ALLOC_FRAME();
 	audio_output_file->adata_buf = (uint8_t*) av_malloc(2 * MAX_AUDIO_PACKET_SIZE);
@@ -46,7 +47,7 @@ int dc_audio_encoder_open(AudioOutputFile *audio_output_file, AudioDataConf *aud
 	audio_output_file->aframe->format = -1;
 	audio_output_file->codec = avcodec_find_encoder_by_name(audio_data_conf->codec);
 	if (audio_output_file->codec == NULL) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("Output audio codec not found\n"));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("Output audio codec %s not found\n", audio_data_conf->codec));
 		return -1;
 	}
 
@@ -54,20 +55,28 @@ int dc_audio_encoder_open(AudioOutputFile *audio_output_file, AudioDataConf *aud
 	audio_output_file->codec_ctx->codec_id = audio_output_file->codec->id;
 	audio_output_file->codec_ctx->codec_type = AVMEDIA_TYPE_AUDIO;
 	audio_output_file->codec_ctx->bit_rate = audio_data_conf->bitrate;
-	audio_output_file->codec_ctx->sample_rate = audio_data_conf->samplerate;
+	audio_output_file->codec_ctx->sample_rate = DC_AUDIO_SAMPLE_RATE /*audio_data_conf->samplerate*/;
+
 	{
 		AVRational time_base;
 		time_base.num = 1;
-		time_base.den = audio_data_conf->samplerate;
+		time_base.den = audio_output_file->codec_ctx->sample_rate;
 		audio_output_file->codec_ctx->time_base = time_base;
 	}
 	audio_output_file->codec_ctx->channels = audio_data_conf->channels;
-	audio_output_file->codec_ctx->channel_layout = AV_CH_LAYOUT_STEREO; /*FIXME: depends on channels -> http://ffmpeg.org/doxygen/trunk/channel__layout_8c_source.html#l00074*/
+	
+	/*FIXME: depends on channels -> http://ffmpeg.org/doxygen/trunk/channel__layout_8c_source.html#l00074*/
+	if (audio_data_conf->channels == 1) {
+		audio_output_file->codec_ctx->channel_layout = AV_CH_LAYOUT_MONO;
+	} else {
+		audio_output_file->codec_ctx->channel_layout = AV_CH_LAYOUT_STEREO;
+	}
+
 	audio_output_file->codec_ctx->sample_fmt = audio_output_file->codec->sample_fmts[0];
 #ifdef DC_AUDIO_RESAMPLER
 	audio_output_file->aresampler = NULL;
 #endif
-	if (audio_data_conf->custom) {
+	if (strcmp(audio_data_conf->custom, "")) {
 		build_dict(audio_output_file->codec_ctx->priv_data, audio_data_conf->custom);
 	}
 	audio_output_file->astream_idx = 0;
@@ -232,8 +241,8 @@ int dc_audio_encoder_encode(AudioOutputFile *audio_output_file, AudioInputData *
 
 	while (av_fifo_size(audio_output_file->fifo) >= audio_output_file->frame_bytes) {
 #ifdef DC_AUDIO_RESAMPLER
-		uint8_t **data; //mirror AVFrame::data
-		int num_planes_out;
+		uint8_t **data = NULL; //mirror AVFrame::data
+		int num_planes_out = 0;
 #endif
 		Bool resample;
 

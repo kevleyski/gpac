@@ -35,17 +35,19 @@ extern "C" {
 
 
 /*! \file "gpac/tools.h"
- *	\brief Base definitions and functions of GPAC.
+ *	\brief Core definitions and tools of GPAC.
  *
  * This file contains basic functions and core definitions of the GPAC framework. This file is
  * usually included by all GPAC header files since it contains the error definitions.
 */
 
-/*! \defgroup utils_grp utils
- *	You will find in this module the documentation of all tools used in GPAC.
+/*! \defgroup utils_grp Core Tools
+ *	\brief Core definitions and tools of GPAC.
+ *	
+ * You will find in this module the documentation of the core tools used in GPAC.
 */
 
-/*! \addtogroup tools_grp base utils
+/*!
  *	\ingroup utils_grp
  *	\brief Base definitions and functions of GPAC.
  *
@@ -109,6 +111,9 @@ const char *gf_4cc_to_str(u32 type);
 */
 int gf_asprintf(char **buffer, const char *fmt, ...);
 
+
+size_t gf_fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
+
 /*!
  *	\brief file writing helper
  *
@@ -123,12 +128,22 @@ size_t gf_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
  *	\brief large file opening
  *
  *	Opens a large file (>4GB)
- *	\param file_name Same semantics as gf_f64_open
- *	\param mode Same semantics as gf_f64_open
+ *	\param file_name Same semantics as fopen
+ *	\param mode Same semantics as fopen
  *	\return stream handle of the file object
  *	\note You only need to call this function if you're suspecting the file to be a large one (usually only media files), otherwise use regular stdio.
 */
-FILE *gf_f64_open(const char *file_name, const char *mode);
+FILE *gf_fopen(const char *file_name, const char *mode);
+
+/*!
+ *	\brief file closing
+ *
+ *	Closes a file
+ *	\param file file to close
+ *	\note You only need to call this function if you're suspecting the file to be a large one (usually only media files), otherwise use regular stdio.
+*/
+s32 gf_fclose(FILE *file);
+
 /*!
  *	\brief large file position query
  *
@@ -137,7 +152,7 @@ FILE *gf_f64_open(const char *file_name, const char *mode);
  *	\return position in the file
  *	\note You only need to call this function if you're suspecting the file to be a large one (usually only media files), otherwise use regular stdio.
 */
-u64 gf_f64_tell(FILE *f);
+u64 gf_ftell(FILE *f);
 /*!
  *	\brief large file seeking
  *
@@ -148,12 +163,12 @@ u64 gf_f64_tell(FILE *f);
  *	\return new position in the file
  *	\note You only need to call this function if you're suspecting the file to be a large one (usually only media files), otherwise use regular stdio.
 */
-u64 gf_f64_seek(FILE *f, s64 pos, s32 whence);
+u64 gf_fseek(FILE *f, s64 pos, s32 whence);
 
 /*! @} */
 
 
-/*! \addtogroup errors_grp error codes
+/*! \addtogroup errors_grp Error codes
  *	\ingroup utils_grp
  *	\brief Errors used in GPAC.
  *
@@ -273,8 +288,9 @@ const char *gf_error_to_string(GF_Err e);
 
 /*! @} */
 
-/*! \addtogroup log_grp logging tools
+/*! \addtogroup log_grp Logging tools
  *	\ingroup utils_grp
+ *	\brief Logging system of GPAC
  *	@{
  */
 
@@ -284,7 +300,7 @@ const char *gf_error_to_string(GF_Err e);
  *
  * These levels describes messages priority used when filtering logs
  */
-enum
+typedef enum
 {
 	/*! Disable all Log message*/
 	GF_LOG_QUIET = 0,
@@ -296,7 +312,7 @@ enum
 	GF_LOG_INFO,
 	/*! Log message is a debug info*/
 	GF_LOG_DEBUG
-};
+} GF_LOG_Level;
 
 /*!
  *	\brief Log exits at first error assignment
@@ -322,7 +338,7 @@ char *gf_log_get_tools_levels();
  *
  * These flags describes which sub-part of GPAC generates the log and are used when filtering logs
  */
-enum
+typedef enum
 {
 	/*! Log message from the core library (init, threads, network calls, etc)*/
 	GF_LOG_CORE = 0,
@@ -382,7 +398,7 @@ enum
 	/*! special value used to set a level for all tools*/
 	GF_LOG_ALL,
 	GF_LOG_TOOL_MAX = GF_LOG_ALL,
-};
+} GF_LOG_Tool;
 
 /*!
  *	\brief Log modules assignment
@@ -392,7 +408,7 @@ enum
  *	\param level level of logging for this tool.
  *
  */
-void gf_log_set_tool_level(u32 tool, u32 level);
+void gf_log_set_tool_level(GF_LOG_Tool tool, GF_LOG_Level level);
 
 /*!
  *	\brief Log Message Callback
@@ -405,14 +421,14 @@ void gf_log_set_tool_level(u32 tool, u32 level);
  *	\param vlist message log param.
  *
  */
-typedef void (*gf_log_cbk)(void *cbck, u32 log_level, u32 log_tool, const char* fmt, va_list vlist);
+typedef void (*gf_log_cbk)(void *cbck, GF_LOG_Level log_level, GF_LOG_Tool log_tool, const char* fmt, va_list vlist);
 
 /*!
  *	\brief Log overwrite
  *
  *	Assigns a user-defined callback for printing log messages. By default all logs are redirected to stderr
  *	\param usr_cbk Opaque user data
- *	\param cbk  callback log function
+ *	\param cbk     Callback log function
  *	\return previous callback function
 */
 gf_log_cbk gf_log_set_callback(void *usr_cbk, gf_log_cbk cbk);
@@ -437,7 +453,8 @@ gf_log_cbk gf_log_set_callback(void *usr_cbk, gf_log_cbk cbk);
 
 /*this is all a bit ugly, but most compilers don't properly handle variadic macros...*/
 void gf_log(const char *fmt, ...);
-void gf_log_lt(u32 ll, u32 lt);
+void gf_log_lt(GF_LOG_Level ll, GF_LOG_Tool lt);
+void gf_log_va_list(GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list vl);
 
 
 /*!
@@ -448,7 +465,7 @@ void gf_log_lt(u32 ll, u32 lt);
  *	\param log_level level to check
  *	\return 1 if logged, 0 otherwise
 */
-Bool gf_log_tool_level_on(u32 log_tool, u32 log_level);
+Bool gf_log_tool_level_on(GF_LOG_Tool log_tool, GF_LOG_Level log_level);
 
 /*!
  *	\brief Set log tools and levels
@@ -475,7 +492,7 @@ GF_Err gf_log_modify_tools_levels(const char *val);
  *	\param tool tool to log
  *	\param level log level for this tool
 */
-void gf_log_set_tool_level(u32 tool, u32 level);
+void gf_log_set_tool_level(GF_LOG_Tool tool, GF_LOG_Level level);
 
 #ifdef GPAC_DISABLE_LOG
 #define GF_LOG(_ll, _lm, __args)
@@ -488,13 +505,6 @@ void gf_log_set_tool_level(u32 tool, u32 level);
 */
 #define GF_LOG(_log_level, _log_tools, __args) if (gf_log_tool_level_on(_log_tools, _log_level) ) { gf_log_lt(_log_level, _log_tools); gf_log __args ;}
 #endif
-
-
-/*! @} */
-
-/*! \addtogroup tools_grp
- *	@{
- */
 
 
 /*!
@@ -586,9 +596,10 @@ GF_Err gf_move_file(const char *fileName, const char *newFileName);
  *	\brief Temporary File Creation
  *
  *	Creates a new temporary file in binary mode
+ *	\param fileName if not NULL, strdup() of the temporary filename when created by GPAC (NULL otherwise as the system automatically removes its own tmp files)
  *	\return stream handle to the new file ressoucre
  */
-FILE *gf_temp_file_new();
+FILE *gf_temp_file_new(char ** const fileName);
 
 
 /*!
@@ -599,6 +610,15 @@ FILE *gf_temp_file_new();
  *	\return modification time of the file
  */
 u64 gf_file_modification_time(const char *filename);
+
+/*!
+ *	\brief File existence check
+ *
+ *	Moves or renames a file or directory.
+ *	\param fileName absolute path of the file / directory to move or rename
+ *	\return GF_TRUE if file exists
+ */
+Bool gf_file_exists(const char *fileName);
 
 /*!
  *	\brief Progress formatting
@@ -654,21 +674,36 @@ char gf_prompt_get_char();
 /*!
  *	\brief turns prompt echo on/off
  *
- *	Turns the prompt character echo on/off - this is usefull when entering passwords.
+ *	Turns the prompt character echo on/off - this is useful when entering passwords.
  *	\param echo_off indicates whether echo should be turned on or off.
  *	\note Function not available under WindowsCE nor SymbianOS
 */
 void gf_prompt_set_echo_off(Bool echo_off);
 
+/*!	@} */
+
 /*!
- *\addtogroup cpu_grp Time tools
+ *\addtogroup cpu_grp System time CPU and Memory tools
  *\ingroup utils_grp
- *\brief System time and CPU functions
+ *\brief System time CPU and Memory functions
  *
  *This section documents time functionalities and CPU management in GPAC.
   *	@{
  */
 
+/*!
+ * Selection flags for memory tracker
+ *	\hideinitializer
+ */
+typedef enum
+{
+    /*! No memory tracking*/
+    GF_MemTrackerNone = 0,
+    /*! Memory tracking without backtrace*/
+    GF_MemTrackerSimple,
+    /*! Memory tracking with backtrace*/
+    GF_MemTrackerBackTrace,
+} GF_MemTrackerType;
 
 /*!
  *	\brief System setup
@@ -677,7 +712,7 @@ void gf_prompt_set_echo_off(Bool echo_off);
  * function before calling any other GPAC functions, since on some systems (like winCE) it may result in a better memory usage estimation.
  *	\note This can be called several times but only the first call will result in system setup.
  */
-void gf_sys_init(Bool enable_memory_tracker);
+void gf_sys_init(GF_MemTrackerType mem_tracker_type);
 /*!
  *	\brief System closing
  *
@@ -736,39 +771,6 @@ u64 gf_sys_clock_high_res();
  */
 void gf_sleep(u32 ms);
 
-/*!
- *	\brief Delete Directory
- *
- *	Delete a  dir within the full path.
- *	\param DirPathName the file path name.
- */
-GF_Err gf_rmdir(char *DirPathName);
-
-/*!
- *	\brief Create Directory
- *
- *	Create a directory within the full path.
- *	\param DirPathName the dir path name.
- */
-GF_Err gf_mkdir(char* DirPathName);
-
-/*!
- *	\brief Create Directory
- *
- *	Cleanup a directory within the full path, removing all the files and the directories.
- *	\param DirPathName the dir path name.
- */
-GF_Err gf_cleanup_dir(char* DirPathName);
-/*!
- *	\brief CRC32 compute
- *
- *	Computes the CRC32 value of a buffer.
- *	\param data buffer
- *	\param size buffer size
- *	\return computed CRC32
- */
-u32 gf_crc_32(const char *data, u32 size);
-
 #ifdef WIN32
 /*!
  *	\brief WINCE time constant
@@ -806,17 +808,6 @@ u64 gf_net_parse_date(const char *date);
  * \return timezone shift in seconds
  */
 s32 gf_net_get_timezone();
-
-/*!
- *\brief parses 128 bit from string
- *
- * Parses 128 bit from string
- *
- * \param string the string containing the value in hexa. Non alphanum characters are skipped
- * \param value the value parsed
- * \return error code if any
- */
-GF_Err gf_bin128_parse(char *string, bin128 value);
 
 /*!\brief run-time system info object
  *
@@ -908,6 +899,62 @@ GF_GlobalLock * gf_global_resource_lock(const char * resourceName);
  */
 GF_Err gf_global_resource_unlock(GF_GlobalLock * lock);
 
+/*!	@} */
+
+/*!
+ *\addtogroup osfile_grp File System
+ *\ingroup utils_grp
+ *\brief File System tools
+ *
+ *This section documents time functionalities and CPU management in GPAC.
+  *	@{
+ */
+
+
+
+/*!
+ *\brief parses 128 bit from string
+ *
+ * Parses 128 bit from string
+ *
+ * \param string the string containing the value in hexa. Non alphanum characters are skipped
+ * \param value the value parsed
+ * \return error code if any
+ */
+GF_Err gf_bin128_parse(char *string, bin128 value);
+
+/*!
+ *	\brief Delete Directory
+ *
+ *	Delete a  dir within the full path.
+ *	\param DirPathName the file path name.
+ */
+GF_Err gf_rmdir(char *DirPathName);
+
+/*!
+ *	\brief Create Directory
+ *
+ *	Create a directory within the full path.
+ *	\param DirPathName the dir path name.
+ */
+GF_Err gf_mkdir(char* DirPathName);
+
+/*!
+ *	\brief Check Directory Exists
+ *
+ *	Create a directory within the full path.
+ *	\param DirPathName the dir path name.
+ */
+Bool gf_dir_exists(char *DirPathName);
+
+/*!
+ *	\brief Create Directory
+ *
+ *	Cleanup a directory within the full path, removing all the files and the directories.
+ *	\param DirPathName the dir path name.
+ */
+GF_Err gf_cleanup_dir(char* DirPathName);
+
 
 /**
  * Gets a newly allocated string containing the default cache directory.
@@ -916,6 +963,33 @@ GF_Err gf_global_resource_unlock(GF_GlobalLock * lock);
  */
 char * gf_get_default_cache_directory();
 
+/**
+ * Gets the number of open file handles (gf_fopen/gf_fclose only).
+ * \return  number of open file handles
+ */
+u32 gf_file_handles_count();
+
+/*!	@} */
+
+/*!
+ *\addtogroup hash_grp RawData Misc
+ *\ingroup utils_grp
+ *\brief Data integrity and parsing
+ *
+ *This section documents misc data functions such as integrity and parsing such as SHA-1 hashing CRC checksum, 128 bit ID parsing...
+  *	@{
+ */
+
+
+/*!
+ *	\brief CRC32 compute
+ *
+ *	Computes the CRC32 value of a buffer.
+ *	\param data buffer
+ *	\param size buffer size
+ *	\return computed CRC32
+ */
+u32 gf_crc_32(const char *data, u32 size);
 
 
 /**
@@ -943,11 +1017,11 @@ typedef struct __sha1_context GF_SHA1Context;
 
 #define GF_SHA1_DIGEST_SIZE		20
 #define GF_SHA1_DIGEST_SIZE_HEXA		41
-/*
- * Core SHA-1 functions
- */
+/*  Create SHA-1 context */
 GF_SHA1Context *gf_sha1_starts();
+/*  Adds byte to the SHA-1 context */
 void gf_sha1_update(GF_SHA1Context *ctx, u8 *input, u32 length);
+/*  Generates SHA-1 of all bytes ingested */
 void gf_sha1_finish(GF_SHA1Context *ctx, u8 digest[GF_SHA1_DIGEST_SIZE] );
 
 /*
@@ -956,21 +1030,26 @@ void gf_sha1_finish(GF_SHA1Context *ctx, u8 digest[GF_SHA1_DIGEST_SIZE] );
 int gf_sha1_file(const char *filename, u8 digest[GF_SHA1_DIGEST_SIZE]);
 
 /*
- * Output SHA-1(buf)
+ * Gets SHA-1 of input buffer
  */
 void gf_sha1_csum(u8 *buf, u32 buflen, u8 digest[GF_SHA1_DIGEST_SIZE]);
+/*
+ * Gets SHA-1 of input buffer into hexa form
+ */
 void gf_sha1_csum_hexa(u8 *buf, u32 buflen, u8 digest[GF_SHA1_DIGEST_SIZE_HEXA]);
 
+/*! @} */
+
+
+/* \cond dummy */
 #ifdef GPAC_ANDROID
 typedef void (*fm_callback_func)(void *cbk_obj, u32 type, u32 param, int *value);
 extern void gf_fm_request_set_callback(void *cbk_obj, fm_callback_func cbk_func);
 void gf_fm_request_call(u32 type, u32 param, int *value);
 #endif //GPAC_ANDROID
 
-/*! @} */
+/* \endcond */
 
-
-/*! @} */
 
 #ifdef __cplusplus
 }

@@ -134,7 +134,8 @@ typedef struct
 
 	u32 raw_pix_fmt;
 	Bool flipped;
-	Bool direct_output;
+	u32 direct_output_mode;
+	
 	u32 stride;
 
 	u32 output_cb_size;
@@ -142,6 +143,8 @@ typedef struct
 	u32 frame_start;
 	char audio_buf[192000];
 	Bool check_h264_isma;
+	
+	Bool frame_size_changed;
 
 	u32 base_ES_ID;
 	AVCodecContext *base_ctx;
@@ -164,12 +167,6 @@ typedef struct
 	AVFrame *audio_frame;
 #endif
 
-
-
-	Bool output_as_8bit;
-	u32 display_bpp;
-	Bool conv_to_8bit;
-	char *conv_buffer;
 } FFDec;
 
 void *FFDEC_Load();
@@ -223,8 +220,10 @@ typedef struct
 
 #ifdef USE_PRE_0_7
 	ByteIOContext   io;
+	void *options;
 #else
 	AVIOContext io;
+	AVDictionary *options;
 #endif
 	char *buffer;
 	u32 buffer_size;
@@ -262,6 +261,53 @@ void Delete_FFMPEG_Demux(void *ifce);
 - till end of DSI bitstream-
 	char *data: extra_data
 */
+
+
+/*TODO - we need to cleanup the ffmpeg code to align with only latest version and remove old compatibility code*/
+
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(54, 25, 0 )
+
+#define CODEC_ID_SVQ3	AV_CODEC_ID_SVQ3
+#define CODEC_ID_MPEG4	AV_CODEC_ID_MPEG4
+#define CODEC_ID_H264	AV_CODEC_ID_H264
+#define CODEC_ID_MPEG2VIDEO AV_CODEC_ID_MPEG2VIDEO
+#define CODEC_ID_MJPEG	AV_CODEC_ID_MJPEG
+#define CODEC_ID_MP2	AV_CODEC_ID_MP2
+#define CODEC_ID_AC3	AV_CODEC_ID_AC3
+#define CODEC_ID_EAC3	AV_CODEC_ID_EAC3
+#define CODEC_ID_DVD_SUBTITLE	AV_CODEC_ID_DVD_SUBTITLE
+#define CODEC_ID_RAWVIDEO	AV_CODEC_ID_RAWVIDEO
+#define CODEC_ID_MJPEGB	AV_CODEC_ID_MJPEGB
+#define CODEC_ID_LJPEG	AV_CODEC_ID_LJPEG
+#define CODEC_ID_GIF	AV_CODEC_ID_GIF
+#define CODEC_ID_H263	AV_CODEC_ID_H263
+#define CODEC_ID_MP3	AV_CODEC_ID_MP3
+#define CODEC_ID_AAC	AV_CODEC_ID_AAC
+#define CODEC_ID_MPEG1VIDEO	AV_CODEC_ID_MPEG1VIDEO
+#define CODEC_ID_PNG	AV_CODEC_ID_PNG
+#define CODEC_ID_AMR_NB	AV_CODEC_ID_AMR_NB
+#define CODEC_ID_AMR_WB	AV_CODEC_ID_AMR_WB
+
+
+#endif
+
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(51, 42, 0)
+#define PIX_FMT_YUV420P AV_PIX_FMT_YUV420P
+#define PIX_FMT_YUV422P AV_PIX_FMT_YUV422P
+#define PIX_FMT_YUV444P AV_PIX_FMT_YUV444P
+#define PIX_FMT_YUV420P10LE AV_PIX_FMT_YUV420P10LE
+#define PIX_FMT_YUV422P10LE AV_PIX_FMT_YUV422P10LE
+#define PIX_FMT_YUV444P10LE AV_PIX_FMT_YUV444P10LE
+#define PIX_FMT_BGR24 AV_PIX_FMT_BGR24
+#define PIX_FMT_RGB24 AV_PIX_FMT_RGB24
+#define PIX_FMT_RGBA AV_PIX_FMT_RGBA
+#endif
+
+#if (LIBAVCODEC_VERSION_MAJOR>56)
+#ifndef FF_API_AVFRAME_LAVC
+#define FF_API_AVFRAME_LAVC
+#endif
+#endif
 
 
 

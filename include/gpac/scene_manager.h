@@ -31,6 +31,21 @@
 extern "C" {
 #endif
 
+
+/*!
+ *	\file <gpac/scene_manager.h>
+ *	\brief Scene management for importing/encoding of BIFS, XMT, LASeR scenes
+ */
+	
+/*!
+ *	\addtogroup smgr Scene Manager
+ *	\ingroup scene_grp
+ *	\brief Scene management for importing/encoding of BIFS, XMT, LASeR scenes.
+ *
+ *This section documents the Scene manager used for importing/encoding of BIFS, XMT, LASeR scenes.
+ *	@{
+ */
+
 #include <gpac/isomedia.h>
 #include <gpac/mpeg4_odf.h>
 #include <gpac/scenegraph_vrml.h>
@@ -245,6 +260,8 @@ struct __scene_loader
 	GF_SceneManager *ctx;
 	/*file to import except IsoMedia files*/
 	const char *fileName;
+	//original URL for the file or NULL if same as fileName
+	const char *src_url;
 #ifndef GPAC_DISABLE_ISOM
 	/*IsoMedia file to import (we need to be able to load from an opened file for scene stats)*/
 	GF_ISOFile *isom;
@@ -369,19 +386,21 @@ typedef enum
 
 /*dumps scene context to a given format
 @rad_name: file name & loc without extension - if NULL dump will happen in stdout
+@is_final_name: if set, no extension is added to the filename
 @dump_mode: one of the above*/
-GF_Err gf_sm_dump(GF_SceneManager *ctx, char *rad_name, GF_SceneDumpFormat dump_mode);
+GF_Err gf_sm_dump(GF_SceneManager *ctx, char *rad_name, Bool is_final_name, GF_SceneDumpFormat dump_mode);
 
 typedef struct _scenedump GF_SceneDumper;
 
 /*create a scene dumper
 @graph: scene graph being dumped
 @rad_name: file radical (NULL for stdout) - if not NULL MUST BE GF_MAX_PATH length
+@is_final_name: if set, rad_name is the final name (no extension added)
 @indent_char: indent format
 @dump_mode: if set, dumps in XML format otherwise regular text
 returns NULL if can't create a file
 */
-GF_SceneDumper *gf_sm_dumper_new(GF_SceneGraph *graph, char *_rad_name, char indent_char, GF_SceneDumpFormat dump_mode);
+GF_SceneDumper *gf_sm_dumper_new(GF_SceneGraph *graph, char *_rad_name, Bool is_final_name, char indent_char, GF_SceneDumpFormat dump_mode);
 void gf_sm_dumper_set_extra_graph(GF_SceneDumper *sdump, GF_SceneGraph *extra);
 void gf_sm_dumper_del(GF_SceneDumper *bd);
 
@@ -483,6 +502,7 @@ GF_Err gf_sm_stats_for_command(GF_StatManager *stat, GF_Command *com);
 
 #endif /*GPAC_DISABLE_SCENE_STATS*/
 
+/*! @} */
 
 #ifdef __cplusplus
 }

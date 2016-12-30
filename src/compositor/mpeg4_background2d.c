@@ -67,6 +67,10 @@ static void b2D_new_status(Background2DStack *bck, M_Background2D*back)
 	BackgroundStatus *status;
 
 	GF_SAFEALLOC(status, BackgroundStatus);
+	if (!status) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate background2D status\n"));
+		return;
+	}
 	gf_mx2d_init(status->ctx.transform);
 	status->ctx.drawable = bck->drawable;
 	status->ctx.flags = CTX_IS_BACKGROUND;
@@ -104,6 +108,7 @@ static void DrawBackground2D_2D(DrawableContext *ctx, GF_TraverseState *tr_state
 {
 	Bool clear_all = GF_TRUE;
 	u32 color;
+	Bool use_texture;
 	Bool is_offscreen = GF_FALSE;
 	Background2DStack *stack;
 	if (!ctx || !ctx->drawable || !ctx->drawable->node) return;
@@ -114,9 +119,19 @@ static void DrawBackground2D_2D(DrawableContext *ctx, GF_TraverseState *tr_state
 	stack->flags &= ~CTX_PATH_FILLED;
 	color = ctx->aspect.fill_color;
 
-	if (back_use_texture((M_Background2D *)ctx->drawable->node)) {
+	use_texture = back_use_texture((M_Background2D *)ctx->drawable->node);
+	if (!use_texture && !tr_state->visual->is_attached) {
+		use_texture = 1;
+		stack->txh.data = stack->col_tx;
+		stack->txh.width = 2;
+		stack->txh.height = 2;
+		stack->txh.stride = 6;
+		stack->txh.pixelformat = GF_PIXEL_RGB_24;
+	}
 
-		if (!tr_state->visual->DrawBitmap(tr_state->visual, tr_state, ctx, NULL)) {
+	if (use_texture) {
+
+		if (!tr_state->visual->DrawBitmap(tr_state->visual, tr_state, ctx)) {
 			/*set target rect*/
 			gf_path_reset(stack->drawable->path);
 			gf_path_add_rect_center(stack->drawable->path,
@@ -127,6 +142,12 @@ static void DrawBackground2D_2D(DrawableContext *ctx, GF_TraverseState *tr_state
 			/*draw texture*/
 			visual_2d_texture_path(tr_state->visual, stack->drawable->path, ctx, tr_state);
 		}
+		//a quick hack, if texture not ready return (we don't have direct notification of this through the above functions
+#ifndef GPAC_DISABLE_3D
+		if (tr_state->visual->compositor->hybrid_opengl && !stack->txh.tx_io)
+			return;
+#endif
+
 		stack->flags &= ~(CTX_APP_DIRTY | CTX_TEXTURE_DIRTY);
 		tr_state->visual->has_modif = 1;
 #ifndef GPAC_DISABLE_3D
@@ -142,15 +163,23 @@ static void DrawBackground2D_2D(DrawableContext *ctx, GF_TraverseState *tr_state
 
 
 #ifndef GPAC_DISABLE_3D
-	if (clear_all && !tr_state->visual->offscreen && tr_state->visual->compositor->hybrid_opengl) {
-		if (ctx->flags & CTX_BACKROUND_NOT_LAYER) {
-			color &= 0x00FFFFFF;
+	if (ctx->flags & CTX_BACKROUND_NOT_LAYER) {
+		if (clear_all && !tr_state->visual->offscreen && tr_state->visual->compositor->hybrid_opengl) {
 			compositor_2d_hybgl_clear_surface(tr_state->visual, NULL, color, GF_FALSE);
 			is_offscreen = GF_TRUE;
+			color &= 0x00FFFFFF;
 			//we may need to clear the canvas for immediate mode
 		}
+	} else {
+		is_offscreen = GF_TRUE;
+	}
+	if (ctx->flags & CTX_BACKROUND_NO_CLEAR) {
+		stack->flags &= ~(CTX_APP_DIRTY | CTX_TEXTURE_DIRTY);
+		tr_state->visual->has_modif = 1;
+		return;
 	}
 #endif
+
 	/*direct drawing, draw without clippers */
 	if (tr_state->immediate_draw
 	   ) {
@@ -168,7 +197,7 @@ static void DrawBackground2D_2D(DrawableContext *ctx, GF_TraverseState *tr_state
 			clip = ctx->bi->clip;
 			gf_irect_intersect(&clip, &tr_state->visual->to_redraw.list[i].rect);
 			if (clip.width && clip.height) {
-				tr_state->visual->ClearSurface(tr_state->visual, &clip, color, is_offscreen);
+				tr_state->visual->ClearSurface(tr_state->visual, &clip, color, is_offscreen ? 2 : 0);
 			}
 		}
 	}
@@ -337,6 +366,8 @@ static void TraverseBackground2D(GF_Node *node, void *rs, Bool is_destroy)
 	if (!status) return;
 
 	if (gf_node_dirty_get(node)) {
+		u32 i;
+
 		stack->flags |= CTX_APP_DIRTY;
 		gf_node_dirty_clear(node, 0);
 
@@ -345,6 +376,11 @@ static void TraverseBackground2D(GF_Node *node, void *rs, Bool is_destroy)
 		if (col != status->ctx.aspect.fill_color) {
 			status->ctx.aspect.fill_color = col;
 			stack->flags |= CTX_APP_DIRTY;
+		}
+		for (i=0; i<4; i++) {
+			stack->col_tx[3*i] = FIX2INT(255 * bck->backColor.red);
+			stack->col_tx[3*i+1] = FIX2INT(255 * bck->backColor.green);
+			stack->col_tx[3*i+2] = FIX2INT(255 * bck->backColor.blue);
 		}
 	}
 
@@ -363,6 +399,8 @@ static void TraverseBackground2D(GF_Node *node, void *rs, Bool is_destroy)
 		status->ctx.flags = stack->flags | CTX_BACKROUND_NOT_LAYER;
 	} else {
 		status->ctx.flags = stack->flags;
+		if (tr_state->is_layer)
+			status->ctx.flags &= ~CTX_BACKROUND_NOT_LAYER;
 	}
 
 
@@ -415,6 +453,10 @@ void compositor_init_background2d(GF_Compositor *compositor, GF_Node *node)
 {
 	Background2DStack *ptr;
 	GF_SAFEALLOC(ptr, Background2DStack);
+	if (!ptr) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate background2D stack\n"));
+		return;
+	}
 
 	ptr->status_stack = gf_list_new();
 	ptr->reg_stacks = gf_list_new();

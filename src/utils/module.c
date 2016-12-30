@@ -28,7 +28,7 @@
 #include <gpac/tools.h>
 #include <gpac/network.h>
 
-
+#ifndef GPAC_MODULE_CUSTOM_LOAD
 static void load_all_modules(GF_ModuleManager *mgr)
 {
 #define LOAD_PLUGIN(	__name	)	{ \
@@ -50,6 +50,8 @@ static void load_all_modules(GF_ModuleManager *mgr)
 #ifdef GPAC_HAS_AC3
 	LOAD_PLUGIN(ac3);
 #endif
+	LOAD_PLUGIN(amr_in);
+	
 #ifdef GPAC_HAS_ALSA
 	LOAD_PLUGIN(alsa);
 #endif
@@ -133,8 +135,8 @@ static void load_all_modules(GF_ModuleManager *mgr)
 #ifdef GPAC_HAS_WAVEOUT
 	LOAD_PLUGIN(wave_out);
 #endif
-#ifndef GPAC_DISABLE_TTXT
-	LOAD_PLUGIN(vtt_in);
+#ifndef GPAC_DISABLE_VTT
+	LOAD_PLUGIN(vtt_dec);
 #endif
 #ifndef GPAC_DISABLE_SVG
 	LOAD_PLUGIN(widgetman);
@@ -144,6 +146,10 @@ static void load_all_modules(GF_ModuleManager *mgr)
 #endif
 #ifdef GPAC_HAS_XVID
 	LOAD_PLUGIN(xvid);
+#endif
+
+#if defined(GPAC_IPHONE) || defined(__DARWIN__) || defined(__APPLE__)
+    LOAD_PLUGIN(vtb);
 #endif
 
 	//todo fix project for iOS
@@ -159,7 +165,26 @@ static void load_all_modules(GF_ModuleManager *mgr)
 #undef LOAD_PLUGIN
 
 }
+#endif //GPAC_MODULE_CUSTOM_LOAD
 
+GF_EXPORT
+GF_Err gf_module_load_static(GF_ModuleManager *pm, GF_InterfaceRegister *(*register_module)())
+{
+	GF_InterfaceRegister *pr = register_module();
+	GF_Err rc;
+
+	if (!pr) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Failed to statically loaded module\n"));
+		return GF_NOT_SUPPORTED;
+	}
+
+	rc = gf_list_add(pm->plugin_registry, pr);
+	if (rc != GF_OK) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Failed to statically loaded module\n"));
+		return rc;
+	}
+	return GF_OK;
+}
 
 GF_EXPORT
 GF_ModuleManager *gf_modules_new(const char *directory, GF_Config *config)
@@ -197,8 +222,9 @@ GF_ModuleManager *gf_modules_new(const char *directory, GF_Config *config)
 	if (opt && !strcmp(opt, "no")) {
 		tmp->no_unload = GF_TRUE;
 	}
+#ifndef GPAC_MODULE_CUSTOM_LOAD
 	load_all_modules(tmp);
-
+#endif
 	loadedModules = gf_modules_refresh(tmp);
 	GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("Loaded %d modules from directory %s.\n", loadedModules, directory));
 
@@ -217,19 +243,19 @@ void gf_modules_del(GF_ModuleManager *pm)
 		gf_modules_free_module(inst);
 		gf_list_rem(pm->plug_list, 0);
 	}
-    gf_list_del(pm->plug_list);
+	gf_list_del(pm->plug_list);
 
 	/* Delete module directories*/
 	for (i = 0; i < pm->num_dirs; i++) {
 		gf_free((void*)pm->dirs[i]);
 	}
 
-    /*remove all static modules registry*/
-    while (gf_list_count(pm->plugin_registry)) {
-        GF_InterfaceRegister *reg  = (GF_InterfaceRegister *) gf_list_get(pm->plugin_registry, 0);
-        gf_free(reg);
-        gf_list_rem(pm->plugin_registry, 0);
-    }
+	/*remove all static modules registry*/
+	while (gf_list_count(pm->plugin_registry)) {
+		GF_InterfaceRegister *reg  = (GF_InterfaceRegister *) gf_list_get(pm->plugin_registry, 0);
+		gf_free(reg);
+		gf_list_rem(pm->plugin_registry, 0);
+	}
 
 	if (pm->plugin_registry) gf_list_del(pm->plugin_registry);
 	gf_mx_del(pm->mutex);
@@ -241,7 +267,7 @@ Bool gf_module_is_loaded(GF_ModuleManager *pm, char *filename)
 	u32 i = 0;
 	ModuleInstance *inst;
 	while ( (inst = (ModuleInstance *) gf_list_enum(pm->plug_list, &i) ) ) {
-		if (!strcmp(inst->name, filename)) return 1;
+		if (!strcmp(inst->name, filename)) return GF_TRUE;
 	}
 	return GF_FALSE;
 }
@@ -254,7 +280,8 @@ u32 gf_modules_get_count(GF_ModuleManager *pm)
 }
 
 GF_EXPORT
-const char **gf_modules_get_module_directories(GF_ModuleManager *pm, u32* num_dirs) {
+const char **gf_modules_get_module_directories(GF_ModuleManager *pm, u32* num_dirs)
+{
 	char* directories;
 	char* tmp_dirs;
 	char * pch;
@@ -268,7 +295,9 @@ const char **gf_modules_get_module_directories(GF_ModuleManager *pm, u32* num_di
 	/* Get directory from config file */
 	directories = (char*)gf_cfg_get_key(pm->cfg, "General", "ModulesDirectory");
 	if (! directories) {
+#ifndef GPAC_IPHONE
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Module directory not found - check the configuration file exit and the \"ModulesDirectory\" key is set\n"));
+#endif
 		return NULL;
 	}
 
@@ -417,12 +446,18 @@ GF_BaseInterface *gf_modules_load_interface_by_name(GF_ModuleManager *pm, const 
 	}
 	GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[Core] Plugin %s of type %d not found in cache, searching for it...\n", plug_name, InterfaceFamily));
 	for (i=0; i<count; i++) {
+		const char *mod_filename;
 		ifce = gf_modules_load_interface(pm, i, InterfaceFamily);
 		if (!ifce) continue;
 		if (ifce->module_name && !strnicmp(ifce->module_name, plug_name, MIN(strlen(ifce->module_name), strlen(plug_name)) )) {
 			/*update cache entry*/
 			gf_cfg_set_key(pm->cfg, "PluginsCache", plug_name, ((ModuleInstance*)ifce->HPLUG)->name);
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[Core] Added plugin cache %s for %s\n", plug_name, ((ModuleInstance*)ifce->HPLUG)->name));
+			return ifce;
+		}
+		/*check direct adressing by dynamic lib name*/
+		mod_filename = gf_module_get_file_name(ifce);
+		if (mod_filename && strstr(mod_filename, plug_name)) {
 			return ifce;
 		}
 		gf_modules_close_interface(ifce);

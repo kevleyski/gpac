@@ -196,10 +196,10 @@ GF_Err evg_surface_clear_bgra(GF_SURFACE surf, GF_IRect rc, GF_Color col)
 	sx = rc.x;
 	sy = rc.y;
 
-	use_memset = 0;
-	if (_this->pitch_x !=4) use_memset = 0;
-	else if (!col_a) use_memset = 1;
-	else if ((col_a==col_r) && (col_a==col_g) && (col_a==col_b)) use_memset = 1;
+	use_memset = GF_FALSE;
+	if (_this->pitch_x !=4) use_memset = GF_FALSE;
+	else if (!col_a) use_memset = GF_TRUE;
+	else if ((col_a==col_r) && (col_a==col_g) && (col_a==col_b)) use_memset = GF_TRUE;
 
 	if (!use_memset) {
 		for (y = 0; y < h; y++) {
@@ -484,7 +484,7 @@ GF_Err evg_surface_clear_rgbx(GF_SURFACE surf, GF_IRect rc, GF_Color col)
 	r = GF_COL_R(col);
 	g = GF_COL_G(col);
 	b = GF_COL_B(col);
-	col = GF_COL_ARGB(0xFF, b, g, r);
+	
 	for (y = 0; y < h; y++) {
 		u8 *data = (u8 *) _this ->pixels + (y + sy) * _this->pitch_y + st*sx;
 		for (x = 0; x < w; x++) {
@@ -690,15 +690,22 @@ GF_Err evg_surface_clear_rgba(GF_SURFACE surf, GF_IRect rc, GF_Color col)
 	w = rc.width;
 	sy = rc.y;
 
+	if (sy+h > _this->height) {
+		h = _this->height - sy;
+	}
+	if (rc.x + w > _this->width) {
+		w = _this->width - rc.x;
+	}
+
 	a = GF_COL_A(col);
 	r = GF_COL_R(col);
 	g = GF_COL_G(col);
 	b = GF_COL_B(col);
 
-	use_memset = 0;
-	if (_this->pitch_x !=4) use_memset = 0;
-	else if (!a) use_memset = 1;
-	else if ((a==r) && (a==g) && (a==b)) use_memset = 1;
+	use_memset = GF_FALSE;
+	if (_this->pitch_x !=4) use_memset = GF_FALSE;
+	else if (!a) use_memset = GF_TRUE;
+	else if ((a==r) && (a==g) && (a==b)) use_memset = GF_TRUE;
 
 
 	if (!use_memset) {

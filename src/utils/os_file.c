@@ -24,6 +24,7 @@
  */
 
 #include <gpac/tools.h>
+#include <gpac/utf.h>
 
 #if defined(_WIN32_WCE)
 
@@ -35,6 +36,7 @@
 #include <windows.h>
 #include <direct.h>
 #include <sys/stat.h>
+#include <share.h>
 
 #else
 
@@ -60,19 +62,19 @@ GF_Err gf_rmdir(char *DirPathName)
 	res = RemoveDirectory(swzName);
 	if (! res) {
 		int err = GetLastError();
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Cannot delete director %s: last error %d\n", DirPathName, err ));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Cannot delete directory %s: last error %d\n", DirPathName, err ));
 	}
 #elif defined (WIN32)
 	int res = rmdir(DirPathName);
 	if (res==-1) {
 		int err = GetLastError();
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Cannot delete director %s: last error %d\n", DirPathName, err ));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Cannot delete directory %s: last error %d\n", DirPathName, err ));
 		return GF_IO_ERR;
 	}
 #else
 	int res = rmdir(DirPathName);
 	if (res==-1) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Cannot delete director %s: last error %d\n", DirPathName, errno  ));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Cannot delete directory %s: last error %d\n", DirPathName, errno  ));
 		return GF_IO_ERR;
 	}
 #endif
@@ -112,6 +114,28 @@ GF_Err gf_mkdir(char* DirPathName)
 	return GF_OK;
 }
 
+
+GF_EXPORT
+Bool gf_dir_exists(char* DirPathName)
+{
+#if defined (_WIN32_WCE)
+	TCHAR swzName[MAX_PATH];
+	BOOL res;
+	DWORD att;
+	CE_CharToWide(DirPathName, swzName);
+	att = GetFileAttributes(swzName);
+	return (att != INVALID_FILE_ATTRIBUTES && (att & FILE_ATTRIBUTE_DIRECTORY)) ? GF_TRUE : GF_FALSE;
+#elif defined (WIN32)
+	DWORD att = GetFileAttributes(DirPathName);
+	return (att != INVALID_FILE_ATTRIBUTES && (att & FILE_ATTRIBUTE_DIRECTORY)) ? GF_TRUE : GF_FALSE;
+#else
+	DIR* dir = opendir(DirPathName);
+	if (!dir) return GF_FALSE;
+	closedir(dir);
+	return GF_TRUE;
+#endif
+	return GF_FALSE;
+}
 static Bool delete_dir(void *cbck, char *item_name, char *item_path, GF_FileEnumInfo *file_info)
 {
 	Bool directory_clean_mode = *(Bool*)cbck;
@@ -122,17 +146,17 @@ static Bool delete_dir(void *cbck, char *item_name, char *item_path, GF_FileEnum
 	} else {
 		gf_delete_file(item_path);
 	}
-	return 0;
+	return GF_FALSE;
 }
 
 GF_Err gf_cleanup_dir(char* DirPathName)
 {
 	Bool directory_clean_mode;
 
-	directory_clean_mode = 1;
-	gf_enum_directory(DirPathName, 1, delete_dir, &directory_clean_mode, NULL);
-	directory_clean_mode = 0;
-	gf_enum_directory(DirPathName, 0, delete_dir, &directory_clean_mode, NULL);
+	directory_clean_mode = GF_TRUE;
+	gf_enum_directory(DirPathName, GF_TRUE, delete_dir, &directory_clean_mode, NULL);
+	directory_clean_mode = GF_FALSE;
+	gf_enum_directory(DirPathName, GF_FALSE, delete_dir, &directory_clean_mode, NULL);
 
 	return GF_OK;
 }
@@ -140,6 +164,10 @@ GF_Err gf_cleanup_dir(char* DirPathName)
 GF_EXPORT
 GF_Err gf_delete_file(const char *fileName)
 {
+	if (!fileName) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("gf_delete_file deletes nothing - ignoring\n"));
+		return GF_OK;
+	}
 #if defined(_WIN32_WCE)
 	TCHAR swzName[MAX_PATH];
 	CE_CharToWide((char*)fileName, swzName);
@@ -153,24 +181,42 @@ GF_Err gf_delete_file(const char *fileName)
 #endif
 }
 
+#ifndef WIN32
 /**
  * Remove existing single-quote from a single-quoted string.
  * The caller is responsible for deallocating the returns string with gf_free()
  */
 static char* gf_sanetize_single_quoted_string(const char *src) {
-    int i, j;
-    char *out = gf_malloc(4*strlen(src)+3);
-    out[0] = '\'';
-    for (i=0, j=1; (out[j]=src[i]); ++i, ++j) {
-        if (src[i]=='\'') {
-            out[++j]='\\';
-            out[++j]='\'';
-            out[++j]='\'';
-        }
-    }
-    out[j++] = '\'';
-    out[j++] = 0;
-    return out;
+	int i, j;
+	char *out = (char*)gf_malloc(4*strlen(src)+3);
+	out[0] = '\'';
+	for (i=0, j=1; (out[j]=src[i]); ++i, ++j) {
+		if (src[i]=='\'') {
+			out[++j]='\\';
+			out[++j]='\'';
+			out[++j]='\'';
+		}
+	}
+	out[j++] = '\'';
+	out[j++] = 0;
+	return out;
+}
+#endif
+
+#if defined(GPAC_IPHONE) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= 80000)
+#include <spawn.h>
+extern char **environ;
+#endif
+
+GF_EXPORT
+Bool gf_file_exists(const char *fileName)
+{
+	FILE *f = gf_fopen(fileName, "r");
+	if (f) {
+		gf_fclose(f);
+		return GF_TRUE;
+	}
+	return GF_FALSE;
 }
 
 GF_EXPORT
@@ -193,7 +239,21 @@ GF_Err gf_move_file(const char *fileName, const char *newFileName)
 	arg1 = gf_sanetize_single_quoted_string(fileName);
 	arg2 = gf_sanetize_single_quoted_string(newFileName);
 	if (snprintf(cmd, sizeof cmd, "mv %s %s", arg1, arg2) >= sizeof cmd) goto error;
+
+#if defined(GPAC_IPHONE) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= 80000)
+	{
+		pid_t pid;
+		char *argv[3];
+		argv[0] = "mv";
+		argv[1] = cmd;
+		argv[2] = NULL;
+		posix_spawn(&pid, argv[0], NULL, NULL, argv, environ);
+		waitpid(pid, NULL, 0);
+	}
+#else
 	e = (system(cmd) == 0) ? GF_OK : GF_IO_ERR;
+#endif
+	
 error:
 	gf_free(arg1);
 	gf_free(arg2);
@@ -235,9 +295,17 @@ u64 gf_file_modification_time(const char *filename)
 	return 0;
 }
 
+static u32 gpac_file_handles = 0;
 GF_EXPORT
-FILE *gf_temp_file_new()
+u32 gf_file_handles_count()
 {
+	return gpac_file_handles;
+}
+
+GF_EXPORT
+FILE *gf_temp_file_new(char ** const fileName)
+{
+	FILE *res = NULL;
 #if defined(_WIN32_WCE)
 	TCHAR pPath[MAX_PATH+1];
 	TCHAR pTemp[MAX_PATH+1];
@@ -246,26 +314,39 @@ FILE *gf_temp_file_new()
 		pPath[1] = '.';
 	}
 	if (GetTempFileName(pPath, TEXT("git"), 0, pTemp))
-		return _wfopen(pTemp, TEXT("w+b"));
-
-	return NULL;
+		res = _wfopen(pTemp, TEXT("w+b"));
 #elif defined(WIN32)
-	char tmp[MAX_PATH], t_file[100];
-	FILE *res = tmpfile();
-	if (res) return res;
-	{
-		u32 err = GetLastError();
-		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[Win32] system failure for tmpfile(): 0x%08x\n", err));
+	char tmp[MAX_PATH];
+	res = tmpfile();
+	if (!res) {
+		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[Win32] system failure for tmpfile(): 0x%08x\n", GetLastError()));
+
+		/*tmpfile() may fail under vista ...*/
+		if (GetEnvironmentVariable("TEMP", tmp, MAX_PATH)) {
+			char tmp2[MAX_PATH], *t_file;
+			gf_rand_init(GF_FALSE);
+			sprintf(tmp2, "gpac_%08x_", gf_rand());
+			t_file = tempnam(tmp, tmp2);
+			res = gf_fopen(t_file, "w+b");
+			if (res) {
+				gpac_file_handles--;
+				if (fileName) {
+					*fileName = gf_strdup(t_file);
+				} else {
+					GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("[Win32] temporary file %s won't be deleted - contact the GPAC team\n", t_file));
+				}
+			}
+			free(t_file);
+		}
 	}
-	/*tmpfile() may fail under vista ...*/
-	if (!GetEnvironmentVariable("TEMP",tmp,MAX_PATH))
-		return NULL;
-	sprintf(t_file, "\\gpac_%08x.tmp", (u32) tmp);
-	strcat(tmp, t_file);
-	return gf_f64_open(tmp, "w+b");
 #else
-	return tmpfile();
+	res = tmpfile();
 #endif
+
+	if (res) {
+		gpac_file_handles++;
+	}
+	return res;
 }
 
 /*enumerate directories*/
@@ -304,7 +385,7 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 		u32 len;
 		char *drives, *volume;
 		len = GetLogicalDriveStrings(0, NULL);
-		drives = gf_malloc(sizeof(char)*(len+1));
+		drives = (char*)gf_malloc(sizeof(char)*(len+1));
 		drives[0]=0;
 		GetLogicalDriveStrings(len, drives);
 		len = (u32) strlen(drives);
@@ -382,7 +463,7 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 
 	the_dir = opendir(path);
 	if (the_dir == NULL) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Cannot open directory %s for enumeration\n", path));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] Cannot open directory %s for enumeration: %d\n", path, errno));
 		return GF_IO_ERR;
 	}
 	the_file = readdir(the_dir);
@@ -436,8 +517,8 @@ GF_Err gf_enum_directory(const char *dir, Bool enum_directory, gf_enum_dir_item 
 		}
 
 #if defined(WIN32)
-		file_info.hidden = (FindData.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) ? 1 : 0;
-		file_info.system = (FindData.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) ? 1 : 0;
+		file_info.hidden = (FindData.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) ? GF_TRUE : GF_FALSE;
+		file_info.system = (FindData.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) ? GF_TRUE : GF_FALSE;
 		file_info.size = MAXDWORD;
 		file_info.size += 1;
 		file_info.size *= FindData.nFileSizeHigh;
@@ -521,11 +602,11 @@ next:
 }
 
 GF_EXPORT
-u64 gf_f64_tell(FILE *fp)
+u64 gf_ftell(FILE *fp)
 {
 #if defined(_WIN32_WCE)
 	return (u64) ftell(fp);
-#elif defined(GPAC_CONFIG_WIN32)	/* mingw or cygwin */
+#elif defined(GPAC_CONFIG_WIN32) && !defined(__CYGWIN__)	/* mingw or cygwin */
 #if (_FILE_OFFSET_BITS >= 64)
 	return (u64) ftello64(fp);
 #else
@@ -543,11 +624,11 @@ u64 gf_f64_tell(FILE *fp)
 }
 
 GF_EXPORT
-u64 gf_f64_seek(FILE *fp, s64 offset, s32 whence)
+u64 gf_fseek(FILE *fp, s64 offset, s32 whence)
 {
 #if defined(_WIN32_WCE)
 	return (u64) fseek(fp, (s32) offset, whence);
-#elif defined(GPAC_CONFIG_WIN32)	/* mingw or cygwin */
+#elif defined(GPAC_CONFIG_WIN32) && !defined(__CYGWIN__)	/* mingw or cygwin */
 #if (_FILE_OFFSET_BITS >= 64)
 	return (u64) fseeko64(fp, offset, whence);
 #else
@@ -565,28 +646,94 @@ u64 gf_f64_seek(FILE *fp, s64 offset, s32 whence)
 }
 
 GF_EXPORT
-FILE *gf_f64_open(const char *file_name, const char *mode)
+FILE *gf_fopen(const char *file_name, const char *mode)
 {
+	FILE *res = NULL;
+
 #if defined(WIN32)
-	FILE *res = fopen(file_name, mode);
-	if (res) return res;
-	if (strchr(mode, 'w') || strchr(mode, 'a')) {
-		u32 err = GetLastError();
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Win32] system failure for file opening of %s in mode %s: 0x%08x\n", file_name, mode, err));
+	Bool is_create;
+	is_create = (strchr(mode, 'w') == NULL) ? GF_FALSE : GF_TRUE;
+	if (!is_create) {
+		if (strchr(mode, 'a')) {
+			res = fopen(file_name, "rb");
+			if (res) {
+				fclose(res);
+				res = fopen(file_name, mode);
+			}
+		} else {
+			res = fopen(file_name, mode);
+		}
 	}
-	return NULL;
+	if (!res) {
+		const char *str_src;
+		wchar_t *wname;
+		wchar_t *wmode;
+		size_t len;
+		size_t len_res;
+		if (!is_create) {
+			GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[Core] Could not open file %s mode %s in UTF-8 mode, trying UTF-16\n", file_name, mode));
+		}
+		len = (strlen(file_name) + 1)*sizeof(wchar_t);
+		wname = (wchar_t *)gf_malloc(len);
+		str_src = file_name;
+		len_res = gf_utf8_mbstowcs(wname, len, &str_src);
+		if (len_res == -1) {
+			return NULL;
+		}
+		len = (strlen(mode) + 1)*sizeof(wchar_t);
+		wmode = (wchar_t *)gf_malloc(len);
+		str_src = mode;
+		len_res = gf_utf8_mbstowcs(wmode, len, &str_src);
+		if (len_res == -1) {
+			return NULL;
+		}
+
+		res = _wfsopen(wname, wmode, _SH_DENYNO);
+		gf_free(wname);
+		gf_free(wmode);
+	}
 #elif defined(GPAC_CONFIG_LINUX) && !defined(GPAC_ANDROID)
-	return fopen64(file_name, mode);
+	res = fopen64(file_name, mode);
 #elif (defined(GPAC_CONFIG_FREEBSD) || defined(GPAC_CONFIG_DARWIN))
-	return fopen(file_name, mode);
+	res = fopen(file_name, mode);
 #else
-	return fopen(file_name, mode);
+	res = fopen(file_name, mode);
 #endif
+
+	if (res) {
+		gpac_file_handles++;
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CORE, ("[Core] file %s opened in mode %s - %d file handles\n", file_name, mode, gpac_file_handles));
+	} else {
+		if (strchr(mode, 'w') || strchr(mode, 'a')) {
+#if defined(WIN32)
+			u32 err = GetLastError();
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] system failure for file opening of %s in mode %s: 0x%08x\n", file_name, mode, err));
+#else
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[Core] system failure for file opening of %s in mode %s: %d\n", file_name, mode, errno));
+#endif
+		}
+	}
+	return res;
 }
 
-#if (_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600) && ! defined(_GNU_SOURCE)
+GF_EXPORT
+s32 gf_fclose(FILE *file)
+{
+	if (file) {
+		assert(gpac_file_handles);
+		gpac_file_handles--;
+	}
+	return fclose(file);
+}
+
+#if (_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600) && ! defined(_GNU_SOURCE) && !defined(WIN32)
 #define HAVE_STRERROR_R 1
 #endif
+
+GF_EXPORT
+size_t gf_fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+	return fread(ptr, size, nmemb, stream);
+}
 
 GF_EXPORT
 size_t gf_fwrite(const void *ptr, size_t size, size_t nmemb,

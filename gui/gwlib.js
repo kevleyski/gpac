@@ -7,24 +7,36 @@
 
 /*log function*/
 function gwlog(lev, str) {
-    if (lev <= gw_log_level) {
-        if (str.charAt(0) != '[') {
-            alert('[GUI] ' + str);
-        } else {
-            alert(str);
-        }
-    }
+    alert(lev, str);
 }
 
 /*log levels*/
-l_err = 0;
-l_war = 1;
-l_inf = 2;
-l_deb = 3;
+l_err = 1;
+l_war = 2;
+l_inf = 3;
+l_deb = 4;
 
 /*default log level*/
 gw_log_level = l_inf;
 
+GF_JS_EVENT_BASE = 20000;
+
+//playback event
+//@param is_playing boolean giving the playback status;
+GF_JS_EVENT_PLAYBACK = GF_JS_EVENT_BASE;
+
+//playlist insert event
+//@param url string giving URL to append
+GF_JS_EVENT_PLAYLIST_ADD = GF_JS_EVENT_BASE + 1;
+
+//playlist reset event
+//@param none
+GF_JS_EVENT_PLAYLIST_RESET = GF_JS_EVENT_BASE + 2;
+
+
+//playlist reset event
+//@param index item index in playlist
+GF_JS_EVENT_PLAYLIST_PLAY = GF_JS_EVENT_BASE + 3;
 
 function gw_new_timer(progressive) {
     var obj = new SFNode('TimeSensor');
@@ -296,26 +308,65 @@ function gw_unload_resource(res) {
             return;
         }
     }
-    alert('Unloading resource for url ' + res.children[0].url[0] + ' not found in resource bank');
+    gwlog(l_err, 'Unloading resource for url ' + res.children[0].url[0] + ' not found in resource bank');
 }
 
+//static
+function gw_appy_effect_scale(timer, val) {
+    if (!timer.wnd.visible) {
+        timer.wnd.scale.x = 1 - val;
+        timer.wnd.scale.y = 1 - val;
+          timer.wnd.set_alpha((1 - val) * timer.target_alpha);
+    } else {
+        timer.wnd.scale.x = val;
+        timer.wnd.scale.y = val;
+          timer.wnd.set_alpha(val * timer.target_alpha);
+    }
+}
+
+//static
+function gw_appy_effect_notif(timer, val) {
+    var final_x = gw_display_width / 2 - timer.wnd.width / 2;
+    var final_y = gw_display_height / 2 - timer.wnd.height/2;
+    if (!timer.wnd.visible) {
+        timer.wnd.translation.x = final_x;
+        timer.wnd.translation.y = final_y + val * timer.wnd.height;
+        timer.wnd.set_alpha((1 - val) * timer.target_alpha);
+    } else {
+        timer.wnd.translation.x = final_x;
+        timer.wnd.translation.y = final_y + (1-val) * timer.wnd.height;
+        timer.wnd.set_alpha(val * timer.target_alpha);
+    }
+}
 
 //static
 function gw_window_show_hide() {
+
+	if (typeof this.show_effect == 'string') {
+		if (this.show_effect == 'none') {
+			this.visible = !this.visible;
+			this.scale.x = this.visible ? 1 : 0;
+			this.scale.y = this.visible ? 1 : 0;
+			return;
+		}
+	}
+
     if (typeof this._wnd_timer == 'undefined') {
         this._wnd_timer = gw_new_timer(1);
         this._wnd_timer.wnd = null;
+
+        this._wnd_timer.effect = 0;
         this._wnd_timer.set_timeout(0.25, false);
         this._wnd_timer.on_fraction = function (val) {
             if (!this.wnd) return;
-            if (!this.wnd.visible) {
-                this.wnd.scale.x = 1 - val;
-                this.wnd.scale.y = 1 - val;
-                this.wnd.set_alpha((1 - val) * this.wnd.alpha);
-            } else {
-                this.wnd.scale.x = val;
-                this.wnd.scale.y = val;
-                this.wnd.set_alpha(val * this.wnd.alpha);
+
+            switch (this.effect) {
+            case 0:
+                gw_appy_effect_scale(this, val);
+                break;
+            case 1:
+                gw_appy_effect_notif(this, val);
+                break;
             }
         }
         this._wnd_timer.on_active = function (val) {
@@ -325,7 +376,7 @@ function gw_window_show_hide() {
             this.wnd = null;
             wnd.scale.x = wnd.visible ? 1 : 0;
             wnd.scale.y = wnd.visible ? 1 : 0;
-            wnd.set_alpha(wnd.alpha);
+            wnd.set_alpha(this.target_alpha);
             if (wnd.visible) {
                 gw_ui_root.set_focus(wnd);
             } else {
@@ -342,8 +393,17 @@ function gw_window_show_hide() {
     if (this._wnd_timer.wnd) return;
 
     this.visible = !this.visible;
-    this.alpha = this.get_alpha();
-    this.set_alpha(1.0);
+    if (this.visible) {
+        this._wnd_timer.target_alpha = this.get_alpha();
+        this._wnd_timer.target_x = this.translation.x;
+        this._wnd_timer.target_y = this.translation.y;
+        this._wnd_timer.target_w = this.width;
+        this._wnd_timer.target_h = this.height;
+    }
+
+    if (typeof this.show_effect == 'string') {
+        if (this.show_effect == 'notif') this._wnd_timer.effect = 1;
+    }
     this._wnd_timer.wnd = this;
     this._wnd_timer.start(0);
     this._wnd_timer.call_on_end = null;
@@ -370,8 +430,8 @@ gwskin.back_color = new SFColor(0.2, 0.2, 0.2);
 gwskin.pointing_device = true;
 gwskin.long_click_delay = 0.5;
 gwskin.use_resource_bank = false;
-gwskin.default_window_alpha = 0.8;
-gwskin.default_message_timeout = 2.0;
+gwskin.default_window_alpha = 0.5;
+gwskin.default_message_timeout = 3.0;
 gwskin.default_tooltip_timeout = 0.75;
 gwskin.default_tooltip_delay = 1;
 
@@ -382,11 +442,21 @@ gwskin.appearance_transparent.skin = true;
 gwskin.no_gl_window_back = new SFNode('Background2D')
 gwskin.no_gl_window_back.backColor = new SFColor(0, 0, 0);
 
+gwskin.last_hit_x = 0;
+gwskin.last_hit_y = 0;
+
+gwskin.enable_background = function(do_enable) {
+ if (do_enable) {
+  gpac.set_back_color(gwskin.back_color.r, gwskin.back_color.g, gwskin.back_color.b, 1.0);
+ } else {
+  gpac.set_back_color(0, 0, 0, 1.0);
+ }
+}
 
 //static
 function gw_get_abs_pos(child) {
     var pos = new SFVec2f(0, 0);
-    while (1) {
+    while (child != null) {
         if (typeof (child.translation) != 'undefined') {
             pos.x += child.translation.x;
             pos.y += child.translation.y;
@@ -439,13 +509,15 @@ gwskin.tooltip_timeout = gw_new_timer(false);
 gwskin.tooltip_exec = function (obj, show) {
 
     if (!show) return;
-    
+
     if (!gwskin.tooltip_wnd) {
         wnd = gw_new_window(null, true, true, 'tooltip', true);
+        wnd.label = '';
         gwskin.tooltip_wnd = wnd;
         wnd.txt = gw_new_text(gwskin.tooltip_wnd, '');
-        wnd.label = '';
         wnd.on_display_size = function (w, h) {
+            if (! this.label) return;
+
             width = this.label.length * gwskin.default_text_font_size;
             this.set_size(width, 2 * gwskin.default_text_font_size);
             this.txt.set_width(width);
@@ -466,15 +538,15 @@ gwskin.tooltip_exec = function (obj, show) {
             if (!val) gwskin.tooltip_wnd.close();
         }
     }
-    
+
     gwskin.tooltip_wnd.label = obj.get_label();
     gwskin.tooltip_wnd.txt.set_label(gwskin.tooltip_wnd.label);
     gwskin.tooltip_wnd.on_display_size(gw_display_width, gw_display_height);
-    
+
 
     var tt = gwskin.tooltip_wnd;
     var dy = 1.2 * tt.height;
-    var pos = gw_get_adjusted_abs_pos(obj, tt.width, 1.2*tt.height, 0);
+    var pos = gw_get_adjusted_abs_pos(obj, tt.width, 1.2 * tt.height, 0);
     tt.move(pos.x, pos.y);
 }
 
@@ -499,8 +571,8 @@ gwskin.default_label_font_size = 18;
 gwskin.default_text_font_size = 18;
 gwskin.default_font_family = 'SANS';
 gwskin.default_icon_text_spacing = 8;
-gwskin.default_control_height = 64;
-gwskin.default_icon_height = 48;
+gwskin.default_control_height = 48;
+gwskin.default_icon_height = 32;
 
 
 //create styles
@@ -641,6 +713,14 @@ gwskin.styles.push(s);
 s.font = gw_new_fontstyle(gwskin.default_text_font_size, 0);
 s.font.skin = true;
 
+s = { name: 'float_text' };
+gwskin.styles.push(s);
+s.text = gw_new_appearance(1, 1, 1);
+s.text.skin = true;
+s.font = gw_new_fontstyle(gwskin.default_text_font_size, 0);
+s.font.justify[1] = 'END';
+s.font.skin = true;
+
 gwskin.images = new Object();
 gwskin.labels = new Object();
 
@@ -682,7 +762,7 @@ gwskin.images.media_prev = 'icons/media_prev.svg';
 gwskin.labels.media_prev = 'Previous Clip';
 gwskin.images.seek_forward = 'icons/seek_forward.svg';
 gwskin.labels.seek_forward = 'Fast Forward';
-gwskin.images.rewind = 'icons/seek_forward.svg';
+gwskin.images.rewind = 'icons/rewind.svg';
 gwskin.labels.rewind = 'Rewind';
 gwskin.images.folder = 'icons/folder.svg';
 gwskin.labels.folder = 'Directory';
@@ -744,6 +824,10 @@ gwskin.images.playlist_prev = 'icons/pl_prev.svg';
 gwskin.labels.playlist_prev = 'Previous';
 gwskin.images.channels = 'icons/tv.svg';
 gwskin.labels.channels = 'TV Channels';
+gwskin.images.view360 = 'icons/image.svg';
+gwskin.labels.view360 = '360°';
+gwskin.images.sensors = 'icons/compass.svg';
+gwskin.labels.sensors = 'Orientation';
 
 
 gwskin.mime_video_default_ext = " mp4 mp4s m4s 3gp 3gpp m2ts ts trp m3u8 mpd avi mov ";
@@ -816,9 +900,18 @@ function gwskin_set_default_control_height(value) {
 
 function gwskin_set_default_icon_height(value) {
     gwskin.default_icon_height = value;
+    
+    var fsize = 1;
+    if (value>50) fsize = 32;
+    else if (value>30) fsize = 22;
+    else if (value > 10) fsize = value - 10;
+             
+    gwskin.default_label_font_size = fsize;
+    gwskin.default_text_font_size = fsize;
+    
     for (var i = 0; i < gwskin.styles.length; i++) {
         if ((typeof gwskin.styles[i].font != 'undefined') && gwskin.styles[i].font) {
-            gwskin.styles[i].font.size = (value > 10) ? value - 10 : 1;
+            gwskin.styles[i].font.size = fsize;
         }
     }
 }
@@ -827,26 +920,32 @@ function gwskin_set_default_icon_height(value) {
 //static
 function gwlib_filter_event(evt) {
 
-    if (gw_ui_root.has_popup && (evt.type == GF_EVENT_MOUSEDOWN)) {
-        //close all open popups
-        var count = gw_ui_root.children.length;
-        for (var i = count; i > 0; i--) {
-            var c = gw_ui_root.children[i - 1];
-            if (typeof c._popup != 'undefined') {
-                c.close();
-                if (count>gw_ui_root.children.length) i--;
-            }
-        }
-        gw_ui_root.has_popup = false;
-    }
+	if (evt.type == GF_EVENT_MOUSEDOWN) {
+		if (gw_ui_root.has_popup) {
+			//close all open popups
+			var count = gw_ui_root.children.length;
+			for (var i = count; i > 0; i--) {
+				var c = gw_ui_root.children[i - 1];
+				if (typeof c._popup != 'undefined') {
+					c.close();
+					if (count>gw_ui_root.children.length) i--;
+				}
+			}
+			gw_ui_root.has_popup = false;
+		}
+		gwskin.last_hit_x = evt.mouse_x;
+		gwskin.last_hit_y = evt.mouse_y;
+	}
 
     if (gw_ui_top_wnd && gw_ui_top_wnd.on_event(evt)) return true;
 
-    if ((evt.type == GF_EVENT_KEYDOWN) && ((evt.keycode == 'Up') || (evt.keycode == 'Down') || (evt.keycode == 'Right') || (evt.keycode == 'Left')))
+/*
+ if ((evt.type == GF_EVENT_KEYDOWN) && ((evt.keycode == 'Up') || (evt.keycode == 'Down') || (evt.keycode == 'Right') || (evt.keycode == 'Left')))
         return false;
-
+*/
+	
     for (var i = 0; i < gw_event_filters.length; i++) {
-        if (gw_event_filters[i](evt)) return true;
+        if (gw_event_filters[i](evt) == true) return true;
     }
     return false;
 }
@@ -897,19 +996,31 @@ function gwlib_init(root_node) {
     gpac.set_event_filter(gwlib_filter_event);
     gwskin.has_opengl = (gpac.get_option('Compositor', 'OpenGLMode') != 'disable') ? true : false;
 
-    gwskin.browser_mode = (gpac.getOption('Temp', 'BrowserMode') == 'yes') ? true : false;
+    gwskin.browser_mode = (gpac.get_option('Temp', 'BrowserMode') == 'yes') ? true : false;
 
     gpac.focus_highlight = false;
 
     gwskin.disable_transparency = false;
     //remove window gradients 
-    if (!gwskin.has_opengl) {
+    if (!gwskin.has_opengl && !gpac.hardware_rgba) {
         s = gwskin.get_style('window', 'normal');
         s.texture = null;
         gwskin.disable_transparency = true;
         gwskin.default_window_alpha = 1;
     }
 
+    var device = gpac.get_option('General', 'DeviceType');
+
+    if ((device == 'iOS') || (device == 'Android')) gwskin.mobile_device = true;
+    else gwskin.mobile_device = false;
+    
+    if (gwskin.mobile_device) {
+        var size = gw_display_width;
+        if (size> gw_display_height) size = gw_display_height;
+        gwskin_set_default_control_height(size/3);
+        gwskin_set_default_icon_height(size/3);
+    }
+    
 	gwskin_set_white_blue();
 
     gwskin._to_string = function (obj) {
@@ -958,7 +1069,11 @@ function gwlib_init(root_node) {
 }
 
 function gwlib_add_event_filter(evt_filter) {
-    gw_event_filters.push(evt_filter);
+	if ((arguments.length==2) && (arguments[1]==true)) {
+		gw_event_filters.unshift(evt_filter);
+	} else {
+		gw_event_filters.push(evt_filter);
+	}
 }
 
 function gwlib_remove_event_filter(evt_filter) {
@@ -1076,14 +1191,14 @@ gwskin.get_style = function (class_name, style_name) {
         if (typeof styles[0][style_name] != 'undefined')
             return styles[0][style_name];
     } else {
-        alert('Non-existing class ' + class_name);
+        gwlog(l_err, 'Non-existing class ' + class_name);
     }
 
     style = gwskin.styles[0];
     if (typeof style[style_name] != 'undefined')
         return style[style_name];
 
-    alert('Non-existing style ' + style_name + ' in default class');
+    gwlog(l_err, 'Non-existing style ' + style_name + ' in default class');
     return null;
 }
 
@@ -1097,7 +1212,7 @@ gwskin.get_font = function (class_name) {
             return styles[0].font;
         }
     } else {
-        alert('Non-existing class ' + class_name);
+        gwlog(l_err, 'Non-existing class ' + class_name);
     }
     return gwskin.styles[0].font;
 }
@@ -1234,6 +1349,7 @@ function gw_new_rectangle(class_name, style) {
         this.corner_bl = bl;
         this.corner_br = br;
     }
+    obj.sfv = new SFVec2f(0, 0);
 
     obj.set_size = function (w, h) {
         var hw, hh, rx_bl, ry_bl, rx_br, ry_br, rx_tl, ry_tl, rx_tr, ry_tr, rx, ry;
@@ -1263,19 +1379,50 @@ function gw_new_rectangle(class_name, style) {
         if (!this.corner_bl) rx_bl = ry_bl = 0;
         if (!this.corner_br) rx_br = ry_br = 0;
 
+        if (shape.geometry.point.point.length < 12) {
+            shape.geometry.point.point.length = 12;
+            for (var i = 0; i < 12; i++) {
+                shape.geometry.point.point[i].x = 0;
+            }
+        }
         temp = this.children[0].geometry.point.point;
-        temp[0] = new SFVec2f(hw - rx_tr, hh);
-        temp[1] = new SFVec2f(hw, hh); /*bezier ctrl point or line-to*/
-        temp[2] = new SFVec2f(hw, hh - ry_tr);
-        temp[3] = new SFVec2f(hw, -hh + ry_br);
-        temp[4] = new SFVec2f(hw, -hh); /*bezier control point*/
-        temp[5] = new SFVec2f(hw - rx_br, -hh);
-        temp[6] = new SFVec2f(-hw + rx_bl, -hh);
-        temp[7] = new SFVec2f(-hw, -hh); /*bezier control point*/
-        temp[8] = new SFVec2f(-hw, -hh + ry_bl);
-        temp[9] = new SFVec2f(-hw, hh - ry_tl);
-        temp[10] = new SFVec2f(-hw, hh); /*bezier control point*/
-        temp[11] = new SFVec2f(-hw + rx_tl, hh);
+
+        this.sfv.x = hw - rx_tr;
+        this.sfv.y = hh;
+        temp[0] = this.sfv;
+        this.sfv.x = hw; 
+        this.sfv.y = hh; /*bezier ctrl point or line-to*/
+        temp[1] = this.sfv;
+        this.sfv.x = hw;
+        this.sfv.y = hh - ry_tr;
+        temp[2] = this.sfv;
+        this.sfv.x = hw; 
+        this.sfv.y = -hh + ry_br;
+        temp[3] = this.sfv;
+        this.sfv.x = hw;
+        this.sfv.y = -hh; /*bezier control point*/
+        temp[4] = this.sfv;
+        this.sfv.x = hw - rx_br;
+        this.sfv.y = -hh;
+        temp[5] = this.sfv;
+        this.sfv.x = -hw + rx_bl;
+        this.sfv.y = -hh;
+        temp[6] = this.sfv;
+        this.sfv.x = -hw;
+        this.sfv.y = -hh; /*bezier control point*/
+        temp[7] = this.sfv;
+        this.sfv.x = -hw;
+        this.sfv.y = -hh + ry_bl;
+        temp[8] = this.sfv;
+        this.sfv.x = -hw;
+        this.sfv.y = hh - ry_tl;
+        temp[9] = this.sfv;
+        this.sfv.x = -hw;
+        this.sfv.y = hh; /*bezier control point*/
+        temp[10] = this.sfv;
+        this.sfv.x = -hw + rx_tl;
+        this.sfv.y = hh;
+        temp[11] = this.sfv;
     }
     return obj;
 }
@@ -1526,6 +1673,42 @@ function gw_new_window(parent, offscreen, background, class_name, no_focus) {
     return obj;
 }
 
+function gw_new_image(parent, src_url) {
+	var obj = new SFNode('Transform2D');
+	setup_gw_object(obj, 'Image');
+	obj.children[0] = new SFNode('Layer2D');
+	obj.children[0].children[0] = new SFNode('Inline');
+	obj.children[1] = gw_new_rectangle('default', 'invisible');
+	gw_object_set_hitable(obj.children[1]);
+
+	obj.on_click = null;
+	obj.children[1]._par = obj;
+	obj.children[1].on_click = function() {
+		if (this._par.on_click) this._par.on_click();
+	}
+	obj.set_image = function(src_url) {
+		var inl = gw_load_resource(src_url, false);
+		this.children[0].children[0] = inl;
+	}
+	obj.set_size = function(width, height) {
+		this.children[0].size.x = width;
+		this.children[0].size.y = height;
+		this.width = width;
+		this.height = height;
+		this.children[1].set_size(width, height);
+	}
+	obj._pre_destroy = function () {
+		this.children[0].children.length = 0;
+	}
+	obj.on_event = function () { return false; }
+
+	obj.set_image(src_url);
+	
+	gw_add_child(parent, obj);
+	return obj;
+}
+
+
 function gw_new_icon_button(parent, icon_url, label, horizontal, class_name) {
     var touch;
     
@@ -1548,14 +1731,19 @@ function gw_new_icon_button(parent, icon_url, label, horizontal, class_name) {
     obj._icon_root = new SFNode('Transform2D');
     obj._icon_root.children[0] = new SFNode('Layer2D');
     obj._touch = new SFNode('TouchSensor');
-    obj._highlight = gw_new_rectangle(class_name, 'invisible');
 
     obj._show_highlight = false;
     obj._is_icon = false;
     obj._tooltip = true;
-    if (class_name == 'icon') {
-        obj._is_icon = true;
+    if (class_name == 'image') {
+		obj._is_icon = false;
+		obj._tooltip = false;
+		class_name = 'default';
     }
+	else if (class_name == 'icon') {
+		obj._is_icon = true;
+		obj._highlight = gw_new_rectangle(class_name, 'invisible');
+	}
     else if (class_name == 'icon_label') {
         obj._is_icon = true;
         obj._show_highlight = false;
@@ -1564,6 +1752,7 @@ function gw_new_icon_button(parent, icon_url, label, horizontal, class_name) {
     else if (class_name == 'listitem') {
         obj._is_icon = true;
         obj._show_highlight = true;
+		obj._highlight = gw_new_rectangle(class_name, 'invisible');
         obj._tooltip = false;
     } else {
         obj._highlight = gw_new_rectangle(class_name, 'invisible');
@@ -1614,7 +1803,7 @@ function gw_new_icon_button(parent, icon_url, label, horizontal, class_name) {
             this._label.set_label(label);
         }
         obj.get_label = function () {
-            return this._label.get_label();
+			return this._label ? this._label.get_label() : null;
         }
     } else {
         obj.set_size = function (width, height) {
@@ -1715,6 +1904,7 @@ function gw_new_icon_button(parent, icon_url, label, horizontal, class_name) {
         while (idx > this.icons.length) idx -= this.icons.length;
         this._icon_root.children[0].children[0] = this.icons[idx];
     }
+		
     obj._pre_destroy = function () {
         for (var i in this.icons) {
             gw_unload_resource(this.icons[i]);
@@ -2427,9 +2617,11 @@ function gw_new_grid_container(parent) {
                     return grid_event_navigate(this, this._all_children, evt.keycode);
                 }
                 if ((evt.keycode == 'PageUp') && (this._page_idx > 0)) {
+                    if (this._pages.length <= 1) return 0;
                     return this.on_prev_page();
                 }
                 if ((evt.keycode == 'PageDown') && (this._page_idx < this._pages.length)) {
+                    if (this._pages.length <= 1) return 0;
                     return this.on_next_page();
                 }
                 return 0;
@@ -2734,7 +2926,7 @@ function gw_new_text_edit(parent, text_data) {
     return obj;
 }
 
-function gw_new_text_area(parent, text_data) {
+function gw_new_text_area(parent, text_data, class_name) {
     var obj = new SFNode('Transform2D');
     setup_gw_object(obj, 'TextArea');
 
@@ -2745,7 +2937,8 @@ function gw_new_text_area(parent, text_data) {
     obj.children[0].justify[0] = "JUSTIFY";
     obj.children[0].justify[1] = "FIRST";
 
-    gw_new_text(obj.children[0], text_data, 'text');
+	if (arguments.length==2) class_name = 'text';
+    gw_new_text(obj.children[0], text_data, class_name);
     obj.set_size = function (width, height) {
         this.children[0].size.x = width;
         this.children[0].size.y = height;
@@ -2933,6 +3126,8 @@ function gw_new_message(container, label, content) {
     notif.timer.on_active = function (val) {
         if (!val) this.wnd.close();
     }
+    notif.show_effect = 'notif';
+    notif._no_focus = true;
     return notif;
 }
 
@@ -2987,10 +3182,10 @@ function gw_guess_mime_icon(name)
 
     var idx = 0;
     while (1) {
-        var mime = gpac.getOption('MimeTypes', idx);
+        var mime = gpac.get_option('MimeTypes', idx);
         if (mime == null) break;
         idx++;
-        var mime_ext = gpac.getOption('MimeTypes', mime).split('"')[1];
+        var mime_ext = gpac.get_option('MimeTypes', mime).split('"')[1];
         if (!mime_ext.match(reg)) continue;
                 
         if (mime.indexOf('video') != -1) return gwskin.images.mime_video;
@@ -3010,7 +3205,7 @@ function gw_new_file_dialog(container, label) {
 
     dlg.area = gw_new_grid_container(dlg);
     dlg.area.break_at_line = true;
-    dlg.area.dlg = dlg;
+	dlg.area.dlg = dlg;
 
     dlg.on_close = function () {
         if (this.do_sort_wnd) {
@@ -3022,6 +3217,7 @@ function gw_new_file_dialog(container, label) {
     }
 
 
+	dlg._name_sort_only = false;
     dlg._sort_type = 0;
     dlg.do_sort = function (value) {
         this._page_idx = 0;
@@ -3073,6 +3269,15 @@ function gw_new_file_dialog(container, label) {
     dlg.sort = dlg.add_tool('sort');
     dlg.sort_wnd = null;
     dlg.sort.on_click = function() {
+		
+		if (this.dlg._name_sort_only) {
+			var wnd = this.dlg;
+			if (wnd._sort_type==0) wnd._sort_type = 1;
+			else wnd._sort_type = 0;
+			wnd.do_sort(wnd._sort_type);
+			return;
+		}
+		
         if (this.dlg.sort_wnd) {
             this.dlg.sort_wnd.close();
             this.dlg.sort_wnd = null;
@@ -3182,27 +3387,41 @@ function gw_new_file_dialog(container, label) {
         this.area.reset_children();
 
         for (i = 0; i < filelist.length; i++) {
+			var f_path, f_name;
             if (!is_listing && (filelist[i].hidden || filelist[i].system)) continue;
 
-            var icon_name = gwskin.images.mime_generic;
+			var icon_name = gwskin.images.mime_generic;
+			if (is_listing && typeof filelist[i].icon == 'string') {
+				if (filelist[i].icon != '') {
+					icon_name = filelist[i].icon;
+				}
+			}
 
+			if (is_listing && typeof filelist[i] == 'string') {
+				f_path = f_name = filelist[i];
+				this._name_sort_only = true;
+			} else {
+				f_path = filelist[i].path;
+				f_name = filelist[i].name;
+			}
+			
             if ( (!is_listing || (typeof filelist[i].directory == 'boolean'))  && (filelist[i].directory || (filelist[i].name.indexOf('.') < 0))) {
                 if (filelist[i].drive) icon_name = gwskin.images.drive;
                 else icon_name = gwskin.images.folder;
             } else {
-                icon_name = gw_guess_mime_icon(is_listing ? filelist[i].path : filelist[i].name);
+                icon_name = gw_guess_mime_icon(is_listing ? f_path : f_name);
             }
 
-            var item = gw_new_icon_button(this.area, icon_name, filelist[i].name, true, 'listitem');
+            var item = gw_new_icon_button(this.area, icon_name, f_name, true, 'listitem');
             item.dlg = this;
-            item.filename = filelist[i].name;
-            item.directory = filelist[i].directory;
+            item.filename = f_name;
+			item.directory = typeof filelist[i].directory != 'undefined' ? filelist[i].directory : false;
             item.set_size(this.width, gwskin.default_control_height);
-            item.path = is_listing ? filelist[i].path : null;
+            item.path = is_listing ? f_path : null;
             item.size = typeof filelist[i].size != 'undefined' ? filelist[i].size : 0;
             item.date = typeof filelist[i].last_modified != 'undefined' ? filelist[i].last_modified : 0;
 
-            if (filelist[i].directory) {
+            if (item.directory) {
                 item.on_click = this._on_dir_browse;
             } else {
                 item.on_click = this._on_file_select;
@@ -3210,7 +3429,7 @@ function gw_new_file_dialog(container, label) {
             item.on_long_click = function () {
                 if (this.dlg.on_long_click) {
 					var path = this.path ? this.path : (this.dlg.directory + this.filename);
-                    this.dlg.on_long_click(this.filename, path, this.directory);
+					this.dlg.on_long_click(this.filename, path, this.dlg.directory);
 				}
             }
 
@@ -3258,7 +3477,7 @@ function gw_new_plotter(parent) {
         for (var i = 0; i < this.series.length; i++) {
             var s = this.series[i];
             s.scale = new SFVec2f(width - this.label_width, height);
-            s.but.set_size(this.label_width, 0.9*gwskin.default_text_font_size);
+            s.but.set_size(2*this.label_width, 0.9*gwskin.default_text_font_size);
             s.but.set_font_size(0.9 * gwskin.default_text_font_size);
             s.translation.x = -this.label_width / 2;
         }
@@ -3266,7 +3485,7 @@ function gw_new_plotter(parent) {
         this.height = height;
     }
 
-    obj.label_width = 100;
+    obj.label_width = 120;
 
     obj.series = [];
     obj.add_serie = function (legend, units, r, g, b) {
@@ -3336,7 +3555,7 @@ function gw_new_plotter(parent) {
         s.but = gw_new_text(this, '' + legend, 'custom');
         s.but.set_align('END');
         s.but.set_color(r, g, b);
-        s.but.set_size(this.label_width, gwskin.default_text_font_size);
+        s.but.set_size(2*this.label_width, gwskin.default_text_font_size);
         s.but.hide();
         return s;
 
@@ -3392,12 +3611,12 @@ function gw_new_popup(anchor, type)
           var s = children[i].get_label().length;
           if (s>max_s) max_s = s;
         }
-        
+
         for (var i=0; i<children.length; i++) {
-          children[i].set_size(s * 0.9*gwskin.default_text_font_size, gwskin.default_icon_height);
+            children[i].set_size(max_s * gwskin.default_text_font_size, gwskin.default_icon_height);
         }
-        this.area.set_size(s * gwskin.default_text_font_size, children.length * gwskin.default_icon_height);
-        this.set_size(s * gwskin.default_text_font_size, children.length * gwskin.default_icon_height);
+        this.area.set_size(max_s * gwskin.default_text_font_size, children.length * gwskin.default_icon_height);
+        this.set_size(max_s * gwskin.default_text_font_size, children.length * gwskin.default_icon_height);
         this.reposition();
     }
     gw_ui_root.has_popup = true;

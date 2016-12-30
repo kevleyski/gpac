@@ -5,6 +5,10 @@ extension = {
     GF_STATE_STOP: 2,
     GF_STATE_TRICK: 3,
 
+    GF_VIEW_MONO: 0,
+    GF_VIEW_STEREO: 1,
+    GF_VIEW_STEREO_SIDE: 2,
+    GF_VIEW_STEREO_TOP: 3,
 
     movie: null,
     movie_control: null,
@@ -20,11 +24,11 @@ extension = {
     icon_pause: 1,
     icon_play: 0,
     controler: null,
-    stat_wnd: null,
     buffer_wnd: null,
     current_time: 0,
     duration: 0,
     timeshift_depth: 0,
+    time_in_tsb: 0,
     muted: 0,
     file_open_dlg: false,
     stoped_url: null,
@@ -38,11 +42,24 @@ extension = {
     initial_speed: 1,
     initial_start: 0,
     show_stats_init: 0,
+	def_width: 600,
+	def_height: 600,
+	disabled: false,
     services: [],
     channels_wnd: null,
+	medialist_wnd: null,
+    reverse_playback_supported: false,
+	view_stereo: 0,
+
+    stats_wnd: null,
+    stats_data: [],
+    stats_window: 100,
+    stats_resources: [],
+    nb_objs_at_last_scan: 0,
+    stats_timer: null,
 
     do_show_controler: function () {
-        if (this.file_open_dlg) {
+		if (this.file_open_dlg) {
             alert('Cannot show - File dialog is open');
             return false;
         }
@@ -55,45 +72,86 @@ extension = {
     },
 
     ext_filter_event: function (evt) {
+		if (this.disabled) return false;
+		
         switch (evt.type) {
-            case GF_EVENT_MOUSEUP:
-                this.do_show_controler();
-                return 1;
-            case GF_EVENT_KEYUP:
-                if (evt.keycode == gwskin.keys.close) {
-                    this.do_show_controler();
-                    return 1;
-                }
-                return 0;
-            case GF_EVENT_QUALITY_SWITCHED:
-                if (this.stat_wnd) {
-                    this.stat_wnd.quality_changed();
-                }
-                return 1;
-            case GF_EVENT_TIMESHIFT_UPDATE:
-                if (this.timeshift_depth) {
-                    this.set_time(0);
-                }
-                return 1;
-            case GF_EVENT_TIMESHIFT_OVERFLOW:
-                if (this.state == this.GF_STATE_PAUSE) {
-                    this.set_state(this.GF_STATE_PLAY);
-                    var msg = gw_new_message(null, 'Timeshift Overflow', 'Falling outside of timeshift buffer: resuming playback');
-                    msg.set_size(380, gwskin.default_icon_height + 2 * gwskin.default_text_font_size);
-                    msg.show();
-                }
-                return 1;
-            case GF_EVENT_TIMESHIFT_UNDERRUN:
-                if (this.movie_control.mediaSpeed > 1) {
-                    this.set_speed(1);
-                    var msg = gw_new_message(null, 'Timeshift Underrun', 'Resuming to normal speed');
-                    msg.set_size(380, gwskin.default_icon_height + 2 * gwskin.default_text_font_size);
-                    msg.show();
-                }
-                return 1;
-            case GF_EVENT_NAVIGATE:
-                this.set_movie_url(evt.target_url);
-                return 1;
+		case GF_EVENT_MOUSEUP:
+			if ((gwskin.last_hit_x == evt.mouse_x) && (gwskin.last_hit_y == evt.mouse_y)) {
+				this.do_show_controler();
+			}
+			//we always return false so that the event is handled by the navigation logic of the player, otherwise
+			//the mouse would never be released and navigation would stay always on
+			return false;
+		case GF_EVENT_KEYUP:
+			if (evt.keycode == gwskin.keys.close) {
+				this.do_show_controler();
+				return true;
+			}
+			return false;
+		case GF_EVENT_QUALITY_SWITCHED:
+			if (this.stats_wnd) {
+				this.stats_wnd.quality_changed();
+			}
+			return true;
+		case GF_EVENT_TIMESHIFT_UPDATE:
+			if (this.timeshift_depth) {
+				this.set_time(0);
+			}
+			return true;
+		case GF_EVENT_TIMESHIFT_OVERFLOW:
+			var msg = '';
+			if ((this.state == this.GF_STATE_PAUSE) || (this.movie_control.mediaSpeed != 1)) {
+				this.set_state(this.GF_STATE_PLAY);
+				this.set_speed(1);
+
+				msg = gw_new_message(null, 'Timeshift Overflow', 'Falling outside of timeshift buffer: resuming playback');
+				msg.set_size(380, gwskin.default_icon_height + 2 * gwskin.default_text_font_size);
+				msg.show();
+			}
+			return true;
+		case GF_EVENT_TIMESHIFT_UNDERRUN:
+			if (this.movie_control.mediaSpeed > 1) {
+				this.set_speed(1);
+				var msg = gw_new_message(null, 'Timeshift Underrun', 'Resuming to normal speed');
+				msg.set_size(380, gwskin.default_icon_height + 2 * gwskin.default_text_font_size);
+				msg.show();
+			}
+			return true;
+		case GF_EVENT_NAVIGATE:
+			this.set_movie_url(evt.target_url);
+			return true;
+		case GF_EVENT_KEYDOWN:
+			//alert('key is '+evt.keycode + ' hw code is ' + evt.hwkey);
+			if (evt.keycode == 'F1') {
+				this.controler.rewind.on_click();
+				return true;
+			}
+			if (evt.keycode == 'F2') {
+				this.controler.play.on_click();
+				return true;
+			}
+			if (evt.keycode == 'F3') {
+				this.controler.forward.on_click();
+				return true;
+			}
+			if (evt.keycode == 'F4') {
+				this.controler.back_live.on_click();
+				return true;
+			}
+			/*
+			if (evt.keycode == 'F7') {
+			 this.controler.fullscreen.on_click();
+			 return true;
+			}
+			if (evt.keycode == 'F8') {
+			 gpac.reload();
+			 return true;
+			}
+			*/
+			return false;
+
+		default:
+			return false;
         }
     },
 
@@ -133,18 +191,25 @@ extension = {
                     this.url[0] = url;
                     if (url == '') {
                         ext.controler.show();
+						ext.set_state(ext.GF_STATE_STOP);
                     } else {
-                        this.movie_connected = true;
+                        ext.movie_connected = true;
+						ext.set_state(ext.GF_STATE_PLAY);
                     }
                 }
+				//reset stats objects and data
+				ext.root_odm=null;
+				ext.nb_objs_at_last_scan = 0;
+				ext.stats_resources = [];
+				ext.stats_data = [];
 
                 //switch back inline nodes and remove from dictionary
                 gw_detach_child(this);
                 //force detach, we don't know when GC will be done
                 ext.movie.children[0].url[0] = '';
                 ext.movie.children[0] = this;
-
                 if (evt.error) return;
+
 
                 //success !
                 ext.current_url = this.url[0];
@@ -154,14 +219,15 @@ extension = {
                 } else {
                     ext.movie_control.mediaStartTime = 0;
                     ext.movie_control.mediaStopTime = ext.initial_start;
-                    alert('MC stopTime is ' + ext.movie_control.mediaStopTime + ' TS buffer is ' + ext.timeshift_depth);
                 }
                 ext.movie_control.loop = ext.initial_loop;
+                alert('mc.mST is ' + ext.movie_control.mediaStopTime);
 
                 ext.movie_control.url[0] = ext.current_url;
                 ext.movie_sensor.url[0] = ext.current_url;
 
                 ext.timeshift_depth = 0;
+                ext.time_in_tsb = 0;
                 ext.initial_loop = false;
                 ext.initial_speed = 1;
                 ext.initial_start = 0;
@@ -174,14 +240,17 @@ extension = {
                 }
 
                 ext.root_odm = gpac.get_object_manager(ext.current_url);
-
-
-                gw_background_control(false);
+                ext.reverse_playback_supported = ext.root_odm.reverse_playback_supported;
 
                 ext.controler.hide();
-                gpac.caption = ext.current_url;
+
+				var names = ext.current_url.split('/');
+				if (names.length == 0) names = ext.current_url.split('\\');
+				gpac.caption = names.pop();
+				
                 ext.add_bookmark(ext.current_url, true);
 
+				gwskin.enable_background(false);
                 ext.declare_addons();
 
                 if (ext.initial_service_id) {
@@ -189,6 +258,13 @@ extension = {
                     if (odm) odm.select_service(ext.initial_service_id);
                     ext.initial_service_id = 0;
                 }
+
+                /* Start collecting statistics on media resources */
+                ext.gather_stats_resources(ext.root_odm, ext.root_odm.selected_service);
+                ext.stats_timer = gw_new_timer(false);
+                ext.stats_timer.ext = ext;
+                ext.stats_timer.set_timeout(1, true);
+                ext.stats_timer.on_event = ext.stats_timer_on_event;
                 if (ext.show_stats_init) {
                     ext.view_stats();
                 }
@@ -202,23 +278,41 @@ extension = {
                 //force display size notif on controler to trigger resize of the window
                 ext.controler.on_display_size(ext.controler.width, ext.controler.height);
             }
+
+            ext.root_odm = gpac.get_object_manager(ext.current_url);
+            ext.set_state(ext.GF_STATE_PLAY);
+
             if (!gpac.fullscreen && evt.width && evt.height) {
                 var w, h, r_w, r_h;
                 w = evt.width;
                 h = evt.height;
 
+				gpac.set_size(w, h, true);
+
                 if (w > gpac.screen_width) w = gpac.screen_width;
                 if (h > gpac.screen_height) h = gpac.screen_height;
 
+				var min_width = this.extension.def_width;
+				var min_height = this.extension.def_height;
                 r_w = r_h = 1;
-                //                if (w < min_width) r_w = Math.ceil(min_width / w);
-                //                if (h < min_height) r_h = Math.ceil(min_height / h);
+                if (w < min_width) r_w = Math.ceil(min_width / w);
+                if (h < min_height) r_h = Math.ceil(min_height / h);
                 if (r_w < r_h) r_w = r_h;
                 w = r_w * w;
                 h = r_w * h;
                 gpac.set_size(w, h);
+            } else {
+                gpac.set_size(evt.width, evt.height, true);
             }
             ext.streamlist_changed();
+
+            if (evt.width) {
+                var e = {};
+                e.type = GF_EVENT_SCENE_SIZE;
+                e.width = evt.width;
+                e.height = evt.height;
+                gwlib_filter_event(e);
+            }
         }
         this.movie.children[0].on_addon_found = function (evt) {
             var e = {};
@@ -232,10 +326,18 @@ extension = {
         this.movie.children[0].on_streamlist_changed = function (evt) {
             this.extension.streamlist_changed();
         }
+        this.movie.children[0].on_scene_size_modify = function (evt) {
+            var e = {};
+            e.type = GF_EVENT_SCENE_SIZE;
+            e.width = evt.width;
+            e.height = evt.height;
+            gwlib_filter_event(e);
+        }
 
         this.movie.children[0].addEventListener('gpac_scene_attached', this.movie.children[0].on_scene_size, 0);
         this.movie.children[0].addEventListener('gpac_addon_found', this.movie.children[0].on_addon_found, 0);
         this.movie.children[0].addEventListener('gpac_streamlist_changed', this.movie.children[0].on_streamlist_changed, 0);
+        this.movie.children[0].addEventListener('gpac_scene_size', this.movie.children[0].on_scene_size_modify, 0);
 
 
         this.movie.children[0].on_media_progress = function (evt) {
@@ -273,7 +375,7 @@ extension = {
         }
 
         this.movie.children[0].on_media_end = function (evt) {
-            if (this.extension.duration) {
+            if (this.extension.duration>1) {
                 if (this.extension.movie_control.loop) {
                     this.extension.movie_control.mediaStartTime = 0;
                     this.extension.current_time = 0;
@@ -298,6 +400,7 @@ extension = {
             }
         }
         this.movie.children[0].on_main_addon = function (evt) {
+            this.extension.reload_stats();
             this.extension.controler.layout();
         }
 
@@ -338,16 +441,16 @@ extension = {
         Browser.addRoute(this.movie_sensor, 'mediaCurrentTime', this, this.on_movie_time);
         Browser.addRoute(this.movie_sensor, 'isActive', this, this.on_movie_active);
 
-        var hist = gpac.get_option('GUI', 'PlaybackHistory');
+        var hist = this.get_option('PlaybackHistory');
         if ((hist != null) && (hist != '')) {
             this.history = gwskin.parse(hist);
         }
 
-        var bmarks = gpac.get_option('GUI', 'Bookmarks');
+        var bmarks = this.get_option('Bookmarks');
         if ((bmarks != null) && (bmarks != '')) {
             this.bookmarks = gwskin.parse(bmarks);
         }
-
+		
         /*create player control UI*/
         var wnd = gw_new_window(null, true, true);
         //remember it !
@@ -355,8 +458,14 @@ extension = {
         wnd.extension = this;
 
         wnd.set_corners(true, true, false, false);
-        wnd.set_alpha(0.95);
+        wnd.set_alpha(0.9);
 
+		/*create default interactive zone in case the content grabs all mouse events*/
+		this.safe_interact = gw_new_rectangle('button', 'invisible');
+		gw_add_child(null, this.safe_interact);
+		this.safe_interact.show();
+		
+		
         /*first set of controls*/
         wnd.infobar = gw_new_grid_container(wnd);
         wnd.infobar.spread_h = true;
@@ -392,20 +501,19 @@ extension = {
                 this.extension.controlled_renderer.Seek(time);
                 return;
             }
-            gw_background_control(false);
             switch (type) {
-                //start sliding                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
+                //start sliding                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
                 case 1:
                     this.extension.set_state(this.extension.GF_STATE_PAUSE);
                     this.extension.set_speed(0);
                     break;
-                //done sliding                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
+                //done sliding                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
                 case 2:
                     this.extension.set_state(this.extension.GF_STATE_PLAY);
                     this.extension.movie_control.mediaStartTime = time;
                     this.extension.set_speed(1);
                     break;
-                //init slide, go in play mode                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
+                //init slide, go in play mode                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
                 default:
                     if (this.extension.state == this.extension.GF_STATE_STOP)
                         this.extension.set_state(this.extension.GF_STATE_PLAY);
@@ -435,13 +543,11 @@ extension = {
         wnd.back_live = gw_new_icon(wnd.infobar, 'live');
         wnd.back_live.extension = this;
         wnd.back_live.on_click = function () {
-            if (0 && this.extension.root_odm && this.extension.root_odm.main_addon_on) {
-                this.extension.root_odm.disable_main_addon();
-            }
-            else if (this.extension.movie_control.mediaStopTime < 0) {
+            if (this.extension.movie_control.mediaStopTime < 0) {
                 this.extension.set_time(0);
                 this.extension.movie_control.mediaStopTime = 0;
-                this.extension.controler.layout();
+                this.extension.set_state(this.extension.GF_STATE_PLAY);
+                //this.extension.controler.layout();
             }
         }
 
@@ -454,10 +560,19 @@ extension = {
             this.extension.set_state(this.extension.GF_STATE_STOP);
         }
 
-        if (0) {
-            wnd.rewind = gw_new_icon(wnd.infobar, 'rewind');
-        } else {
-            wnd.rewind = null;
+        wnd.rewind = gw_new_icon(wnd.infobar, 'rewind');
+        wnd.rewind.extension = this;
+        wnd.rewind.on_click = function () {
+            if (!this.extension.movie_control.mediaSpeed) {
+                this.extension.set_state(this.extension.GF_STATE_PLAY);
+            }
+            this.extension.set_state(this.extension.GF_STATE_TRICK);
+            if (this.extension.movie_control.mediaSpeed > 0) {
+                this.extension.set_speed(-1.0);
+                this.extension.controler.layout();
+            } else {
+                this.extension.set_speed(2 * this.extension.movie_control.mediaSpeed);
+            }
         }
 
         wnd.play = gw_new_icon(wnd.infobar, 'play');
@@ -472,13 +587,18 @@ extension = {
         wnd.forward = gw_new_icon_button(wnd.infobar, 'seek_forward', '', true, 'icon_label');
         wnd.forward.extension = this;
         wnd.forward.on_click = function () {
-            if (this.extension.movie_control.mediaSpeed) {
-                this.extension.set_state(this.extension.GF_STATE_TRICK);
+            if (!this.extension.movie_control.mediaSpeed) {
+                this.extension.set_state(this.extension.GF_STATE_PLAY);
+            }
+            this.extension.set_state(this.extension.GF_STATE_TRICK);
+            if (this.extension.movie_control.mediaSpeed < 0) {
+                this.extension.set_speed(1.0);
+            } else {
                 this.extension.set_speed(2 * this.extension.movie_control.mediaSpeed);
             }
         }
         wnd.forward.on_long_click = function () {
-            if (this.extension.movie_control.mediaSpeed) {
+            if (this.extension.movie_control.mediaSpeed > 0) {
                 this.extension.set_state(this.extension.GF_STATE_TRICK);
                 this.extension.set_speed(this.extension.movie_control.mediaSpeed / 2);
             }
@@ -503,6 +623,7 @@ extension = {
 
 
         wnd.navigate = gw_new_icon(wnd.infobar, 'navigation');
+        wnd.navigate.add_icon('sensors');
         wnd.navigate.extension = this;
         wnd.navigate.on_click = function () {
             this.extension.select_navigation_type();
@@ -514,9 +635,7 @@ extension = {
             this.extension.view_stats();
         }
 
-
         gw_new_separator(wnd.infobar);
-
 
         wnd.snd_low = gw_new_icon(wnd.infobar, 'audio');
         wnd.snd_low.extension = this;
@@ -579,7 +698,9 @@ extension = {
                     gwlib_remove_event_filter(this.extension._evt_filter);
                     this.extension._evt_filter = null;
                 }
-                gw_show_dock();
+				gwskin.enable_background(true);
+				gw_show_dock();
+				this.extension.disabled = true;
             }
         }
 
@@ -591,19 +712,25 @@ extension = {
             wnd.remote = null;
         }
 
-        wnd.fullscreen = gw_new_icon(wnd.infobar, 'fullscreen');
-        wnd.fullscreen.add_icon(gwskin.images.fullscreen_back);
-        wnd.fullscreen.on_click = function () {
-            gpac.fullscreen = !gpac.fullscreen;
-        }
-        wnd.fullscreen.switch_icon(gpac.fullscreen ? 1 : 0);
-
-        if (!gwskin.browser_mode) {
-            wnd.exit = gw_new_icon(wnd.infobar, 'exit');
-            wnd.exit.on_click = function () { gpac.exit(); }
-        } else {
+        if (gwskin.mobile_device) {
+            wnd.fullscreen = null;
             wnd.exit = null;
+        } else {
+            wnd.fullscreen = gw_new_icon(wnd.infobar, 'fullscreen');
+            wnd.fullscreen.add_icon(gwskin.images.fullscreen_back);
+            wnd.fullscreen.on_click = function () {
+                gpac.fullscreen = !gpac.fullscreen;
+            }
+            wnd.fullscreen.switch_icon(gpac.fullscreen ? 1 : 0);
+
+            if (!gwskin.browser_mode) {
+                wnd.exit = gw_new_icon(wnd.infobar, 'exit');
+                wnd.exit.on_click = function () { gpac.exit(); }
+            } else {
+                wnd.exit = null;
+            }
         }
+
 
         wnd.on_size = function (width, height) {
             var control_icon_size = gwskin.default_icon_height;
@@ -618,6 +745,7 @@ extension = {
             }
 
             var speed = this.extension.movie_control.mediaSpeed;
+            if (speed < 0) speed = -speed;
             if (speed && (speed != 1)) {
                 if ((speed > 100) || (speed < 1))
                     this.forward.set_size(3 * control_icon_size, control_icon_size);
@@ -633,6 +761,7 @@ extension = {
             var control_icon_size = gwskin.default_icon_height;
             var is_over = true;
             var show_navigate = false;
+
             if (arguments.length == 0) {
                 width = this.width;
                 height = this.height;
@@ -641,8 +770,8 @@ extension = {
 
             this.on_size(width, height);
 
-            this.fullscreen.switch_icon(gpac.fullscreen ? 1 : 0);
-
+            if (this.fullscreen)
+                this.fullscreen.switch_icon(gpac.fullscreen ? 1 : 0);
 
             width -= control_icon_size / 2;
             min_w = control_icon_size;
@@ -658,10 +787,26 @@ extension = {
 
             if (this.navigate) {
                 this.navigate.hide();
-                if (!this.extension.dynamic_scene && this.extension.movie_connected && (gpac.navigation_type != GF_NAVIGATE_TYPE_NONE)) {
+
+				if (this.extension.root_odm && this.extension.root_odm.vr_scene) {
                     show_navigate = true;
                     full_w += control_icon_size;
+				
+					wnd.navigate.on_click = function () {
+//						var sensors_active = gpac.sensors_active;
+//						gpac.sensors_active = !sensors_active;
+//						this.switch_icon(sensors_active ? 1 : 0);
+                        this.extension.select_navigation_vr();
+					}
+				} else if ( (this.extension.dynamic_scene != 1) && this.extension.movie_connected && (gpac.navigation_type != GF_NAVIGATE_TYPE_NONE)) {
+                    show_navigate = true;
+                    full_w += control_icon_size;
+
+					wnd.navigate.on_click = function () {
+						this.extension.select_navigation_type();
+					}
                 }
+ 
             }
 
             if (this.extension.movie_connected) {
@@ -678,32 +823,31 @@ extension = {
                     this.play.show();
                 } else {
                     full_w += control_icon_size;
-                    this.play.show();
+                    //this.play.show();
                     if (this.extension.state == this.extension.GF_STATE_STOP) {
                         this.stop.hide();
                         this.play.show();
                     } else {
-                        //                        this.play.hide();
-                        //                        this.stop.show();
+                        this.play.hide();
+                        this.stop.show();
                     }
                 }
 
                 if (this.extension.root_odm && !this.extension.dynamic_scene && !this.extension.root_odm.is_over)
                     is_over = false;
 
-                //                this.media_list.show();
-
             } else {
                 this.stats.hide();
                 this.stop.hide();
                 this.play.hide();
-                this.media_list.hide();
             }
 
             if (this.extension.duration) {
-                if (this.rewind) full_w += control_icon_size;
-                if (this.forward) full_w += control_icon_size;
-                if (this.loop) full_w += control_icon_size;
+				if (this.forward) full_w += control_icon_size;
+				if (this.extension.duration>1) {
+					if (this.extension.reverse_playback_supported && this.rewind) full_w += control_icon_size;
+					if (this.loop) full_w += control_icon_size;
+				}
             }
             else if (this.extension.movie_control.mediaStopTime < 0) {
                 if (this.forward) full_w += control_icon_size;
@@ -732,72 +876,45 @@ extension = {
                 }
             }
 
-            //            if (min_w + full_w + time_w < width) {
-            if (1) {
-                if (this.media_line.visible)
-                    this.media_line.set_size(width - min_w - full_w, control_icon_size / 3);
+            if (this.media_line.visible)
+                this.media_line.set_size(width - min_w - full_w, control_icon_size / 3);
 
-                if (this.snd_low) this.snd_low.show();
-                if (this.snd_ctrl) this.snd_ctrl.show();
+            if (this.snd_low) this.snd_low.show();
+            if (this.snd_ctrl) this.snd_ctrl.show();
 
-                if (this.extension.duration) {
-                    if (this.rewind) this.rewind.show();
-                    if (this.forward) this.forward.show();
-                    if (this.loop) this.loop.show();
-                    if (this.stop) this.stop.show();
-                }
-                else if (this.extension.movie_control.mediaStopTime < 0) {
-                    if (this.forward) this.forward.show();
-                } else if (!is_over) {
+            if (this.extension.duration) {
+                if (this.forward) this.forward.show();
+				if (this.extension.duration>1) {
+					if (this.loop) this.loop.show();
+				}
+                if (this.stop) this.stop.show();
+            }
+            else if ((this.extension.movie_control.mediaStopTime < 0) || (this.extension.movie_control.mediaSpeed < 0)) {
+                if (this.extension.time_in_tsb > 2) {
                     if (this.forward) this.forward.show();
                 } else {
                     if (this.forward) this.forward.hide();
                 }
-                if (wnd.fullscreen) wnd.fullscreen.show();
-
-                if (this.remote) {
-                    if (UPnP.MediaRenderersCount && (this.extension.current_url != '')) {
-                        this.remote.show();
-                    } else {
-                        this.remote.hide();
-                    }
-                }
-
-                if (show_navigate) {
-                    this.navigate.show();
-                }
+            } else if (!is_over) {
+                if (this.forward) this.forward.show();
             } else {
-
-                if (this.snd_low) this.snd_low.hide();
-                if (this.snd_ctrl) this.snd_ctrl.hide();
-                if (this.rewind) this.rewind.hide();
                 if (this.forward) this.forward.hide();
-                if (this.loop) this.loop.hide();
-                if (this.fullscreen) this.fullscreen.hide();
-                if (this.remote) this.remote.hide();
+            }
+            if (wnd.fullscreen) wnd.fullscreen.show();
 
-                if (show_navigate) {
-                    if (min_w + time_w + this.navigate.width < width) {
-                        min_w += this.navigate.width;
-                        this.navigate.show();
-                    }
+            if (this.remote) {
+                if (UPnP.MediaRenderersCount && (this.extension.current_url != '')) {
+                    this.remote.show();
+                } else {
+                    this.remote.hide();
                 }
-
-                if (this.remote) {
-                    if (UPnP.MediaRenderersCount && (this.extension.current_url != '') && (min_w + time_w + this.remote.width < width)) {
-                        min_w += this.remote.width;
-                        this.remote.show();
-                    } else {
-                        this.remote.hide();
-                    }
-                }
-
-                if (this.media_line.visible)
-                    this.media_line.set_size(width - min_w - 5, control_icon_size / 3);
-
             }
 
-            if (this.extension.duration || this.extension.timeshift_depth) {
+            if (show_navigate) {
+                this.navigate.show();
+            }
+
+            if ((this.extension.duration>1.0) || this.extension.timeshift_depth) {
                 this.media_line.show();
                 this.time.show();
             } else {
@@ -812,26 +929,37 @@ extension = {
             this.infobar.move(0, -0.1 * control_icon_size);
         }
 
-        wnd.on_display_size = function (w, h) {
-            var def_width = 640;
-            if (!gpac.fullscreen) {
-                if (w < def_width) {
-                    gpac.set_size(480, h);
+        wnd.on_display_size = function (width, height) {
+			var h;
+
+			if (!gpac.fullscreen) {
+                if (width < this.extension.def_width) {
+                    gpac.set_size(this.extension.def_width, height);
                     return;
                 }
             } else {
-                if (w < def_width) {
-                    def_width = w;
+                if (width < this.extension.def_width) {
+                    this.extension.def_width = width;
                 }
             }
 
             //            this.set_size(w, 1.2 * gwskin.default_icon_height);
 
-            if (this.extension.movie_connected) h = 3.3 * gwskin.default_icon_height;
+            if (this.extension.movie_connected) {
+                h = 3.3 * gwskin.default_icon_height;
+                if (!this.media_line.visible) {
+                    h -= gwskin.default_icon_height;
+                }
+            }
             else h = 1.1 * gwskin.default_icon_height;
 
-            this.set_size(def_width, h);
 
+            this.set_size(this.extension.def_width, h);
+
+			this.extension.safe_interact.set_size(gwskin.default_icon_height, gwskin.default_icon_height);
+			this.extension.safe_interact.show();
+			this.extension.safe_interact.move((-gwskin.default_icon_height+width)/2, (gwskin.default_icon_height-height)/2);
+			
             this.layout();
         }
 
@@ -855,6 +983,8 @@ extension = {
             gwlib_add_event_filter(this._evt_filter);
         }
 
+		this.disabled = false;
+		
         if (!this.movie) {
             this.init_extension();
 
@@ -878,9 +1008,9 @@ extension = {
 
                 //MP4Client options taking 2 args
                 else if ((arg == '-rti') || (arg == '-rtix') || (arg == '-c') || (arg == '-cfg') || (arg == '-size') || (arg == '-lf') || (arg == '-log-file') || (arg == '-logs')
-                    || (arg == '-opt') || (arg == '-ifce') || (arg == '-views') || (arg == '-run-for')
+                    || (arg == '-opt') || (arg == '-ifce') || (arg == '-views') || (arg == '-avi') || (arg == '-out') || (arg == '-ntp-shift') || (arg == '-fps') || (arg == '-scale') || (arg == '-run-for')
                 ) {
-                    i++;
+			i++;
                 } else if (arg == '-service') {
                     this.initial_service_id = parseInt(gpac.get_arg(i + 1));
                     i++;
@@ -942,12 +1072,14 @@ extension = {
 
     create_event_filter: function (__anobj) {
         return function (evt) {
-            __anobj.ext_filter_event(evt);
+            return __anobj.ext_filter_event(evt);
         }
     },
 
     create_restore_session: function (__anobj) {
         return function (url, media_time, media_clock) {
+			__anobj.movie_connected = false;
+			__anobj.disabled = false;
             __anobj.set_movie_url(url);
             if (media_clock) {
                 var time_in_tsb = (new Date()).getTime() - media_clock;
@@ -958,6 +1090,12 @@ extension = {
             } else {
                 __anobj.initial_start = media_time;
             }
+			if (!__anobj.movie_connected) {
+				__anobj.reverse_playback_supported = false;
+				__anobj.duration = 0;
+				__anobj.root_odm = null;
+			}
+			__anobj.controler.on_display_size(gw_display_width, gw_display_height);
         }
     },
 
@@ -974,20 +1112,31 @@ extension = {
         str = '';
         if (this.timeshift_depth) {
             var pos = 100;
-            var time_in_tsb = 0;
+            this.time_in_tsb = 0;
 
-            if (this.movie_control.mediaStopTime < 0) {
-                time_in_tsb = this.root_odm.timeshift_time;
-                if (this.timeshift_depth > time_in_tsb) {
-                    pos = 100 * (this.timeshift_depth - time_in_tsb) / this.timeshift_depth;
+            if ((this.movie_control.mediaStopTime < 0) || (this.movie_control.mediaSpeed <= 0)) {
+                this.time_in_tsb = this.root_odm.timeshift_time;
+                if (this.timeshift_depth > this.time_in_tsb) {
+                    pos = 100 * (this.timeshift_depth - this.time_in_tsb) / this.timeshift_depth;
+                } else if (this.time_in_tsb) {
+                    pos = 0;
                 }
             }
             this.controler.media_line.set_value(pos);
 
-            gwskin.media_clock = (new Date()).getTime() - time_in_tsb * 1000;
+            //we need to figure out if the main addon is on-demand content, in which case we have to store media time for session restore
+            var addon_media_time = this.root_odm.main_addon_media_time;
+            if (addon_media_time >= 0) {
+                gwskin.media_clock = 0;
+                gwskin.media_time = addon_media_time;
+            }
+            //if not, we will restore the session based on wallclock 
+            else {
+                gwskin.media_clock = (new Date()).getTime() - this.time_in_tsb * 1000;
+            }
 
-            if (!time_in_tsb) {
-                this.controler.time.set_label('live');
+            if (!this.time_in_tsb) {
+                this.controler.time.set_label('');
                 this.controler.time.hide();
                 this.controler.layout();
                 return;
@@ -997,11 +1146,21 @@ extension = {
                 this.controler.time.show();
                 this.controler.layout();
             }
+            if (!this.controler.forward.visible) {
+                this.controler.forward.show();
+                this.controler.layout();
+            }
             str = '-';
-            value = time_in_tsb;
+            value = this.time_in_tsb;
 
         } else {
-            if (!this.duration) return;
+            if (!this.duration) {
+                if (this.controler.time.visible) {
+                    this.controler.time.hide();
+                    this.controler.layout();
+                }
+                return;
+            }
 
             this.current_time = value;
             gwskin.media_time = value;
@@ -1040,34 +1199,43 @@ extension = {
             }
             dlg.time.hide();
             dlg.media_line.hide();
-            if (dlg.rewind) dlg.rewind.hide();
+            dlg.rewind.hide();
             dlg.play.hide();
             dlg.forward.hide();
             dlg.loop.hide();
             dlg.time.set_size(0, gwskin.default_icon_height);
             dlg.time.set_width(0);
         } else {
-            dlg.time.show();
-            dlg.media_line.show();
-            if (dlg.rewind) dlg.rewind.show();
-            dlg.stop.show();
+			if (value>1) {
+				dlg.time.show();
+				dlg.media_line.show();
+				if (this.reverse_playback_supported) dlg.rewind.show();
+				dlg.loop.show();
+				if (value < 3600) {
+					dlg.time.set_size(gwskin.default_icon_height / 2, gwskin.default_icon_height);
+					dlg.time.set_width(3 * dlg.time.font_size());
+				} else {
+					dlg.time.set_size(gwskin.default_icon_height, gwskin.default_icon_height);
+					dlg.time.set_width(4 * dlg.time.font_size());
+				}
+			} else {
+				dlg.time.hide();
+				dlg.media_line.hide();
+				dlg.rewind.hide();
+				dlg.loop.hide();
+			}
+			dlg.stop.show();
             dlg.forward.show();
-            dlg.loop.show();
-            if (value < 3600) {
-                dlg.time.set_size(gwskin.default_icon_height / 2, gwskin.default_icon_height);
-                dlg.time.set_width(3 * dlg.time.font_size());
-            } else {
-                dlg.time.set_size(gwskin.default_icon_height, gwskin.default_icon_height);
-                dlg.time.set_width(4 * dlg.time.font_size());
-            }
         }
-        dlg.layout();
+        dlg.on_display_size(gw_display_width, gw_display_height);
     },
     set_timeshift_depth: function (value) {
         if (this.timeshift_depth == value) return;
 
         this.timeshift_depth = value;
         var dlg = this.controler;
+
+        this.reverse_playback_supported = this.root_odm.reverse_playback_supported;
 
         if (!value) {
             dlg.time.hide();
@@ -1079,19 +1247,14 @@ extension = {
         } else {
             dlg.time.show();
             dlg.media_line.show();
-            /*
-            if (dlg.rewind) dlg.rewind.show();
-            if (dlg.stop) dlg.stop.show();
-            if (dlg.forward) dlg.forward.show();
-            if (dlg.loop) dlg.loop.show();
-            */
+
             var w = 3 * dlg.time.font_size();
             if (value > 3600) w += dlg.time.font_size();
 
             dlg.time.set_size(w, gwskin.default_icon_height);
             dlg.time.set_width(w);
         }
-        dlg.layout();
+        dlg.on_display_size(gw_display_width, gw_display_height);
     },
 
     set_state: function (state) {
@@ -1100,7 +1263,7 @@ extension = {
         if (state == this.state) return;
 
         if (state == this.GF_STATE_STOP) {
-            if (this.stat_wnd) this.stat_wnd.close_all();
+            if (this.stats_wnd) this.stats_wnd.close_all();
             this.stoped_url = '' + this.current_url;
             if (this.controlled_renderer) this.controlled_renderer.Stop();
             else {
@@ -1114,7 +1277,15 @@ extension = {
             this.state = this.GF_STATE_STOP;
             this.set_speed(1);
             this.root_odm = null;
-            return;
+            this.stats_resources = [];
+            this.nb_objs_at_last_scan = 0;
+
+			var e = {};
+			e.type = GF_JS_EVENT_PLAYBACK;
+			e.is_playing = false;
+			e.index = this.playlist_idx;
+			gwlib_filter_event(e);
+			return;
         }
         if (state == this.GF_STATE_PAUSE) {
             if (this.state == this.GF_STATE_STOP) return;
@@ -1122,7 +1293,13 @@ extension = {
             this.state = this.GF_STATE_PAUSE;
             this.controler.play.switch_icon(this.icon_play);
             this.set_speed(0);
-            return;
+
+			var e = {};
+			e.type = GF_JS_EVENT_PLAYBACK;
+			e.is_playing = false;
+			e.index = this.playlist_idx;
+			gwlib_filter_event(e);
+			return;
         }
         //we are playing, resume from stop if needed
         if (this.stoped_url) {
@@ -1142,9 +1319,19 @@ extension = {
             if (this.controlled_renderer) this.controlled_renderer.Play();
             this.state = state;
             this.controler.play.switch_icon(this.icon_pause);
-            if (this.movie_control.mediaSpeed != 1);
-            this.movie_control.mediaStartTime = -1;
+            if (this.movie_control.mediaSpeed != 1)
+                this.movie_control.mediaStartTime = -1;
+
+            if (this.timeshift_depth && (this.movie_control.mediaSpeed < 0)) {
+                this.movie_control.mediaStopTime = -this.root_odm.timeshift_time;
+            }
+
             this.set_speed(1);
+			var e = {};
+			e.type = GF_JS_EVENT_PLAYBACK;
+			e.is_playing = true;
+			e.index = this.playlist_idx;
+			gwlib_filter_event(e);
             return;
         }
         if (state == this.GF_STATE_TRICK) {
@@ -1187,8 +1374,8 @@ extension = {
             this.movie_sensor.url[0] = url;
             if (this.UPnP_Enabled) UPnP.MovieURL = url;
             this.movie_connected = (url == '') ? false : true;
-            gw_background_control(this.movie_connected ? false : true);
             gpac.caption = url;
+			this.controler.layout();
 
         } else if (this.controlled_renderer == null) {
             //resume from stop  
@@ -1199,8 +1386,6 @@ extension = {
                 this.movie_control.url[0] = url;
                 this.movie_sensor.url[0] = url;
                 this.movie.children[0].url[0] = url;
-                gw_background_control(false);
-
                 return;
             }
 
@@ -1238,6 +1423,7 @@ extension = {
         }
         this.current_url = url;
 
+		if (this.disabled) return;
         if (url == '') this.controler.show();
         else this.controler.hide();
 
@@ -1245,7 +1431,8 @@ extension = {
 
 
     show_buffer: function (level) {
-        if ((level < 0) || (level >= 98)) {
+        if (level < 0) return;
+        if (level >= 98) {
             if (this.buffer_wnd) {
                 this.buffer_wnd.close();
                 this.buffer_wnd = null;
@@ -1255,6 +1442,7 @@ extension = {
 
         if (!this.buffer_wnd) {
             this.buffer_wnd = gw_new_window(null, true, true);
+            this.buffer_wnd.show_effect = 'notif';
             this.buffer_wnd.txt = gw_new_text(this.buffer_wnd, '');
             this.buffer_wnd.on_display_size = function (w, h) {
                 this.set_size(20 * gwskin.default_text_font_size, 2 * gwskin.default_text_font_size);
@@ -1264,20 +1452,76 @@ extension = {
             this.buffer_wnd.on_display_size(gw_display_width, gw_display_height);
             this.buffer_wnd.set_alpha(0.9);
             this.buffer_wnd.show();
-            this.buffer_wnd.show();
 
             this.buffer_wnd.timer = gw_new_timer(false);
             this.buffer_wnd.timer.wnd = this.buffer_wnd;
             this.buffer_wnd.timer.set_timeout(gwskin.default_message_timeout, false);
             this.buffer_wnd.timer.start(0);
+            this.buffer_wnd.ext = this;
             this.buffer_wnd.timer.on_active = function (val) {
-                if (!val) this.wnd.close();
+                if (!val) {
+                    this.wnd.ext.buffer_wnd = null;
+                    this.wnd.close();
+                }
             }
-
         }
-
         this.buffer_wnd.timer.stop(gwskin.default_message_timeout);
         this.buffer_wnd.txt.set_label('Buffering ' + level + ' %');
+    },
+
+    select_navigation_vr: function () {
+        var sensors_active = gpac.sensors_active;
+        var extension = this;
+//                      gpac.sensors_active = !sensors_active;
+//                      this.switch_icon(sensors_active ? 1 : 0);
+  
+        var nb_items = 0;
+        if (this.navigation_wnd) {
+            this.navigation_wnd.close();
+            return;
+        }
+        var wnd = gw_new_popup(this.controler.navigate, 'up');
+        this.navigation_wnd = wnd;
+        wnd.extension = this;
+
+        wnd.on_close = function () {
+            this.extension.navigation_wnd = null;
+        }
+        wnd.add_menu_item(sensors_active ? "Keyboard+mouse" : "Sensors", function () { gpac.sensors_active = !sensors_active; } );
+
+        if (this.view_stereo==extension.GF_VIEW_MONO) {
+            wnd.add_menu_item("Stereo", function () {
+                extension.view_stereo = extension.GF_VIEW_STEREO; 
+                gpac.set_option("Compositor", "FramePacking", "None"); 
+                gpac.set_option("Compositor", "StereoType", "StereoHeadset"); 
+              }
+             );
+        } else if (this.view_stereo==extension.GF_VIEW_STEREO) {
+            wnd.add_menu_item("Stereo Side", function () {
+               extension.view_stereo = extension.GF_VIEW_STEREO_SIDE;
+               gpac.set_option("Compositor", "Framepacking", "Side");
+               gpac.set_option("Compositor", "StereoType", "StereoHeadset");
+              }
+             );
+        } else if (this.view_stereo==extension.GF_VIEW_STEREO_SIDE) {
+            wnd.add_menu_item("Stereo Top", function () {
+                 extension.view_stereo = extension.GF_VIEW_STEREO_TOP;
+                 gpac.set_option("Compositor", "FramePacking", "Top");  
+                 gpac.set_option("Compositor", "StereoType", "StereoHeadset");  
+                }
+            );
+        } else {
+            wnd.add_menu_item("Mono", function () {
+                extension.view_stereo = extension.GF_VIEW_MONO;
+                gpac.set_option("Compositor", "FramePacking", "None");  
+                gpac.set_option("Compositor", "StereoType", "None");  
+            }
+            );
+        }
+        
+        wnd.on_display_size(gw_display_width, gw_display_height);
+        wnd.show();
+
     },
 
     select_navigation_type: function () {
@@ -1305,7 +1549,9 @@ extension = {
         }
         wnd.make_select_item = function (text, type, current_type) {
             if (current_type == type) text = '* ' + text;
-            wnd.add_menu_item(text, function () { this.select(type); });
+            if (gpac.navigation_supported(type)) {
+                wnd.add_menu_item(text, function () { this.select(type); });
+            }
         }
         wnd.add_menu_item('Reset', function () { this.select('reset'); });
 
@@ -1351,46 +1597,229 @@ extension = {
             this.controler.channels.hide();
             this.controler.channels.on_click = function () { }
             this.controler.layout();
-            return;
+		} else {
+			if (!this.controler.channels.visible) {
+				this.controler.channels.show();
+				this.controler.layout();
+			}
+
+			this.controler.channels.on_click = function () {
+
+				if (this.extension.channels_wnd) {
+					this.extension.channels_wnd.close();
+					return;
+				}
+				var wnd = gw_new_popup(this.extension.controler.channels, 'up');
+				this.extension.channels_wnd = wnd;
+				wnd.extension = this.extension;
+
+				wnd.on_close = function () {
+					this.extension.channels_wnd = null;
+				}
+
+				wnd.make_item = function (text, i) {
+					wnd.add_menu_item(text, function () {
+						this.extension.root_odm.select_service(this.extension.services[i].service_id);
+					});
+				}
+				for (var i = 0; i < this.extension.services.length; i++) {
+					var text = '';
+					var n = this.extension.services[i].service_name;
+					if (this.extension.root_odm.selected_service == this.extension.services[i].service_id) text += '* ';
+					if (n == null) n = 'Service ' + this.extension.services[i].service_id;
+					text += n;
+					wnd.make_item(text, i);
+				}
+				wnd.on_display_size(gw_display_width, gw_display_height);
+				wnd.show();
+			}
+		}
+		this.update_media_list();
+    },
+	
+	update_media_list: function() {
+		var root_odm = this.root_odm;
+		var nb_video = 0, nb_audio = 0, nb_subs = 0;
+		if (root_odm && this.dynamic_scene) {
+			for (var res_i = 0; res_i < root_odm.nb_resources; res_i++) {
+				var m = root_odm.get_resource(res_i);
+				if (root_odm.selected_service != m.service_id) continue;
+				if (m.get_srd() != null) continue;
+				
+				if (m.type == 'Video') nb_video++;
+				else if (m.type == 'Audio') nb_audio++;
+				else if (m.type == 'Text') nb_subs++;
+			}
+		}
+		if ((nb_video > 1) || (nb_audio > 1) || (nb_subs > 1)) {
+			this.controler.media_list.show();
+		} else {
+			this.controler.media_list.hide();
+			this.controler.layout();
+			return;
+		}
+
+		this.controler.media_list.on_click = function () {
+			
+			if (this.extension.medialist_wnd) {
+				this.extension.medialist_wnd.close();
+				return;
+			}
+			var wnd = gw_new_popup(this.extension.controler.media_list, 'up');
+			this.extension.medialist_wnd = wnd;
+			wnd.extension = this.extension;
+			
+            //todo - cleanup the rest of the code to use closures to pass the extension object
+			wnd.on_close = ( function (e) {
+                return function () { e.medialist_wnd = null; }
+			} ) (extension);
+
+			wnd.make_item = function (text, obj) {
+				wnd.add_menu_item(text, function () {
+								  obj.select()
+								  });
+			}
+			
+			for (var res_i = 0; res_i < root_odm.nb_resources; res_i++) {
+				var m = root_odm.get_resource(res_i);
+				if (root_odm.selected_service != m.service_id) continue;
+
+				if ((m.type == 'Video') && (nb_video>1)) {
+					var text = 'Video #'+m.id;
+					wnd.make_item(text, m);
+				} else if (m.type=='Audio' && (nb_audio>1)) {
+					var text = 'Audio '+m.lang;
+					wnd.make_item(text, m);
+				} else if (m.type=='Text' && (nb_subs>1)) {
+					var text = 'Subtitle '+m.lang;
+					wnd.make_item(text, m);
+				}
+			}
+			wnd.on_display_size(gw_display_width, gw_display_height);
+			wnd.show();
+		}
+	
+	},
+
+    gather_stats_resources: function (root, selected_service) {
+        //if not dynamic scene, add main OD to stats
+        if (!root.dynamic_scene) {
+            this.stats_resources.push(root);
+		}
+
+	
+        for (var res_i = 0; res_i < root.nb_resources; res_i++) {
+            var m = root.get_resource(res_i);
+            if (!m) continue;
+            if (m.service_id && (m.service_id != selected_service)) continue;
+
+			m.dependent_group_id=0;
+			this.stats_resources.push(m);
+			
+			var nb_deps = m.dependent_groups;
+			for (var dep_j=0; dep_j < nb_deps; dep_j++) {
+				var copy_m = root.get_resource(res_i);
+				copy_m.dependent_group_id = dep_j + 1;
+				this.stats_resources.push(copy_m);
+			}
+
+            if (m.type == 'Scene' || m.type == 'Subscene') {
+                this.gather_stats_resources(m);
+			}
         }
-        if (!this.controler.channels.visible) {
-            this.controler.channels.show();
-            this.controler.layout();
+        this.nb_objs_at_last_scan = root.nb_resources;
+    },
+
+    stats_timer_on_event: function (val) {
+        var ext = this.ext;
+        var wnd = ext.stats_wnd;
+        var nb_buff = 0;
+
+        if (!ext.root_odm) return;
+        
+        if (ext.nb_objs_at_last_scan != ext.root_odm.nb_resources) {
+          ext.stats_resources = [];
+          ext.gather_stats_resources(ext.root_odm, ext.root_odm.selected_service);
+          ext.reload_stats();
+        }
+                
+        if (ext.stats_data.length >= ext.stats_window) {
+            ext.stats_data.splice(0, 1);
         }
 
-        this.controler.channels.on_click = function () {
+        var stat_obj = {};
+        ext.stats_data.push(stat_obj);
 
-            if (this.extension.channels_wnd) {
-                this.extension.channels_wnd.close();
-                return;
-            }
-            var wnd = gw_new_popup(this.extension.controler.channels, 'up');
-            this.extension.channels_wnd = wnd;
-            wnd.extension = this.extension;
+        var t = new Date()
+        stat_obj.time = Math.round(t.getTime() / 1000);
+        stat_obj.fps = Math.round(100 * gpac.fps) / 100;
+        stat_obj.cpu = gpac.cpu;
+        stat_obj.memory = Math.round(100 * gpac.memory / 1000 / 1000) / 100;
+        stat_obj.http_bandwidth = Math.round(gpac.http_bitrate);
+        stat_obj.bitrate = 0;
+        stat_obj.buffer = 0;
+        stat_obj.ntp_diff = 0;
+        stat_obj.quality = 0;
 
-            wnd.on_close = function () {
-                this.extension.channels_wnd = null;
+        for (var i = 0; i < ext.stats_resources.length; i++) {
+            var m = ext.stats_resources[i];
+
+            var bl;
+            if (m.max_buffer) {
+                var speed = ext.movie_control.mediaSpeed;
+                if (speed < 0) speed = 1;
+                else if (speed == 0) speed = 1;
+                var buf = m.buffer / speed;
+                bl = 100 * buf / m.max_buffer;
+
+                if (stat_obj) {
+                    if (!stat_obj.buffer || (buf && buf < stat_obj.buffer)) {
+                        stat_obj.buffer = buf;
+                    }
+                }
+            }
+            else bl = 100;
+			
+			if (m.dependent_group_id) {
+				var dq_idx=0;
+				while (1) {
+					var q = m.get_quality(dq_idx, m.dependent_group_id);
+					if (!q) break;
+					if (q.is_selected) {
+						stat_obj.quality += Math.round(q.bandwidth / 1000);
+					}
+					dq_idx++;
+				}
+			} else {
+				var nb_qual = m.nb_qualities;
+				for (var j = 0; j < nb_qual; j++) {
+					var q = m.get_quality(j);
+					if (q && q.is_selected) {
+						stat_obj.quality += Math.round(q.bandwidth / 1000);
+					}
+				}
+			}
+
+            if (stat_obj) {
+                if (m.ntp_diff > stat_obj.ntp_diff) {
+                    stat_obj.ntp_diff = m.ntp_diff;
+                }
+            }        
+
+            if (wnd) {
+                wnd.update_resource_gui(m, bl);
             }
 
-            wnd.make_item = function (text, i) {
-                wnd.add_menu_item(text, function () {
-                    this.extension.root_odm.select_service(this.extension.services[i].service_id);
-                });
+            if (stat_obj) {
+                if (m.status != 'Stopped')
+                    stat_obj.bitrate += Math.round(m.avg_bitrate/1000);
             }
-            for (var i = 0; i < this.extension.services.length; i++) {
-                var text = '';
-                var n = this.extension.services[i].service_name;
-                if (this.extension.root_odm.selected_service == this.extension.services[i].service_id) text += '* ';
-                if (n == null) n = 'Service ' + this.extension.services[i].service_id;
-                text += n;
-                wnd.make_item(text, i);
-            }
-            wnd.on_display_size(gw_display_width, gw_display_height);
-            wnd.show();
         }
 
+        if (wnd && stat_obj && ext.stats_data.length) {
+            wnd.update_series();
+        }
     }
-
-
+	
 };
 

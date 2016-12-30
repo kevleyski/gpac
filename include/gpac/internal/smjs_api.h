@@ -28,11 +28,51 @@
 
 #include <gpac/setup.h>
 
+/*WIN32 and WinCE config (no configure script)*/
+#if defined(WIN32) || defined(_WIN32_WCE) || defined(__SYMBIAN32__)
+# ifndef XP_PC
+#  define XP_PC
+# endif
+# ifndef XP_WIN
+#  define XP_WIN
+# endif
+/*WINCE specific config*/
+# if defined(_WIN32_WCE)
+#  include <windows.h>
+# define XP_WINCE
+# endif
+#endif
+
+//Android config
 #ifdef GPAC_ANDROID
-#ifndef XP_UNIX
-#define XP_UNIX
+# ifndef XP_UNIX
+#  define XP_UNIX
+# endif
 #endif
+
+//iOS config
+#ifdef GPAC_IPHONE
+# ifndef XP_UNIX
+#  define XP_UNIX
+# endif
+# ifndef IPHONE_OS
+#  define IPHONE_OS
+# endif
+# ifndef DARWIN
+#  define DARWIN
+# endif
 #endif
+
+/*OSX config*/
+#if defined(GPAC_CONFIG_DARWIN) && !defined(GPAC_IPHONE)
+# define MOZILLA_1_8_BRANCH
+# ifndef XP_UNIX
+#  define XP_UNIX
+# endif
+#endif
+
+
+/*other platforms should be setup through ./configure and have appropriated defines in config.h*/
 
 #if defined(DEBUG) && defined(GPAC_CONFIG_DARWIN)
 #undef DEBUG

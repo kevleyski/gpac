@@ -26,6 +26,7 @@
 #include "nodes_stacks.h"
 #include "visual_manager.h"
 #include <gpac/options.h>
+#include <gpac/terminal.h>
 
 
 #ifndef GPAC_DISABLE_3D
@@ -119,26 +120,49 @@ static void view_roll(GF_Compositor *compositor, GF_Camera *cam, Fixed dd)
 	camera_changed(compositor, cam);
 }
 
+static void update_pan_up(GF_Compositor *compositor, GF_Camera *cam)
+{
+	SFVec3f axis, dir;
+	/*update up vector so that right is always horizontal (no y component)*/
+	dir = camera_get_pos_dir(cam);
+	axis = camera_get_right_dir(cam);
+	axis.y = 0;
+	gf_vec_norm(&axis);
+	cam->up = gf_vec_cross(dir, axis);
+	gf_vec_norm(&cam->up);
+
+	camera_changed(compositor, cam);
+}
+
 static void view_pan_x(GF_Compositor *compositor, GF_Camera *cam, Fixed dx)
 {
 	GF_Matrix mx;
 	if (!dx) return;
 	gf_mx_rotation_matrix(&mx, cam->position, cam->up, dx);
 	gf_mx_apply_vec(&mx, &cam->target);
-	camera_changed(compositor, cam);
+
+	update_pan_up(compositor, cam);
 }
 static void view_pan_y(GF_Compositor *compositor, GF_Camera *cam, Fixed dy)
 {
 	GF_Matrix mx;
-	SFVec3f axis;
+	GF_Vec prev_target = cam->target;
 	if (!dy) return;
-	axis = camera_get_right_dir(cam);
-	gf_mx_rotation_matrix(&mx, cam->position, axis, dy);
+	gf_mx_rotation_matrix(&mx, cam->position, camera_get_right_dir(cam), dy);
 	gf_mx_apply_vec(&mx, &cam->target);
-	/*update up vector*/
-	cam->up = gf_vec_cross(camera_get_pos_dir(cam), axis);
-	gf_vec_norm(&cam->up);
-	camera_changed(compositor, cam);
+	switch (cam->navigate_mode) {
+	case GF_NAVIGATE_WALK:
+	case GF_NAVIGATE_VR:
+	case GF_NAVIGATE_GAME:
+		if (cam->target.z*prev_target.z<0) {
+			cam->target = prev_target;
+			return;
+		}
+	default:
+		break;
+	}
+
+	update_pan_up(compositor, cam);
 }
 
 /*for translation moves when jumping*/
@@ -290,6 +314,7 @@ static Bool compositor_handle_navigation_3d(GF_Compositor *compositor, GF_Event 
 		is_pixel_metrics = compositor->traverse_state->pixel_metrics;
 #endif
 	}
+	if (!cam || (cam->navigate_mode==GF_NAVIGATE_NONE)) return 0;
 
 	keys = compositor->key_states;
 	if (!cam->navigate_mode && !(keys & GF_KEY_MOD_ALT) ) return 0;
@@ -309,6 +334,8 @@ static Bool compositor_handle_navigation_3d(GF_Compositor *compositor, GF_Event 
 #else
 	trans_scale = cam->width/20;
 	key_trans = cam->avatar_size.x/2;
+	//if default VP is quite far from center use larger dz/dy moves
+	if (cam->vp_dist>100) trans_scale *= 10;
 #endif
 
 	if (cam->world_bbox.is_set && (key_trans*5 > cam->world_bbox.radius)) {
@@ -358,6 +385,7 @@ static Bool compositor_handle_navigation_3d(GF_Compositor *compositor, GF_Event 
 
 	/* note: shortcuts are mostly the same as blaxxun contact, I don't feel like remembering 2 sets...*/
 	case GF_EVENT_MOUSEMOVE:
+		if (gf_term_get_option(compositor->term, GF_OPT_ORIENTATION_SENSORS_ACTIVE)) return 0;
 		if (!compositor->navigation_state) {
 			if (cam->navigate_mode==GF_NAVIGATE_GAME) {
 				/*init mode*/
@@ -397,8 +425,11 @@ static Bool compositor_handle_navigation_3d(GF_Compositor *compositor, GF_Event 
 				view_translate_z(compositor, cam, gf_mulfix(dy, trans_scale));
 				view_roll(compositor, cam, gf_mulfix(dx, trans_scale));
 			} else {
-				view_exam_x(compositor, cam, -gf_mulfix(GF_PI, dx));
-				view_exam_y(compositor, cam, gf_mulfix(GF_PI, dy));
+				if (ABS(dx) > ABS(dy)) {
+					view_exam_x(compositor, cam, -gf_mulfix(GF_PI, dx));
+				} else {
+					view_exam_y(compositor, cam, gf_mulfix(GF_PI, dy));
+				}
 			}
 			break;
 		case GF_NAVIGATE_ORBIT:
@@ -578,6 +609,46 @@ static Bool compositor_handle_navigation_3d(GF_Compositor *compositor, GF_Event 
 			break;
 		}
 		break;
+	case GF_EVENT_SENSOR_ORIENTATION:
+	{
+		Fixed x, y, z, w, yaw, /*pitch, */roll;
+		GF_Vec target;
+		GF_Matrix mx;
+
+#ifndef GPAC_ANDROID
+		/*
+		 * In iOS we get x, y, z in quaternions (first measurement is the frame of reference)
+		 */
+		x = ev->sensor.x;
+		y = ev->sensor.y;
+		z = ev->sensor.z;
+		w = ev->sensor.w;
+		
+		yaw = gf_atan2(2*gf_mulfix(z,w) - 2*gf_mulfix(y,x) , 1 - 2*gf_mulfix(z,z) - 2*gf_mulfix(x,x));
+		//pitch = asin(2*y*z + 2*x*w);
+		roll = gf_atan2(2*gf_mulfix(y,w) - 2*gf_mulfix(z,x) , 1 - 2*gf_mulfix(y,y) - 2*gf_mulfix(x,x));
+#else
+		/*
+		 * In Android we get yaw, pitch, roll values (in rad)
+		 * The frame of reference is absolute
+		 */
+		yaw = ev->sensor.x;
+		//pitch = ev->sensor.y;
+		roll = ev->sensor.z;
+#endif
+		target.x = 0;
+		target.y = -FIX_ONE;
+		target.z = 0;
+		gf_mx_init(mx);
+		gf_mx_add_rotation(&mx, yaw, 0, FIX_ONE, 0);
+		gf_mx_add_rotation(&mx, -roll, FIX_ONE, 0, 0);
+		
+		gf_mx_apply_vec(&mx, &target);
+
+		cam->target = target;
+		update_pan_up(compositor, cam);
+	}
+		return 1;
 	}
 	return 0;
 }
@@ -599,6 +670,7 @@ static Bool compositor_handle_navigation_2d(GF_VisualManager *visual, GF_Event *
 	if (visual->type_3d) navigation_mode = visual->camera.navigate_mode;
 #endif
 
+	if (navigation_mode==GF_NAVIGATE_NONE) return 0;
 	if (!navigation_mode && !(keys & GF_KEY_MOD_ALT) ) return 0;
 
 

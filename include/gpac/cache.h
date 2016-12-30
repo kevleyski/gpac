@@ -28,15 +28,15 @@
 
 /*!
  *      \file <gpac/cache.h>
- *      \brief Cache management functions.
+ *      \brief HTTP Cache management.
  */
 
 /*!
- *      \addtogroup dld_grp downloader
+ *      \addtogroup dld_grp Downloader
  *      \ingroup utils_grp
- *      \brief File Cache Downloader objects
+ *      \brief HTTP Downloader Cache
  *
- *      This section documents the file caching tools the GPAC framework.
+ *      This section documents the file HTTP caching tools the GPAC framework.
  *
  *      @{
  */
@@ -233,6 +233,10 @@ u32 gf_cache_get_sessions_count_for_cache_entry(const DownloadedCacheEntry entry
 
 u64 gf_cache_get_start_range( const DownloadedCacheEntry entry );
 u64 gf_cache_get_end_range( const DownloadedCacheEntry entry );
+
+
+Bool gf_cache_are_headers_processed(const DownloadedCacheEntry entry);
+GF_Err gf_cache_set_headers_processed(const DownloadedCacheEntry entry);
 
 /*! @} */
 

@@ -33,7 +33,6 @@ GF_Clock *NewClock(GF_Terminal *term)
 	tmp->mx = gf_mx_new("Clock");
 	tmp->term = term;
 	tmp->speed = FIX_ONE;
-	if (term->play_state) tmp->Paused = 1;
 	tmp->data_timeout = term->net_data_timeout;
 	return tmp;
 }
@@ -179,7 +178,6 @@ void gf_clock_set_time(GF_Clock *ck, u32 TS)
 		ck->drift = 0;
 		/*update starttime and pausetime even in pause mode*/
 		ck->PauseTime = ck->StartTime = gf_term_get_time(ck->term);
-		if (ck->term->play_state) ck->Paused ++;
 	}
 }
 
@@ -214,16 +212,27 @@ u32 gf_clock_real_time(GF_Clock *ck)
 	assert(ck);
 	if (!ck->clock_init) return ck->StartTime;
 	time = ck->Paused > 0 ? ck->PauseTime : gf_term_get_time(ck->term);
+
 #ifdef GPAC_FIXED_POINT
-	time = ck->discontinuity_time + ck->init_time + (time - ck->StartTime) * FIX2INT(100*ck->speed) / 100;
+
+	if ((ck->speed < 0) && ((s32) ck->init_time < FIX2INT( (-ck->speed * 100) * (time - ck->StartTime)) / 100 ) ) {
+		time = 0;
+	} else {
+		time = ck->discontinuity_time + ck->init_time + (time - ck->StartTime) * FIX2INT(100*ck->speed) / 100;
+	}
+
 #else
+
 	if ((ck->speed < 0) && ((s32) ck->init_time < (-ck->speed) * (time - ck->StartTime))) {
 		time = 0;
+	} else {
+		//DO NOT CHANGE the position of cast float->u32, otherwise we have precision issues when ck->init_time
+		//is >= 0x40000000. We know for sure that ck->speed * (time - ck->StartTime) is positive
+		time = ck->discontinuity_time + ck->init_time + (u32) (ck->speed * (time - ck->StartTime) );
 	}
-	else {
-		time = ck->discontinuity_time + (u32) ( ck->init_time + ck->speed * (time - ck->StartTime) );
-	}
+
 #endif
+
 	return time;
 }
 
@@ -251,6 +260,11 @@ u32 gf_clock_media_time(GF_Clock *ck)
 	return t;
 }
 
+u32 gf_clock_elapsed_time(GF_Clock *ck)
+{
+	if (!ck || ck->Buffering || ck->Paused) return 0;
+	return gf_sys_clock() - ck->StartTime;
+}
 
 Bool gf_clock_is_started(GF_Clock *ck)
 {
@@ -307,7 +321,7 @@ void gf_clock_discontinuity(GF_Clock *ck, GF_Scene *scene, Bool is_pcr_discontin
 	i=0;
 	while ((ch = (GF_Channel*)gf_list_enum(scene->root_od->channels, &i))) {
 		if (ch->clock == ck) {
-			gf_es_reset_timing(ch);
+			gf_es_reset_timing(ch, is_pcr_discontinuity);
 		}
 	}
 	j=0;
@@ -318,15 +332,18 @@ void gf_clock_discontinuity(GF_Clock *ck, GF_Scene *scene, Bool is_pcr_discontin
 		i=0;
 		while ((ch = (GF_Channel*)gf_list_enum(odm->channels, &i))) {
 			if (ch->clock == ck) {
-				ch->IsClockInit = 0;
+				gf_es_reset_timing(ch, is_pcr_discontinuity);
+
+				ch->CTS = ch->DTS = 0;
 				GF_LOG(GF_LOG_WARNING, GF_LOG_SYNC, ("[SyncLayer] Reinitializing timing for ES%d\n", ch->esd->ESID));
 
 				if (ch->odm->codec && ch->odm->codec->CB)
 					gf_cm_reset_timing(ch->odm->codec->CB);
-
 			}
 		}
 	}
+
+	gf_scene_reset_addons(scene);
 
 	if (ck->has_media_time_shift) {
 		u32 new_media_time = ck->media_time_at_init + gf_clock_time(ck) - ck->init_time;

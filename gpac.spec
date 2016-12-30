@@ -1,11 +1,11 @@
 # $Id: gpac.spec,v 1.5 2008-12-02 18:04:42 jeanlf Exp $
 Summary: GPAC is a multimedia framework covering MPEG-4, VRML/X3D and SVG.
 Name: gpac
-Version: 0.5.0
-Release: 0.5.0
+Version: 0.6.2-DEV
+Release: 0.6.2-DEV
 License: LGPL
 Group: Applications/Multimedia
-Source0: gpac-0.5.0.tar.gz%{?_with_amr:Source1:http://www.3gpp.org/ftp/Specs/archive/26_series/26.073/26073-700.zip}
+Source0: gpac-0.6.2-DEV.tar.gz%{?_with_amr:Source1:http://www.3gpp.org/ftp/Specs/archive/26_series/26.073/26073-700.zip}
 URL: http://gpac.sourceforge.net/
 BuildRoot: %{_tmppath}/%{name}-root
 Requires: SDL
@@ -86,12 +86,14 @@ rm -rf %{buildroot}
 
 %files
 %defattr(-, root, root)
-%doc AUTHORS BUGS Changelog COPYING README TODO
+%doc AUTHORS BUGS Changelog COPYING README.md TODO
 %{_bindir}/*
 %{_libdir}/*
 %{_mandir}/man1/*
 
 %changelog
+* Fri Jul 3 2015 Jean Le Feuvre
+- Changed to README.md
 * Wed Feb 13 2008 Pierre Souchay
 - Added libjack
 * Wed Jul 13 2005 Jean Le Feuvre

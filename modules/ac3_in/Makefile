@@ -32,7 +32,7 @@ endif
 EXTRALIBS+= -la52
 endif
 
-LIB=gm_ac3_in.$(DYN_LIB_SUFFIX)
+LIB=gm_ac3_in$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
 #LDFLAGS+=-export-symbols ac3_in.def 
 endif
@@ -42,7 +42,7 @@ all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) -L../../bin/gcc -lgpac $(EXTRALIBS)
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) -L../../bin/gcc -lgpac $(EXTRALIBS) $(LDFLAGS)
 
 clean: 
 	rm -f $(OBJS) ../../bin/gcc/$(LIB)

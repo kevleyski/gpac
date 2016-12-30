@@ -66,6 +66,8 @@ typedef struct
 	Bool waiting_for_data, reset_frag_state;
 	GF_Mutex *segment_mutex;
 
+	u32 pending_scalable_enhancement_segment_index;
+
 	Bool use_memory;
 	/*0: segment is not opened - 1: segment is opened but can be refreshed incomplete file) - 2: segment is fully parsed, no need for refresh*/
 	u32 seg_opened;
@@ -77,7 +79,7 @@ typedef struct
 	Bool disconnected;
 	Bool no_order_check;
 
-	u64 last_sender_ntp;
+	u64 last_sender_ntp, cts_for_last_sender_ntp;
 	Double remain_at_buffering_start;
 	Bool buffering;
 } ISOMReader;
@@ -104,6 +106,7 @@ typedef struct
 	Bool has_edit_list;
 	u32 sample_num;
 	s64 dts_offset;
+	Bool do_dts_shift_test;
 	/*for edit lists*/
 	u32 edit_sync_frame;
 	u64 sample_time, start, end;
@@ -126,7 +129,10 @@ typedef struct
 
 	Bool disable_seek;
 	u32 nalu_extract_mode;
+
+	u32 last_sample_desc_index;
 } ISOMChannel;
+
 void isor_reset_reader(ISOMChannel *ch);
 void isor_reader_get_sample(ISOMChannel *ch);
 void isor_reader_release_sample(ISOMChannel *ch);

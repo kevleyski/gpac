@@ -79,6 +79,10 @@ GF_FontManager *gf_font_manager_new(GF_User *user)
 		}
 	}
 	GF_SAFEALLOC(font_mgr, GF_FontManager);
+	if (!font_mgr) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate font manager\n"));
+		return NULL;
+	}
 	font_mgr->reader = ifce;
 	font_mgr->id_buffer_size = 20;
 	font_mgr->id_buffer = gf_malloc(sizeof(u32)*font_mgr->id_buffer_size);
@@ -285,6 +289,9 @@ GF_Font *gf_font_manager_set_font_ex(GF_FontManager *fm, char **alt_fonts, u32 n
 			e = fm->reader->set_font(fm->reader, font_name, styles);
 			if (!e) {
 				GF_SAFEALLOC(the_font, GF_Font);
+				if (!the_font) {
+					return NULL;
+				}
 				fm->reader->get_font_info(fm->reader, &the_font->name, &the_font->em_size, &the_font->ascent, &the_font->descent, &the_font->underline, &the_font->line_spacing, &the_font->max_advance_h, &the_font->max_advance_v);
 				the_font->styles = styles;
 				if (!the_font->name) the_font->name = gf_strdup(font_name);
@@ -317,7 +324,7 @@ GF_Font *gf_font_manager_set_font_ex(GF_FontManager *fm, char **alt_fonts, u32 n
 		the_font = fm->default_font;
 	}
 	/*embeded font*/
-	if (the_font && !the_font->get_glyphs)
+	if (fm->reader && the_font && !the_font->get_glyphs)
 		fm->reader->set_font(fm->reader, the_font->name, the_font->styles);
 
 	return the_font;
@@ -337,6 +344,7 @@ static GF_Glyph *gf_font_get_glyph(GF_FontManager *fm, GF_Font *font, u32 name)
 
 	if (name==GF_CARET_CHAR) {
 		GF_SAFEALLOC(glyph, GF_Glyph);
+		if (!glyph) return NULL;
 		glyph->height = font->ascent;
 		glyph->horiz_advance = 0;
 		glyph->width = 0;
@@ -350,6 +358,7 @@ static GF_Glyph *gf_font_get_glyph(GF_FontManager *fm, GF_Font *font, u32 name)
 		glyph->utf_name=0;
 	} else if (name==(u32) '\n') {
 		GF_SAFEALLOC(glyph, GF_Glyph);
+		if (!glyph) return NULL;
 		glyph->height = font->ascent;
 		glyph->horiz_advance = 0;
 		glyph->width = 0;
@@ -414,6 +423,7 @@ GF_TextSpan *gf_font_manager_create_span(GF_FontManager *fm, GF_Font *font, char
 	if (e) return NULL;
 
 	GF_SAFEALLOC(span, GF_TextSpan);
+	if (!span) return NULL;
 	span->font = font;
 	span->font_size = font_size;
 	if (font->em_size)
@@ -732,6 +742,7 @@ static Bool span_setup_texture(GF_Compositor *compositor, GF_TextSpan *span, Boo
 		gf_free(span->ext->txh);
 	}
 	GF_SAFEALLOC(span->ext->txh, GF_TextureHandler);
+	if (!span->ext->txh) return 0;
 	gf_sc_texture_setup(span->ext->txh, compositor, NULL);
 	gf_sc_texture_allocate(span->ext->txh);
 	stencil = gf_sc_texture_get_stencil(span->ext->txh);
@@ -940,21 +951,25 @@ void gf_font_spans_draw_3d(GF_List *spans, GF_TraverseState *tr_state, DrawAspec
 			}
 
 			if (can_texture_text && span_setup_texture(tr_state->visual->compositor, span, 1, tr_state)) {
-				tr_state->mesh_num_textures = 1;
-				gf_sc_texture_enable(span->ext->txh, NULL);
-				visual_3d_mesh_paint(tr_state, span->ext->tx_mesh);
-				gf_sc_texture_disable(span->ext->txh);
+				tr_state->mesh_num_textures = gf_sc_texture_enable(span->ext->txh, NULL);
+				if (tr_state->mesh_num_textures) {
+					Bool has_mat_2d = tr_state->visual->compositor->visual->has_material_2d;
+					visual_3d_mesh_paint(tr_state, span->ext->tx_mesh);
+					gf_sc_texture_disable(span->ext->txh);
+					tr_state->mesh_num_textures = 0;
+					tr_state->visual->has_material_2d = has_mat_2d;
+				}
 			} else {
 				span_fill_3d(span, tr_state);
 			}
 
 			if (tr_state->text_split_idx) break;
 		}
+		tr_state->visual->has_material_2d = 0;
 
 		/*reset texturing in case of line texture*/
 		if (!asp) visual_3d_disable_texture(tr_state);
 	}
-
 	visual_3d_set_state(tr_state->visual, V3D_STATE_BLEND, 0);
 
 	if (asp && asp->pen_props.width) {
@@ -1068,7 +1083,7 @@ void gf_font_underline_span(GF_TraverseState *tr_state, GF_TextSpan *span, Drawa
 
 	gf_mx2d_copy(mx, ctx->transform);
 	sx = gf_mulfix(span->font_scale, span->x_scale);
-	diff = span->font_scale * span->font->underline;
+
 	if (span->flags & GF_TEXT_SPAN_FLIP)
 		diff = sx * (span->font->descent - span->font->underline);
 	else
@@ -1251,7 +1266,7 @@ static void gf_font_spans_select(GF_TextSpan *span, GF_TraverseState *tr_state, 
 				compositor->sel_buffer_alloc = 2*compositor->sel_buffer_alloc;
 				compositor->sel_buffer = gf_realloc(compositor->sel_buffer, sizeof(u16)*compositor->sel_buffer_alloc);
 			}
-			compositor->sel_buffer[compositor->sel_buffer_len] = span->glyphs[i]->utf_name;
+			compositor->sel_buffer[compositor->sel_buffer_len] = (u16) span->glyphs[i]->utf_name;
 			compositor->sel_buffer_len++;
 		}
 
@@ -1321,7 +1336,7 @@ void gf_font_spans_draw_2d(GF_List *spans, GF_TraverseState *tr_state, u32 hl_co
 	for(; i<count; i++) {
 		span = (GF_TextSpan *)gf_list_get(spans, i);
 		if (compositor->text_selection)
-			gf_font_spans_select(span, tr_state, ctx, (i+1<count) ? 1 : 0, (i==0)?1:0, &rc);
+			gf_font_spans_select(span, tr_state, ctx, (i+1<count) ? 1 : 0, (i==0)? GF_TRUE : GF_FALSE, &rc);
 		else if (hl_color)
 			visual_2d_fill_rect(tr_state->visual, ctx, &span->bounds, hl_color, 0, tr_state);
 
@@ -1386,7 +1401,6 @@ void gf_font_spans_pick(GF_Node *node, GF_List *spans, GF_TraverseState *tr_stat
 		drawable_get_aspect_2d_svg(node, &asp, tr_state);
 	}
 
-	dx = dy = 0;
 	span = NULL;
 	for (i=0; i<count; i++) {
 		Fixed loc_x, loc_y;

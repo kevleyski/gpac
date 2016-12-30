@@ -57,7 +57,7 @@ GF_Err gf_rtp_decode_rtcp(GF_RTPChannel *ch, char *pck, u32 pck_size, Bool *has_
 	u32 i, sender_ssrc, cur_ssrc, val, sdes_type, sdes_len, res, first;
 	GF_Err e = GF_OK;
 
-	if (has_sr) *has_sr=0;
+	if (has_sr) *has_sr = GF_FALSE;
 
 	//bad RTCP packet
 	if (pck_size < 4 ) return GF_NON_COMPLIANT_BITSTREAM;
@@ -124,7 +124,7 @@ GF_Err gf_rtp_decode_rtcp(GF_RTPChannel *ch, char *pck, u32 pck_size, Bool *has_
 			/*nb_bytes =*/gf_bs_read_u32(bs);
 
 			rtcp_hdr.Length -= 5;
-			if (has_sr) *has_sr=1;
+			if (has_sr) *has_sr = GF_TRUE;
 
 #ifndef GPAC_DISABLE_LOG
 			if (gf_log_tool_level_on(GF_LOG_RTP, GF_LOG_INFO))  {
@@ -150,7 +150,7 @@ GF_Err gf_rtp_decode_rtcp(GF_RTPChannel *ch, char *pck, u32 pck_size, Bool *has_
 
 		case 201:
 			//sender ssrc
-			sender_ssrc = gf_bs_read_u32(bs);
+			/*sender_ssrc = */gf_bs_read_u32(bs);
 			rtcp_hdr.Length -= 1;
 
 process_reports:
@@ -183,7 +183,7 @@ process_reports:
 		//SDES
 		case 202:
 			for (i=0; i<rtcp_hdr.Count; i++) {
-				cur_ssrc = gf_bs_read_u32(bs);
+				/*cur_ssrc = */gf_bs_read_u32(bs);
 				rtcp_hdr.Length -= 1;
 
 				val = 0;

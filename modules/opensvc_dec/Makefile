@@ -21,14 +21,14 @@ OBJS= opensvc_dec.o
 
 SRCS := $(OBJS:.o=.c) 
 
-LIB=gm_opensvc_dec.$(DYN_LIB_SUFFIX)
+LIB=gm_opensvc_dec$(DYN_LIB_SUFFIX)
 
 
 all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS)
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) $(LDFLAGS)
 
 clean: 
 	rm -f $(OBJS) ../../bin/gcc/$(LIB)

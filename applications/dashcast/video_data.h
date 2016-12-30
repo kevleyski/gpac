@@ -73,6 +73,8 @@ typedef struct {
 	char custom[GF_MAX_PATH];
 	/*low delay is used*/
 	int low_delay;
+	/*demuxer buffer size or 0 if default FFmpeg one is used*/
+	int demux_buffer_size;
 
 	/* used for source switching */
 	char source_id[GF_MAX_PATH];
@@ -125,6 +127,8 @@ typedef struct {
 	int source_number;
 	uint8_t nb_raw_frames_ref;
 	AVPacket raw_packet;
+
+	u64 frame_ntp, frame_utc;
 } VideoDataNode;
 
 void dc_video_data_set_default(VideoDataConf *video_data_conf);

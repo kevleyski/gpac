@@ -115,7 +115,7 @@ void RP_ProcessCommands(RTSPSession *sess)
 			//signal what's going on
 			if (time >= time_out) {
 				if (!strcmp(com->method, GF_RTSP_TEARDOWN)) {
-					gf_rtsp_session_reset(sess->session, 1);
+					gf_rtsp_session_reset(sess->session, GF_TRUE);
 				} else {
 					GF_LOG(GF_LOG_WARNING, GF_LOG_RTP, ("[RTP] Request Timeout for command %s after %d ms\n", com->method, time));
 				}
@@ -154,7 +154,6 @@ void RP_ProcessCommands(RTSPSession *sess)
 	if (sess->session_id && !com->Session)
 		com->Session = sess->session_id;
 
-	e = GF_OK;
 	/*preprocess describe before sending (always the ESD url thing)*/
 	if (!strcmp(com->method, GF_RTSP_DESCRIBE)) {
 		com->Session = NULL;
@@ -258,9 +257,9 @@ RTSPSession *RP_NewSession(RTPClient *rtp, char *session_control)
 	if (!rtsp) return NULL;
 
 	GF_SAFEALLOC(tmp, RTSPSession);
+	if (!tmp) return NULL;
 	tmp->owner = rtp;
 	tmp->session = rtsp;
-
 
 	szCtrl = (char *)gf_modules_get_option((GF_BaseInterface *) gf_service_get_interface(rtp->service), "Network", "MobileIPEnabled");
 	if (szCtrl && !strcmp(szCtrl, "yes")) {
@@ -287,10 +286,10 @@ GF_Err RP_AddStream(RTPClient *rtp, RTPStream *stream, char *session_control)
 	char *service_name, *ctrl;
 	RTSPSession *in_session = RP_CheckSession(rtp, session_control);
 
-	has_aggregated_control = 0;
+	has_aggregated_control = GF_FALSE;
 	if (session_control) {
 		//if (!strcmp(session_control, "*")) session_control = NULL;
-		if (session_control) has_aggregated_control = 1;
+		if (session_control) has_aggregated_control = GF_TRUE;
 	}
 
 	/*regular setup in an established session (RTSP DESCRIBE)*/
@@ -304,7 +303,7 @@ GF_Err RP_AddStream(RTPClient *rtp, RTPStream *stream, char *session_control)
 	/*setup through SDP with control - assume this is RTSP and try to create a session*/
 	if (stream->control) {
 		/*stream control is relative to main session*/
-		if (strnicmp(stream->control, "rtsp://", 7) && strnicmp(stream->control, "rtspu://", 7)) {
+		if (strnicmp(stream->control, "rtsp://", 7) && strnicmp(stream->control, "rtspu://", 8) && strnicmp(stream->control, "satip://", 8)) {
 			/*locate session by control - if no control was provided for the session, use default
 			session*/
 			if (!in_session) in_session = RP_CheckSession(rtp, session_control ? session_control : "*");
@@ -382,7 +381,7 @@ void RP_ResetSession(RTSPSession *sess, GF_Err e)
 		//first = 0;
 	}
 	/*reset session state*/
-	gf_rtsp_session_reset(sess->session, 1);
+	gf_rtsp_session_reset(sess->session, GF_TRUE);
 	sess->flags &= ~RTSP_WAIT_REPLY;
 }
 
@@ -395,6 +394,7 @@ void RP_DelSession(RTSPSession *sess)
 	gf_rtsp_session_del(sess->session);
 	if (sess->control) gf_free(sess->control);
 	if (sess->session_id) gf_free(sess->session_id);
+	if (sess->satip_server) gf_free(sess->satip_server);
 	gf_free(sess);
 }
 

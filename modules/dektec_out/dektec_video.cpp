@@ -36,13 +36,24 @@ extern "C" {
 
 
 //#define DEKTEC_DUMP_UYVY
+#ifdef NDEBUG
+#define tru 1
+#else
+#define tru 0
+#endif
 
 //TODO: use gf_stretch_bits and get values from config file
+#if 1
+#define DWIDTH 1280
+#define DHEIGHT 720
+#define DFORMAT DTAPI_IOCONFIG_720P59_94
+#define DNUMFIELDS 1
+#else
 #define DWIDTH 1920
 #define DHEIGHT 1080
 #define DFORMAT DTAPI_IOCONFIG_1080I50
 #define DNUMFIELDS 2
-
+#endif
 
 	typedef struct
 	{
@@ -56,19 +67,18 @@ extern "C" {
 		s64 frameNum;
 	} DtContext;
 
-//FIXME: referenced from dx
-	void dx_copy_pixels(GF_VideoSurface *dst_s, const GF_VideoSurface *src_s, const GF_Window *src_wnd);
 
+	void dx_copy_pixels(GF_VideoSurface *dst_s, const GF_VideoSurface *src_s, const GF_Window *src_wnd); //FIXME: referenced from dx
 	static GF_Err Dektec_Blit(GF_VideoOutput *dr, GF_VideoSurface *video_src, GF_Window *src_wnd, GF_Window *dst_wnd, u32 overlay_type)
 	{
 		DtContext *dtc = (DtContext*)dr->opaque;
 		GF_VideoSurface temp_surf;
-		dx_copy_pixels(&temp_surf, video_src, src_wnd);
 		memset(&temp_surf, 0, sizeof(GF_VideoSurface));
 		temp_surf.pixel_format = GF_PIXEL_UYVY;
 		temp_surf.video_buffer = (char*)dtc->pixels_UYVY;
 		temp_surf.pitch_y = dtc->width*2;
 		dx_copy_pixels(&temp_surf, video_src, src_wnd);
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MODULE, ("[Dektec Out] Blit\n"));
 		return GF_OK;
 	}
 
@@ -77,10 +87,14 @@ extern "C" {
 		DtContext *dtc = (DtContext*)dr->opaque;
 		DtFrameBuffer *dtf = dtc->dtf;
 		DTAPI_RESULT res;
+		if (dest->w != DWIDTH || dest->h != DHEIGHT) {
+			GF_LOG(GF_LOG_INFO, GF_LOG_MODULE, ("[Dektec Out] Discard data with wrong dimensions\n"));
+			if (tru) return GF_OK;
+		}
 		if (!dtc->isSending) {
 			// Start transmission
 			res = dtf->Start();
-			if (res != DTAPI_OK) {
+			if (tru && res != DTAPI_OK) {
 				GF_LOG(GF_LOG_WARNING, GF_LOG_MODULE, ("[Dektec Out] Can't start transmission: %s.\n", DtapiResult2Str(res)));
 			} else {
 				GF_LOG(GF_LOG_INFO, GF_LOG_MODULE, ("[Dektec Out] Transmission started.\n"));
@@ -89,7 +103,7 @@ extern "C" {
 		}
 		s64 firstSafeFrame=-1, lastSafeFrame=-1;
 		res = dtf->WaitFrame(firstSafeFrame, lastSafeFrame);
-		if (res != DTAPI_OK) {
+		if (tru && res != DTAPI_OK) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Dektec Out] Can't get the next frame: %s\n", DtapiResult2Str(res)));
 			return GF_BAD_PARAM;
 		}
@@ -99,24 +113,27 @@ extern "C" {
 
 		int numLines=-1, numWritten=DWIDTH*DHEIGHT*2/DNUMFIELDS;
 		res = dtf->WriteVideo(dtc->frameNum, dtc->pixels_UYVY, numWritten, DTAPI_SDI_FIELD1, DTAPI_SDI_8B, 1, numLines);
-		if (res != DTAPI_OK) {
+		if (tru && res != DTAPI_OK) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Dektec Out] Can't write frame "LLD": %s\n", dtc->frameNum, DtapiResult2Str(res)));
 			return GF_BAD_PARAM;
 		}
-		numLines=-1, numWritten=DWIDTH*DHEIGHT*2/DNUMFIELDS;
-		res = dtf->WriteVideo(dtc->frameNum, dtc->pixels_UYVY+numWritten, numWritten, DTAPI_SDI_FIELD2, DTAPI_SDI_8B, 1, numLines);
-		if (res != DTAPI_OK) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Dektec Out] Can't write frame "LLD": %s\n", dtc->frameNum, DtapiResult2Str(res)));
-			return GF_BAD_PARAM;
+		if (DNUMFIELDS > 1) {
+			assert(DNUMFIELDS == 2);
+			numLines=-1, numWritten=DWIDTH*DHEIGHT*2/DNUMFIELDS;
+			res = dtf->WriteVideo(dtc->frameNum, dtc->pixels_UYVY+numWritten, numWritten, DTAPI_SDI_FIELD2, DTAPI_SDI_8B, 1, numLines);
+			if (tru && res != DTAPI_OK) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Dektec Out] Can't write frame "LLD": %s\n", dtc->frameNum, DtapiResult2Str(res)));
+				return GF_BAD_PARAM;
+			}
 		}
 
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_MODULE, ("[Dektec Out] Written frame "LLD" [(0x%X,0x%X,0x%X,0x%X)(0x%X,0x%X,0x%X,0x%X)(0x%X,0x%X,0x%X,0x%X)(0x%X,0x%X,0x%X,0x%X)]\n", dtc->frameNum, DWIDTH, DHEIGHT,
 		                                     dtc->pixels_UYVY[0], dtc->pixels_UYVY[1], dtc->pixels_UYVY[2], dtc->pixels_UYVY[3], dtc->pixels_UYVY[4], dtc->pixels_UYVY[5], dtc->pixels_UYVY[6], dtc->pixels_UYVY[7],
-																				 dtc->pixels_UYVY[8], dtc->pixels_UYVY[9], dtc->pixels_UYVY[10], dtc->pixels_UYVY[11], dtc->pixels_UYVY[12], dtc->pixels_UYVY[13], dtc->pixels_UYVY[14], dtc->pixels_UYVY[15]));
+		                                     dtc->pixels_UYVY[8], dtc->pixels_UYVY[9], dtc->pixels_UYVY[10], dtc->pixels_UYVY[11], dtc->pixels_UYVY[12], dtc->pixels_UYVY[13], dtc->pixels_UYVY[14], dtc->pixels_UYVY[15]));
 
 		// commit HANC/VANC - mandatory to form a valid frame
 		res = dtf->AncCommit(dtc->frameNum);
-		if (res != DTAPI_OK) {
+		if (tru && res != DTAPI_OK) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Dektec Out] Can't write VANC for frame "LLD": %s\n", dtc->frameNum, DtapiResult2Str(res)));
 			return GF_BAD_PARAM;
 		}
@@ -145,7 +162,6 @@ extern "C" {
 			vi->video_buffer = dtc->pixels;
 			vi->pitch_x = dtc->bpp;
 			vi->pitch_y = dtc->bpp * vi->width;/*the correct value here is dtc->pixel_format, but the soft raster only supports RGB*/
-			/*TODO: allocate a real RGB buffer, otherwise we will crash when displaying composed objects*/
 			vi->pixel_format = GF_PIXEL_RGB_24;
 		}
 		return GF_OK;
@@ -157,7 +173,7 @@ extern "C" {
 		DtContext *dtc = (DtContext*)dr->opaque;
 		DtFrameBuffer *dtf = dtc->dtf;
 		DTAPI_RESULT res = dtf->Start(false);
-		if (res != DTAPI_OK)
+		if (tru && res != DTAPI_OK)
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Dektec Out] Can't stop transmission: %s\n", DtapiResult2Str(res)));
 		dtf->Detach();
 		dtc->dvc->Detach();
@@ -171,14 +187,11 @@ extern "C" {
 		if (evt) {
 			switch (evt->type) {
 			case GF_EVENT_VIDEO_SETUP:
-				//FIXME: we do not know how to resize
+				//FIXME: we do not know how to resize - Dektec_Shutdown(dr); Dektec_attach_start(dr);
 				GF_LOG(GF_LOG_DEBUG, GF_LOG_MODULE, ("[Dektec Out] resize (%ux%u) received.\n", evt->size.width, evt->size.height));
-				//Dektec_Shutdown(dr);
-				//Dektec_attach_start(dr);
 				if (evt->size.width != DWIDTH || evt->size.height != DHEIGHT) {
 					GF_LOG(GF_LOG_INFO, GF_LOG_MODULE, ("[Dektec Out] Bad resize (%ux%u) received. Expected %dx%d.\n", evt->size.width, evt->size.height, DWIDTH, DHEIGHT));
-					//return GF_BAD_PARAM;
-					if (evt->size.width*evt->size.height > DWIDTH*DHEIGHT)
+					if (evt->size.width*evt->size.height > DWIDTH*DHEIGHT) //FIXME
 						return GF_BAD_PARAM;
 				}
 				return GF_OK;
@@ -207,7 +220,7 @@ extern "C" {
 	{
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_MODULE, ("[Dektec Out] Dektec_Setup\n"));
 		DtContext *dtc = (DtContext*)dr->opaque;
-		dtc->bpp = 3; //needed because lock_buffer expects RGB
+		dtc->bpp = 3; //lock_buffer expects RGB
 		dtc->pixel_format = GF_PIXEL_YV12;
 		dtc->isSending = false;
 		Dektec_resize(dr, DWIDTH, DHEIGHT);
@@ -217,41 +230,41 @@ extern "C" {
 		opt = gf_modules_get_option((GF_BaseInterface *)dr, "DektecVideo", "SDIOutput");
 		if (opt) {
 			port = atoi(opt);
+			GF_LOG(GF_LOG_INFO, GF_LOG_MODULE, ("[Dektec Out] Using port %d (%s)\n", port, opt));
 		} else {
 			GF_LOG(GF_LOG_INFO, GF_LOG_MODULE, ("[Dektec Out] No port specified, using default port: %d\n", port));
 		}
 
-		// Attach device and output channel objects to hardware
 		DtDevice *dvc = dtc->dvc;
 		DtFrameBuffer *dtf = dtc->dtf;
 		DTAPI_RESULT res;
 		res = dvc->AttachToType(2154);
-		if (res != DTAPI_OK) {
+		if (tru && res != DTAPI_OK) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Dektec Out] No DTA-2154 in system: %s\n", DtapiResult2Str(res)));
 			return GF_BAD_PARAM;
 		}
 
 		res = dvc->SetIoConfig(port, DTAPI_IOCONFIG_IODIR, DTAPI_IOCONFIG_OUTPUT, DTAPI_IOCONFIG_OUTPUT);
-		if (res != DTAPI_OK) {
+		if (tru && res != DTAPI_OK) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Dektec Out] Can't set I/O config for the device: %s\n", DtapiResult2Str(res)));
 			return GF_BAD_PARAM;
 		}
 
 		res = dtf->AttachToOutput(dvc, port, 0);
-		if (res != DTAPI_OK) {
+		if (tru && res != DTAPI_OK) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Dektec Out] Can't attach to port %d: %s\n", port, DtapiResult2Str(res)));
 			return GF_BAD_PARAM;
 		}
 
 		int IoStdValue=-1, IoStdSubValue=-1;
 		res = DtapiVidStd2IoStd(DFORMAT, IoStdValue, IoStdSubValue);
-		if (res != DTAPI_OK) {
+		if (tru && res != DTAPI_OK) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Dektec Out] Unknown VidStd: %s\n", DtapiResult2Str(res)));
 			return GF_BAD_PARAM;
 		}
 
 		res = dtf->SetIoConfig(DTAPI_IOCONFIG_IOSTD, IoStdValue, IoStdSubValue);
-		if (res != DTAPI_OK) {
+		if (tru && res != DTAPI_OK) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_MODULE, ("[Dektec Out] Can't set I/O config: %s\n", DtapiResult2Str(res)));
 			return GF_BAD_PARAM;
 		}

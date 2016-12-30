@@ -81,11 +81,12 @@ void gf_dump_svg_element(GF_SceneDumper *sdump, GF_Node *n, GF_Node *parent, Boo
 GF_Err gf_sm_dump_command_list(GF_SceneDumper *sdump, GF_List *comList, u32 indent, Bool skip_first_replace);
 
 GF_EXPORT
-GF_SceneDumper *gf_sm_dumper_new(GF_SceneGraph *graph, char *_rad_name, char indent_char, GF_SceneDumpFormat dump_mode)
+GF_SceneDumper *gf_sm_dumper_new(GF_SceneGraph *graph, char *_rad_name, Bool is_final_name, char indent_char, GF_SceneDumpFormat dump_mode)
 {
 	GF_SceneDumper *tmp;
 	if (!graph) return NULL;
 	GF_SAFEALLOC(tmp, GF_SceneDumper);
+	if (!tmp) return NULL;
 
 	/*store original*/
 	tmp->dump_mode = dump_mode;
@@ -100,9 +101,9 @@ GF_SceneDumper *gf_sm_dumper_new(GF_SceneGraph *graph, char *_rad_name, char ind
 		if (_rad_name) {
 			const char* ext_name = tmp->LSRDump ? ".xsr" : ".svg";
 			tmp->filename = (char *)gf_malloc(strlen(_rad_name ? _rad_name : "") + strlen(ext_name) + 1);
-			strcpy(tmp->filename, _rad_name ? _rad_name : "");
-			strcat(tmp->filename, ext_name);
-			tmp->trace = gf_f64_open(tmp->filename, "wt");
+			strcpy(tmp->filename, _rad_name);
+			if (!is_final_name) strcat(tmp->filename, ext_name);
+			tmp->trace = gf_fopen(tmp->filename, "wt");
 			if (!tmp->trace) {
 				gf_free(tmp);
 				return NULL;
@@ -152,10 +153,11 @@ GF_SceneDumper *gf_sm_dumper_new(GF_SceneGraph *graph, char *_rad_name, char ind
 				ext_name = ".bt";
 				break;
 			}
+			
 			tmp->filename = (char *)gf_malloc(strlen(_rad_name ? _rad_name : "") + strlen(ext_name) + 1);
 			strcpy(tmp->filename, _rad_name ? _rad_name : "");
-			strcat(tmp->filename, ext_name);
-			tmp->trace = gf_f64_open(tmp->filename, "wt");
+			if (!is_final_name) strcat(tmp->filename, ext_name);
+			tmp->trace = gf_fopen(tmp->filename, "wt");
 			if (!tmp->trace) {
 				gf_free(tmp);
 				return NULL;
@@ -203,7 +205,7 @@ void gf_sm_dumper_del(GF_SceneDumper *sdump)
 	}
 	gf_list_del(sdump->mem_def_nodes);
 	gf_list_del(sdump->inserted_routes);
-	if (sdump->trace != stdout) fclose(sdump->trace);
+	if (sdump->trace != stdout) gf_fclose(sdump->trace);
 	if (sdump->filename) {
 		gf_free(sdump->filename);
 		sdump->filename = NULL;
@@ -222,7 +224,7 @@ static void gf_dump_setup(GF_SceneDumper *sdump, GF_Descriptor *root_od)
 	if (sdump->XMLDump) {
 		fprintf(sdump->trace, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
 		if (sdump->dump_mode==GF_SM_DUMP_XML) return;
-		fprintf(sdump->trace, "<!-- %s Scene Dump - GPAC version " GPAC_FULL_VERSION " -->\n",
+		fprintf(sdump->trace, "<!-- %s Scene Dump -->\n",
 		        (sdump->dump_mode==GF_SM_DUMP_SVG) ? "SVG" :
 		        (sdump->dump_mode==GF_SM_DUMP_LASER) ? "LASeR" :
 		        sdump->X3DDump ? "X3D" : "XMT-A"
@@ -244,7 +246,7 @@ static void gf_dump_setup(GF_SceneDumper *sdump, GF_Descriptor *root_od)
 				if (esd->decoderConfig->objectTypeIndication != 0x09) continue;
 				if (!esd->decoderConfig->decoderSpecificInfo || !esd->decoderConfig->decoderSpecificInfo->data) continue;
 				gf_odf_get_laser_config(esd->decoderConfig->decoderSpecificInfo, &lsrcfg);
-				gf_odf_dump_desc(&lsrcfg, sdump->trace, 1, 1);
+				gf_odf_dump_desc((GF_Descriptor*)&lsrcfg, sdump->trace, 1, 1);
 			}
 			fprintf(sdump->trace, "</saf:sceneHeader>\n");
 		}
@@ -2226,6 +2228,7 @@ static GF_Err DumpXReplace(GF_SceneDumper *sdump, GF_Command *com)
 		toNode = gf_sg_find_node(com->in_scene, com->toNodeID);
 		if (!toNode) return GF_NON_COMPLIANT_BITSTREAM;
 		e = gf_node_get_field(toNode, com->toFieldIndex, &idxField);
+		if (e) return e;
 	}
 	else {
 		/*indexed replacement */
@@ -2284,6 +2287,7 @@ static GF_Err DumpXReplace(GF_SceneDumper *sdump, GF_Command *com)
 			target = gf_sg_find_node(com->in_scene, com->fromNodeID);
 			if (!target) return GF_NON_COMPLIANT_BITSTREAM;
 			e = gf_node_get_field(target, com->fromFieldIndex, &idxField);
+			if (e) return e;
 
 			fprintf(sdump->trace, " fromNode=\"");
 			scene_dump_vrml_id(sdump, target);
@@ -2714,28 +2718,31 @@ static GF_Err DumpLSRAddReplaceInsert(GF_SceneDumper *sdump, GF_Command *com)
 				fprintf(sdump->trace, "operandAttributeName=\"%s\" ", op_info.name);
 			}
 		}
+		if (!f->new_node && !f->node_list) {
+			fprintf(sdump->trace, "/>\n");
+			return GF_OK;
+		}
+		if (f->new_node && f->new_node->sgprivate->tag==TAG_DOMText) is_text = 1;
+		/*if fieldIndex (eg attributeName) is set, this is children replacement*/
+		if (f->fieldIndex>0)
+			fprintf(sdump->trace, "attributeName=\"children\" ");
 	}
-	if (!f->new_node && !f->node_list) {
-		fprintf(sdump->trace, "/>\n");
-		return GF_OK;
-	}
-	if (f->new_node && f->new_node->sgprivate->tag==TAG_DOMText) is_text = 1;
-	/*if fieldIndex (eg attributeName) is set, this is children replacement*/
-	if (f->fieldIndex>0)
-		fprintf(sdump->trace, "attributeName=\"children\" ");
+
 
 	fprintf(sdump->trace, ">");
 	if (!is_text) {
 		fprintf(sdump->trace, "\n");
 		sdump->indent++;
 	}
-	if (f->new_node) {
-		gf_dump_svg_element(sdump, f->new_node, com->node, 0);
-	} else if (f->node_list) {
-		GF_ChildNodeItem *list = f->node_list;
-		while (list) {
-			gf_dump_svg_element(sdump, list->node, com->node, 0);
-			list = list->next;
+	if (f) {
+		if (f->new_node) {
+			gf_dump_svg_element(sdump, f->new_node, com->node, 0);
+		} else if (f->node_list) {
+			GF_ChildNodeItem *list = f->node_list;
+			while (list) {
+				gf_dump_svg_element(sdump, list->node, com->node, 0);
+				list = list->next;
+			}
 		}
 	}
 	sdump->indent--;
@@ -3137,11 +3144,11 @@ void gf_dump_svg_element(GF_SceneDumper *sdump, GF_Node *n, GF_Node *parent, Boo
 		}
 		info.far_ptr = att->data;
 		attValue = gf_svg_dump_attribute((GF_Node*)svg, &info);
-		if (/*strcmp(info.name, "xmlns") &&*/ (info.fieldType = (u32) strlen(attValue)))
-			fprintf(sdump->trace, " %s=\"%s\"", info.name, attValue);
-
-		if (attValue) gf_free(attValue);
-
+		if (attValue) {
+			if (/*strcmp(info.name, "xmlns") &&*/ (info.fieldType = (u32) strlen(attValue)))
+				fprintf(sdump->trace, " %s=\"%s\"", info.name, attValue);
+			gf_free(attValue);
+		}
 		fflush(sdump->trace);
 		att = att->next;
 	}
@@ -3415,7 +3422,7 @@ static void ReorderAUContext(GF_List *sample_list, GF_AUContext *au, Bool lsr_du
 
 
 GF_EXPORT
-GF_Err gf_sm_dump(GF_SceneManager *ctx, char *rad_name, GF_SceneDumpFormat dump_mode)
+GF_Err gf_sm_dump(GF_SceneManager *ctx, char *rad_name, Bool is_final_name, GF_SceneDumpFormat dump_mode)
 {
 	GF_Err e;
 	GF_List *sample_list;
@@ -3432,7 +3439,7 @@ GF_Err gf_sm_dump(GF_SceneManager *ctx, char *rad_name, GF_SceneDumpFormat dump_
 	num_scene = num_od = 0;
 	num_tracks = 0;
 	indent = 0;
-	dumper = gf_sm_dumper_new(ctx->scene_graph, rad_name, ' ', dump_mode);
+	dumper = gf_sm_dumper_new(ctx->scene_graph, rad_name, is_final_name, ' ', dump_mode);
 	e = GF_OK;
 	/*configure all systems streams we're dumping*/
 	i=0;
@@ -3527,9 +3534,10 @@ GF_Err gf_sm_dump(GF_SceneManager *ctx, char *rad_name, GF_SceneDumpFormat dump_
 		}
 		else {
 			if (dumper->LSRDump) {
-				if (time != au->timing_sec) {
+/*				if (time != au->timing_sec) {
 					time = au->timing_sec;
 				}
+*/
 			} else if (!time && !num_scene && first_bifs) {
 			} else if (num_scene || num_od) {
 				if (!first_par) {

@@ -97,7 +97,7 @@ static const char *log_th_name(u32 id)
 	if (!id) id = gf_th_id();
 	count = gf_list_count(thread_bank);
 	for (i=0; i<count; i++) {
-		GF_Thread *t = gf_list_get(thread_bank, i);
+		GF_Thread *t = (GF_Thread*)gf_list_get(thread_bank, i);
 		if (t->id == id) return t->log_name;
 	}
 	return "Main Process";
@@ -109,7 +109,7 @@ static const char *log_th_name(u32 id)
 GF_EXPORT
 GF_Thread *gf_th_new(const char *name)
 {
-	GF_Thread *tmp = gf_malloc(sizeof(GF_Thread));
+	GF_Thread *tmp = (GF_Thread*)gf_malloc(sizeof(GF_Thread));
 	memset(tmp, 0, sizeof(GF_Thread));
 	tmp->status = GF_THREAD_STATUS_STOP;
 
@@ -185,14 +185,14 @@ void * RunThread(void *ptr)
 #endif
 
 	/* Each thread has its own seed */
-	gf_rand_init(0);
+	gf_rand_init(GF_FALSE);
 
 	/* Run our thread */
 	ret = t->Run(t->args);
 
 exit:
 #ifndef GPAC_DISABLE_LOG
-	GF_LOG(GF_LOG_INFO, GF_LOG_MUTEX, ("[Thread %s] At %d Exiting thread proc\n", t->log_name, gf_sys_clock()));
+	GF_LOG(GF_LOG_INFO, GF_LOG_MUTEX, ("[Thread %s] At %d Exiting thread proc, return code %d\n", t->log_name, gf_sys_clock(), ret));
 #endif
 	t->status = GF_THREAD_STATUS_DEAD;
 	t->Run = NULL;
@@ -231,7 +231,7 @@ GF_Err gf_th_run(GF_Thread *t, u32 (*Run)(void *param), void *param)
 	t->_signal = gf_sema_new(1, 0);
 
 #ifdef WIN32
-	t->threadH = CreateThread(NULL,  t->stackSize, &(RunThread), (void *)t, 0, &id);
+	t->threadH = CreateThread(NULL, t->stackSize, &(RunThread), (void *)t, 0, &id);
 	if (t->threadH != NULL) {
 #ifdef _MSC_VER
 		/*add thread name for the msvc debugger*/
@@ -290,7 +290,7 @@ void Thread_Stop(GF_Thread *t, Bool Destroy)
 		}
 #else
 		if (Destroy) {
-#ifdef GPAC_ANDROID
+#if defined(GPAC_ANDROID) || defined(PTHREAD_HAS_NO_CANCEL)
 			if (pthread_kill(t->threadH, SIGQUIT))
 #else
 			if (pthread_cancel(t->threadH))
@@ -310,13 +310,13 @@ void Thread_Stop(GF_Thread *t, Bool Destroy)
 GF_EXPORT
 void gf_th_stop(GF_Thread *t)
 {
-	Thread_Stop(t, 0);
+	Thread_Stop(t, GF_FALSE);
 }
 
 GF_EXPORT
 void gf_th_del(GF_Thread *t)
 {
-	Thread_Stop(t, 0);
+	Thread_Stop(t, GF_FALSE);
 #ifdef WIN32
 //	if (t->threadH) CloseHandle(t->threadH);
 #else
@@ -436,7 +436,7 @@ GF_Mutex *gf_mx_new(const char *name)
 #ifndef WIN32
 	pthread_mutexattr_t attr;
 #endif
-	GF_Mutex *tmp = gf_malloc(sizeof(GF_Mutex));
+	GF_Mutex *tmp = (GF_Mutex*)gf_malloc(sizeof(GF_Mutex));
 	if (!tmp) return NULL;
 	memset(tmp, 0, sizeof(GF_Mutex));
 
@@ -469,13 +469,21 @@ GF_Mutex *gf_mx_new(const char *name)
 GF_EXPORT
 void gf_mx_del(GF_Mutex *mx)
 {
+#ifndef WIN32
+	int err;
+#endif
+	
+	if (mx->Holder) {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_MUTEX, ("[Mutex %s] Destroying mutex from thread %s but hold by thread %s\n", mx->log_name, log_th_name(gf_th_id() ), log_th_name(mx->Holder) ));
+	}
+	
 #ifdef WIN32
 	if (!CloseHandle(mx->hMutex)) {
 		DWORD err = GetLastError();
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MUTEX, ("[Mutex %s] CloseHandle when deleting mutex failed with error code %d\n", mx->log_name, err));
 	}
 #else
-	int err = pthread_mutex_destroy(&mx->hMutex);
+	err = pthread_mutex_destroy(&mx->hMutex);
 	if (err)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MUTEX, ("[Mutex %s] pthread_mutex_destroy failed with error code %d\n", mx->log_name, err));
 
@@ -526,6 +534,9 @@ u32 gf_mx_p(GF_Mutex *mx)
 #ifndef WIN32
 	int retCode;
 #endif
+#ifndef GPAC_DISABLE_LOG
+	const char *mx_holder_name = log_th_name(mx->Holder);
+#endif
 	u32 caller;
 	assert(mx);
 	if (!mx) return 0;
@@ -537,7 +548,7 @@ u32 gf_mx_p(GF_Mutex *mx)
 
 #ifndef GPAC_DISABLE_LOG
 	if (mx->Holder)
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_MUTEX, ("[Mutex %s] At %d Thread %s waiting a release from thread %s\n", mx->log_name, gf_sys_clock(), log_th_name(caller), log_th_name(mx->Holder) ));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_MUTEX, ("[Mutex %s] At %d Thread %s waiting a release from thread %s\n", mx->log_name, gf_sys_clock(), log_th_name(caller), mx_holder_name ));
 #endif
 
 #ifdef WIN32
@@ -583,11 +594,11 @@ GF_EXPORT
 Bool gf_mx_try_lock(GF_Mutex *mx)
 {
 	u32 caller;
-	if (!mx) return 0;
+	if (!mx) return GF_FALSE;
 	caller = gf_th_id();
 	if (caller == mx->Holder) {
 		mx->HolderCount += 1;
-		return 1;
+		return GF_TRUE;
 	}
 
 #ifdef WIN32
@@ -598,24 +609,24 @@ Bool gf_mx_try_lock(GF_Mutex *mx)
 	case WAIT_ABANDONED:
 	case WAIT_TIMEOUT:
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_MUTEX, ("[Mutex %s] At %d Couldn't be locked by thread %s (grabbed by thread %s)\n", mx->log_name, gf_sys_clock(), log_th_name(caller), log_th_name(mx->Holder) ));
-		return 0;
+		return GF_FALSE;
 	case WAIT_FAILED:
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MUTEX, ("[Mutex %s] At %d WaitForSingleObject failed\n", mx->log_name, gf_sys_clock()));
-		return 0;
+		return GF_FALSE;
 	default:
 		assert(0);
-		return 0;
+		return GF_FALSE;
 	}
 #else
 	if (pthread_mutex_trylock(&mx->hMutex) != 0 ) {
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_MUTEX, ("[Mutex %s] At %d Couldn't release it for thread %s (grabbed by thread %s)\n", mx->log_name, gf_sys_clock(), log_th_name(caller), log_th_name(mx->Holder) ));
-		return 0;
+		return GF_FALSE;
 	}
 #endif
 	mx->Holder = caller;
 	mx->HolderCount = 1;
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_MUTEX, ("[Mutex %s] At %d Grabbed by thread %s\n", mx->log_name, gf_sys_clock(), log_th_name(mx->Holder) ));
-	return 1;
+	return GF_TRUE;
 }
 
 
@@ -638,7 +649,7 @@ struct __tag_semaphore
 GF_EXPORT
 GF_Semaphore *gf_sema_new(u32 MaxCount, u32 InitCount)
 {
-	GF_Semaphore *tmp = gf_malloc(sizeof(GF_Semaphore));
+	GF_Semaphore *tmp = (GF_Semaphore*)gf_malloc(sizeof(GF_Semaphore));
 	if (!tmp) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MUTEX, ("Couldn't allocate semaphore\n"));
 		return NULL;
@@ -691,7 +702,7 @@ void gf_sema_del(GF_Semaphore *sm)
 #ifdef GPAC_IPHONE
 	sem_close(sm->hSemaphore);
 #else
-    sem_close(sm->hSemaphore);
+	sem_close(sm->hSemaphore);
 //	sem_destroy(sm->hSemaphore);
 #endif
 	gf_free(sm->SemName);
@@ -707,7 +718,7 @@ Bool gf_sema_notify(GF_Semaphore *sm, u32 NbRelease)
 #ifndef WIN32
 	sem_t *hSem;
 #else
-    u32 prevCount;
+	u32 prevCount;
 #endif
 
 	if (!sm) return GF_FALSE;
@@ -722,7 +733,7 @@ Bool gf_sema_notify(GF_Semaphore *sm, u32 NbRelease)
 	hSem = sm->hSemaphore;
 #endif
 
-    while (NbRelease) {
+	while (NbRelease) {
 		if (sem_post(hSem) < 0) return GF_FALSE;
 		NbRelease -= 1;
 	}
@@ -750,8 +761,8 @@ GF_EXPORT
 Bool gf_sema_wait_for(GF_Semaphore *sm, u32 TimeOut)
 {
 #ifdef WIN32
-	if (WaitForSingleObject(sm->hSemaphore, TimeOut) == WAIT_TIMEOUT) return 0;
-	return 1;
+	if (WaitForSingleObject(sm->hSemaphore, TimeOut) == WAIT_TIMEOUT) return GF_FALSE;
+	return GF_TRUE;
 #else
 	sem_t *hSem;
 #if defined(__DARWIN__) || defined(__APPLE__)
@@ -760,15 +771,15 @@ Bool gf_sema_wait_for(GF_Semaphore *sm, u32 TimeOut)
 	hSem = sm->hSemaphore;
 #endif
 	if (!TimeOut) {
-		if (!sem_trywait(hSem)) return 1;
-		return 0;
+		if (!sem_trywait(hSem)) return GF_TRUE;
+		return GF_FALSE;
 	}
 	TimeOut += gf_sys_clock();
 	do {
-		if (!sem_trywait(hSem)) return 1;
+		if (!sem_trywait(hSem)) return GF_TRUE;
 		gf_sleep(1);
 	} while (gf_sys_clock() < TimeOut);
-	return 0;
+	return GF_FALSE;
 #endif
 }
 

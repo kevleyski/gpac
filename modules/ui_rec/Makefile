@@ -24,7 +24,7 @@ OBJS=ui_rec.o
 
 SRCS := $(OBJS:.o=.c) 
 
-LIB=gm_ui_rec.$(DYN_LIB_SUFFIX)
+LIB=gm_ui_rec$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
 #LDFLAGS+=-export-symbols ui_rec.def 
 endif
@@ -34,7 +34,7 @@ all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L$(LOCAL_LIB) $(LINKLIBS)
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L$(LOCAL_LIB) $(LINKLIBS) $(LDFLAGS)
 
 
 clean: 

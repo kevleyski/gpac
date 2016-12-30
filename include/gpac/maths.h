@@ -32,7 +32,7 @@ extern "C" {
 
 /*!
  *	\file <gpac/maths.h>
- *	\brief math and trigo functions.
+ *	\brief Mathematics and Trigonometric.
  */
 
 #include <gpac/setup.h>
@@ -41,9 +41,9 @@ extern "C" {
 
 
 /*!
- *\addtogroup math_grp math
+ *\addtogroup math_grp Math
  *\ingroup utils_grp
- *\brief Mathematics and Trigonometric functions
+ *\brief Mathematics and Trigonometric
  *
  *This section documents the math and trigo functions used in the GPAC framework. GPAC can be compiled with
  *fixed-point support, representing float values on a 16.16 signed integer, which implies a developer
@@ -134,9 +134,9 @@ typedef Float Fixed;
 /*!\hideinitializer _a*_b, expressed as fixed number*/
 #define gf_mulfix(_a, _b)		((_a)*(_b))
 /*!\hideinitializer _a*_b/_c, expressed as fixed number*/
-#define gf_muldiv(_a, _b, _c)	((_c) ? (_a)*(_b)/(_c) : GF_MAX_FLOAT)
+#define gf_muldiv(_a, _b, _c)	(((_c != 0)) ? (_a)*(_b)/(_c) : GF_MAX_FLOAT)
 /*!\hideinitializer _a/_b, expressed as fixed number*/
-#define gf_divfix(_a, _b)		((_b) ? (_a)/(_b) : GF_MAX_FLOAT)
+#define gf_divfix(_a, _b)		(((_b != 0)) ? (_a)/(_b) : GF_MAX_FLOAT)
 /*!\hideinitializer sqrt(_a), expressed as fixed number*/
 #define gf_sqrt(_a) ((Float) sqrt(_a))
 /*!\hideinitializer ceil(_a), expressed as fixed number*/
@@ -224,9 +224,9 @@ u32 gf_get_bit_size(u32 MaxVal);
 u32 gf_get_next_pow2(u32 val);
 
 /*!
- *\addtogroup math2d_grp math2d
+ *\addtogroup math2d_grp Math 2d
  *\ingroup math_grp
- *\brief 2D Mathematics functions
+ *\brief 2D Mathematics
  *
  *This section documents mathematic tools for 2D geometry and color matrices operations
  *	@{
@@ -496,9 +496,9 @@ Bool gf_mx2d_decompose(GF_Matrix2D *_this, GF_Point2D *scale, Fixed *rotate, GF_
 
 
 /*!
- *\addtogroup math3d_grp math3d
+ *\addtogroup math3d_grp Math 3d
  *\ingroup math_grp
- *\brief 3D Mathematics functions
+ *\brief 3D Mathematics
  *
  *This section documents mathematic tools for 3D geometry operations
  *	@{
@@ -711,6 +711,9 @@ void gf_bbox_get_vertices(GF_Vec bmin, GF_Vec bmax, GF_Vec *vecs);
  *Inits the matrix to the identity matrix
 */
 #define gf_mx_init(_obj) { memset((_obj).m, 0, sizeof(Fixed)*16); (_obj).m[0] = (_obj).m[5] = (_obj).m[10] = (_obj).m[15] = FIX_ONE; }
+
+#define gf_mx_is_identity(_obj) ((!(_obj).m[1] && !(_obj).m[2] && !(_obj).m[3] && !(_obj).m[4] && !(_obj).m[6] && !(_obj).m[7] && !(_obj).m[8] && !(_obj).m[9] && !(_obj).m[11] && !(_obj).m[12] && !(_obj).m[13] && !(_obj).m[14] && ((_obj).m[0]==FIX_ONE) && ((_obj).m[5]==FIX_ONE)&& ((_obj).m[10]==FIX_ONE)&& ((_obj).m[15]==FIX_ONE)) ? 1 : 0)
+
 /*!\brief matrix copy
  *\hideinitializer
  *
@@ -777,6 +780,12 @@ void gf_mx_add_matrix_2d(GF_Matrix *mx, GF_Matrix2D *mat2D);
  *\param mx the matrix to inverse
  */
 void gf_mx_inverse(GF_Matrix *mx);
+/*!\brief transpose 4x4 matrix
+ *
+ *Transposes a 4x4 matrix
+ *\param mx the matrix to transpose
+ */
+void gf_mx_transpose(GF_Matrix *mx);
 /*!\brief matrix point transformation
  *
  *Applies a 3D matrix transformation to a 3D point

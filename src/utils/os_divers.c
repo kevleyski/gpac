@@ -64,7 +64,6 @@
 #include <errno.h>
 #endif
 
-
 #define SLEEP_ABS_SELECT		1
 
 static u32 sys_start_time = 0;
@@ -468,7 +467,12 @@ Bool gf_prompt_has_input()
 {
 	u8 ch;
 	s32 nread;
+	pid_t fg = tcgetpgrp(STDIN_FILENO);
 
+	//we are not foreground nor piped (used for IDEs), can't read stdin
+	if ((fg!=-1) && (fg != getpgrp())) {
+		return 0;
+	}
 	init_keyboard();
 	if (ch_peek != -1) return 1;
 	t_new.c_cc[VMIN]=0;
@@ -668,7 +672,7 @@ sh4_change_fpscr(int off, int on)
 #endif
 
 #ifdef GPAC_MEMORY_TRACKING
-void gf_mem_enable_tracker();
+void gf_mem_enable_tracker(Bool enable_backtrace);
 #endif
 
 static u64 memory_at_gpac_startup = 0;
@@ -704,7 +708,7 @@ const char *gf_sys_get_arg(u32 arg)
 
 
 GF_EXPORT
-void gf_sys_init(Bool enable_memory_tracker)
+void gf_sys_init(GF_MemTrackerType mem_tracker_type)
 {
 	if (!sys_init) {
 #if defined (WIN32)
@@ -715,14 +719,16 @@ void gf_sys_init(Bool enable_memory_tracker)
 #endif
 #endif
 
-		if (enable_memory_tracker) {
+		if (mem_tracker_type!=GF_MemTrackerNone) {
 #ifdef GPAC_MEMORY_TRACKING
-			gf_mem_enable_tracker();
+            gf_mem_enable_tracker( (mem_tracker_type==GF_MemTrackerBackTrace) ? GF_TRUE : GF_FALSE);
 #endif
 		}
+#ifndef GPAC_DISABLE_LOG
 		/*by default log subsystem is initialized to error on all tools, and info on console to debug scripts*/
 		gf_log_set_tool_level(GF_LOG_ALL, GF_LOG_ERROR);
 		gf_log_set_tool_level(GF_LOG_CONSOLE, GF_LOG_INFO);
+#endif
 
 
 #if defined(__sh__)
@@ -790,24 +796,7 @@ void gf_sys_init(Bool enable_memory_tracker)
 		last_update_time = 0;
 		memset(&the_rti, 0, sizeof(GF_SystemRTInfo));
 		the_rti.pid = getpid();
-
-#ifdef GPAC_CONFIG_FREEBSD
-		{
-			s32 flags[4];
-			size_t len = sizeof(u32);
-			flags[0] = CTL_HW;
-			flags[1] = HW_AVAILCPU;
-			sysctl(flags, 2, &the_rti.nb_cores, &len, NULL, 0);
-			if( the_rti.nb_cores < 1 ) {
-				flags[1] = HW_NCPU;
-				sysctl(flags, 2, &the_rti.nb_cores, &len, NULL, 0);
-				if (the_rti.nb_cores<1) the_rti.nb_cores = 1;
-			}
-		}
-#else
 		the_rti.nb_cores = (u32) sysconf( _SC_NPROCESSORS_ONLN );
-#endif
-
 		sys_start_time = gf_sys_clock();
 		sys_start_time_hr = gf_sys_clock_high_res();
 #endif
@@ -823,9 +812,12 @@ void gf_sys_init(Bool enable_memory_tracker)
 	/*init RTI stats*/
 	if (!memory_at_gpac_startup) {
 		GF_SystemRTInfo rti;
-		gf_sys_get_rti(500, &rti, GF_RTI_SYSTEM_MEMORY_ONLY);
-		memory_at_gpac_startup = rti.physical_memory_avail;
-		GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[core] System init OK - process id %d - %d MB physical RAM - %d cores\n", rti.pid, (u32) (rti.physical_memory/1024/1024), rti.nb_cores));
+		if (gf_sys_get_rti(500, &rti, GF_RTI_SYSTEM_MEMORY_ONLY)) {
+			memory_at_gpac_startup = rti.physical_memory_avail;
+			GF_LOG(GF_LOG_INFO, GF_LOG_CORE, ("[core] System init OK - process id %d - %d MB physical RAM - %d cores\n", rti.pid, (u32) (rti.physical_memory/1024/1024), rti.nb_cores));
+		} else {
+			memory_at_gpac_startup = 0;
+		}
 	}
 }
 
@@ -867,20 +859,19 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 #endif
 	MEMORYSTATUS ms;
 	u64 creation, exit, kernel, user, process_k_u_time, proc_idle_time, proc_k_u_time;
-	u32 nb_threads, entry_time;
+	u32 entry_time;
 	HANDLE hSnapShot;
 
 	assert(sys_init);
 
-	if (!rti) return 0;
+	if (!rti) return GF_FALSE;
 
 	proc_idle_time = proc_k_u_time = process_k_u_time = 0;
-	nb_threads = 0;
 
 	entry_time = gf_sys_clock();
 	if (last_update_time && (entry_time - last_update_time < refresh_time_ms)) {
 		memcpy(rti, &the_rti, sizeof(GF_SystemRTInfo));
-		return 0;
+		return GF_FALSE;
 	}
 
 	if (flags & GF_RTI_SYSTEM_MEMORY_ONLY) {
@@ -892,7 +883,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 #ifdef GPAC_MEMORY_TRACKING
 		rti->gpac_memory = (u64) gpac_allocated_memory;
 #endif
-		return 1;
+		return GF_TRUE;
 	}
 
 #if defined (_WIN32_WCE)
@@ -970,7 +961,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 		PROCESSENTRY32 pentry;
 		/*get a snapshot of all running threads*/
 		hSnapShot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-		if (!hSnapShot) return 0;
+		if (!hSnapShot) return GF_FALSE;
 		pentry.dwSize = sizeof(PROCESSENTRY32);
 		if (Process32First(hSnapShot, &pentry)) {
 			do {
@@ -981,7 +972,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 					proc_k_u_time += user;
 					if (pentry.th32ProcessID==the_rti.pid) {
 						process_k_u_time = user;
-						nb_threads = pentry.cntThreads;
+						//nb_threads = pentry.cntThreads;
 					}
 				}
 				if (procH) CloseHandle(procH);
@@ -998,7 +989,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 			process_k_u_time = user + kernel;
 		}
 		if (procH) CloseHandle(procH);
-		if (!process_k_u_time) return 0;
+		if (!process_k_u_time) return GF_FALSE;
 	}
 	process_k_u_time /= 10;
 
@@ -1045,7 +1036,9 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 
 		/*rough values*/
 		the_rti.cpu_idle_time = the_rti.sampling_period_duration - the_rti.total_cpu_time_diff;
+		if (!the_rti.sampling_period_duration) the_rti.sampling_period_duration=1;
 		the_rti.total_cpu_usage = (u32) (100 * the_rti.total_cpu_time_diff / the_rti.sampling_period_duration);
+		if (the_rti.total_cpu_time_diff + the_rti.cpu_idle_time==0) the_rti.total_cpu_time_diff ++;
 		the_rti.process_cpu_usage = (u32) (100*the_rti.process_cpu_time_diff / (the_rti.total_cpu_time_diff + the_rti.cpu_idle_time) );
 
 #else
@@ -1100,7 +1093,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 	if (!the_rti.gpac_memory) the_rti.gpac_memory = the_rti.process_memory;
 
 	memcpy(rti, &the_rti, sizeof(GF_SystemRTInfo));
-	return 1;
+	return GF_TRUE;
 }
 
 
@@ -1212,7 +1205,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 			percent +=  (u32) (100 * (double)thi->cpu_usage / TH_USAGE_SCALE);
 		}
 	}
-	error = vm_deallocate(mach_task_self(), (vm_offset_t)thread_table, table_size * sizeof(thread_array_t));
+	vm_deallocate(mach_task_self(), (vm_offset_t)thread_table, table_size * sizeof(thread_array_t));
 	mach_port_deallocate(mach_task_self(), task);
 
 	process_u_k_time = utime + stime;
@@ -1269,7 +1262,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 	}
 
 	u_k_time = idle_time = 0;
-	f = gf_f64_open("/proc/stat", "r");
+	f = gf_fopen("/proc/stat", "r");
 	if (f) {
 		u32 k_time, nice_time, u_time;
 		if (fgets(line, 128, f) != NULL) {
@@ -1277,7 +1270,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 				u_k_time = u_time + k_time + nice_time;
 			}
 		}
-		fclose(f);
+		gf_fclose(f);
 	}
 
 	process_u_k_time = 0;
@@ -1287,7 +1280,7 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 	the complete CPU usage of all therads of the process...*/
 #if 0
 	sprintf(szProc, "/proc/%d/stat", the_rti.pid);
-	f = gf_f64_open(szProc, "r");
+	f = gf_fopen(szProc, "r");
 	if (f) {
 		fflush(f);
 		if (fgets(line, 2048, f) != NULL) {
@@ -1319,12 +1312,12 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 		} else {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[RTI] error reading pid/stat\n\n", szProc));
 		}
-		fclose(f);
+		gf_fclose(f);
 	} else {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[RTI] cannot open %s\n", szProc));
 	}
 	sprintf(szProc, "/proc/%d/status", the_rti.pid);
-	f = gf_f64_open(szProc, "r");
+	f = gf_fopen(szProc, "r");
 	if (f) {
 		while (fgets(line, 1024, f) != NULL) {
 			if (!strnicmp(line, "VmSize:", 7)) {
@@ -1332,15 +1325,16 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 				the_rti.process_memory *= 1024;
 			}
 		}
-		fclose(f);
+		gf_fclose(f);
 	} else {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[RTI] cannot open %s\n", szProc));
 	}
 #endif
 
 
+#ifndef GPAC_IPHONE
 	the_rti.physical_memory = the_rti.physical_memory_avail = 0;
-	f = gf_f64_open("/proc/meminfo", "r");
+	f = gf_fopen("/proc/meminfo", "r");
 	if (f) {
 		while (fgets(line, 1024, f) != NULL) {
 			if (!strnicmp(line, "MemTotal:", 9)) {
@@ -1352,10 +1346,11 @@ Bool gf_sys_get_rti_os(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 				break;
 			}
 		}
-		fclose(f);
+		gf_fclose(f);
 	} else {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[RTI] cannot open /proc/meminfo\n"));
 	}
+#endif
 
 
 	the_rti.sampling_instant = last_update_time;
@@ -1449,13 +1444,13 @@ Bool gf_sys_get_battery_state(Bool *onBattery, u32 *onCharge, u32*level, u32 *ba
 #elif defined(WIN32)
 	SYSTEM_POWER_STATUS sps;
 	GetSystemPowerStatus(&sps);
-	if (onBattery) *onBattery = sps.ACLineStatus ? 0 : 1;
+	if (onBattery) *onBattery = sps.ACLineStatus ? GF_FALSE : GF_TRUE;
 	if (onCharge) *onCharge = (sps.BatteryFlag & BATTERY_FLAG_CHARGING) ? 1 : 0;
 	if (level) *level = sps.BatteryLifePercent;
 	if (batteryLifeTime) *batteryLifeTime = sps.BatteryLifeTime;
 	if (batteryFullLifeTime) *batteryFullLifeTime = sps.BatteryFullLifeTime;
 #endif
-	return 1;
+	return GF_TRUE;
 }
 
 
@@ -1665,6 +1660,15 @@ s32 gf_gettimeofday(struct timeval *tp, void *tz) {
 	return gettimeofday(tp, tz);
 }
 
+
+static u32 ntp_shift = GF_NTP_SEC_1900_TO_1970;
+
+GF_EXPORT
+void gf_net_set_ntp_shift(s32 shift)
+{
+	ntp_shift = GF_NTP_SEC_1900_TO_1970 + shift;
+}
+
 /*
 		NTP tools
 */
@@ -1674,31 +1678,48 @@ void gf_net_get_ntp(u32 *sec, u32 *frac)
 	u64 frac_part;
 	struct timeval now;
 	gettimeofday(&now, NULL);
-	*sec = (u32) (now.tv_sec) + GF_NTP_SEC_1900_TO_1970;
-//	*frac = (u32) ( (now.tv_usec << 12) + (now.tv_usec << 8) - ((now.tv_usec * 3650) >> 6) );
-	frac_part = now.tv_usec * 0xFFFFFFFFULL;
-	frac_part /= 1000000;
-	*frac = (u32) ( frac_part );
+	if (sec) {
+		*sec = (u32) (now.tv_sec) + ntp_shift;
+	}
+	
+	if (frac) {
+		frac_part = now.tv_usec * 0xFFFFFFFFULL;
+		frac_part /= 1000000;
+		*frac = (u32) ( frac_part );
+	}
+}
+
+GF_EXPORT
+u64 gf_net_get_ntp_ts()
+{
+	u64 res;
+	u32 sec, frac;
+	gf_net_get_ntp(&sec, &frac);
+	res = sec;
+	res<<= 32;
+	res |= frac;
+	return res;
 }
 
 GF_EXPORT
 s32 gf_net_get_ntp_diff_ms(u64 ntp)
 {
 	u32 remote_s, remote_f, local_s, local_f;
-	s64 diff_s, diff_f;
+	s64 local, remote;
 
 	remote_s = (ntp >> 32);
 	remote_f = (u32) (ntp & 0xFFFFFFFFULL);
 	gf_net_get_ntp(&local_s, &local_f);
-	diff_s = local_s;
-	diff_s -= remote_s;
-	diff_s *= 1000;
-	diff_f = local_f;
-	diff_f -= remote_f;
-	diff_f *= 1000;
-	diff_f /= 0xFFFFFFFFULL;
-	diff_s += diff_f;
-	return (s32) diff_s;
+
+	local = local_s;
+	local *= 1000;
+	local += ((u64) local_f)*1000 / 0xFFFFFFFFULL;
+
+	remote = remote_s;
+	remote *= 1000;
+	remote += ((u64) remote_f)*1000 / 0xFFFFFFFFULL;
+
+	return (s32) (local - remote);
 }
 
 
@@ -1728,6 +1749,73 @@ s32 gf_net_get_timezone()
 
 }
 
+//no mkgmtime on mingw..., use our own
+#if (defined(WIN32) && defined(__GNUC__))
+
+static Bool leap_year(u32 year) {
+	year += 1900;
+	return (year % 4) == 0 && ((year % 100) != 0 || (year % 400) == 0) ? GF_TRUE : GF_FALSE;
+}
+static time_t gf_mktime_utc(struct tm *tm)
+{
+	static const u32 days_per_month[2][12] = {
+		{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
+		{31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+	};
+	time_t time=0;
+	int i;
+
+	for (i=70; i<tm->tm_year; i++) {
+		time += leap_year(i) ? 366 : 365;
+	}
+
+	for (i=0; i<tm->tm_mon; ++i) {
+		time += days_per_month[leap_year(tm->tm_year)][i];
+	}
+	time += tm->tm_mday - 1;
+	time *= 24;
+	time += tm->tm_hour;
+	time *= 60;
+	time += tm->tm_min;
+	time *= 60;
+	time += tm->tm_sec;
+	return time;
+}
+
+#elif defined(WIN32)
+static time_t gf_mktime_utc(struct tm *tm)
+{
+	return  _mkgmtime(tm);
+}
+
+#elif defined(GPAC_ANDROID)
+#include <time64.h>
+#if defined(__LP64__)
+static time_t gf_mktime_utc(struct tm *tm)
+{
+	return timegm64(tm);
+}
+#else
+static time_t gf_mktime_utc(struct tm *tm)
+{
+	static const time_t kTimeMax = ~(1L << (sizeof(time_t) * CHAR_BIT - 1));
+	static const time_t kTimeMin = (1L << (sizeof(time_t) * CHAR_BIT - 1));
+	time64_t result = timegm64(tm);
+	if (result < kTimeMin || result > kTimeMax)
+		return -1;
+	return result;
+}
+#endif
+
+#else
+
+static time_t gf_mktime_utc(struct tm *tm)
+{
+	return timegm(tm);
+}
+
+#endif
+
 GF_EXPORT
 u64 gf_net_parse_date(const char *val)
 {
@@ -1736,7 +1824,7 @@ u64 gf_net_parse_date(const char *val)
 	u32 year, month, day, h, m, s, ms;
 	s32 oh, om;
 	Float secs;
-	Bool neg_time_zone = 0;
+	Bool neg_time_zone = GF_FALSE;
 
 #ifdef _WIN32_WCE
 	SYSTEMTIME syst;
@@ -1754,7 +1842,7 @@ u64 gf_net_parse_date(const char *val)
 	if (sscanf(val, "%d-%d-%dT%d:%d:%gZ", &year, &month, &day, &h, &m, &secs) == 6) {
 	}
 	else if (sscanf(val, "%d-%d-%dT%d:%d:%g-%d:%d", &year, &month, &day, &h, &m, &secs, &oh, &om) == 8) {
-		neg_time_zone = 1;
+		neg_time_zone = GF_TRUE;
 	}
 	else if (sscanf(val, "%d-%d-%dT%d:%d:%g+%d:%d", &year, &month, &day, &h, &m, &secs, &oh, &om) == 8) {
 	}
@@ -1819,12 +1907,16 @@ u64 gf_net_parse_date(const char *val)
 		else if (!strcmp(szDay, "Sun") || !strcmp(szDay, "Sunday")) t.tm_wday = 6;
 	}
 
-#ifdef GPAC_ANDROID
-	/* strange issue in Android, we have to indicate DST is not applied in our time struct*/
-	t.tm_isdst = -1;
-#endif
+	current_time = gf_mktime_utc(&t);
 
-	current_time = mktime(&t) - gf_net_get_timezone();
+	if ((s64) current_time == -1) {
+		//use 1 ms
+		return 1;
+	}
+	if (current_time == 0) {
+		//use 1 ms
+		return 1;
+	}
 
 #endif
 
@@ -1838,8 +1930,6 @@ u64 gf_net_parse_date(const char *val)
 	return current_time + ms;
 }
 
-
-
 GF_EXPORT
 u64 gf_net_get_utc()
 {
@@ -1847,32 +1937,8 @@ u64 gf_net_get_utc()
 	Double msec;
 	u32 sec, frac;
 
-#ifdef _WIN32_WCE
-	SYSTEMTIME syst;
-	FILETIME filet;
-#else
-	time_t gtime;
-	struct tm _t;
-#endif
-
 	gf_net_get_ntp(&sec, &frac);
-
-#ifndef _WIN32_WCE
-	gtime = sec - GF_NTP_SEC_1900_TO_1970;
-	_t = * gmtime(&gtime);
-
-#ifdef GPAC_ANDROID
-	/* strange issue in Android, we have to indicate DST is not applied in our time struct*/
-	_t.tm_isdst = -1;
-#endif
-
-	current_time = mktime(&_t) - gf_net_get_timezone();
-#else
-	GetSystemTime(&syst);
-	SystemTimeToFileTime(&syst, &filet);
-	current_time = (u64) ((*(LONGLONG *) &filet - TIMESPEC_TO_FILETIME_OFFSET) / 10000000);
-#endif
-
+	current_time = sec - GF_NTP_SEC_1900_TO_1970;
 	current_time *= 1000;
 	msec = frac*1000.0;
 	msec /= 0xFFFFFFFF;

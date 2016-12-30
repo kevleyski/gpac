@@ -31,6 +31,21 @@
 extern "C" {
 #endif
 
+/*!
+ *	\file <gpac/scenegraph_vrml.h>
+ *	\brief Scenegraph for VRML files
+ */
+	
+/*!
+ *	\addtogroup svrml BIFS/VRML/X3D Scenegraph
+ *	\ingroup scene_grp
+ *	\brief Scenegraph for VRML files.
+ *
+ *This section documents the Scenegraph for VRML files.
+ *	@{
+ */
+
+
 #include <gpac/scenegraph.h>
 #include <gpac/maths.h>
 
@@ -316,6 +331,10 @@ enum
 	*/
 	GF_SG_VRML_SCRIPT_FUNCTION,
 
+	/*special event only used in routes for binding eventOut/exposedFields to generic functions.
+	 A route with ToField.FieldType set to this value holds a pointer to a function object.
+	*/
+	GF_SG_VRML_GENERIC_FUNCTION,
 
 	GF_SG_VRML_UNKNOWN
 };
@@ -359,7 +378,7 @@ GF_Err gf_node_replace_child(GF_Node *node, GF_ChildNodeItem **container, s32 po
 of the extern proto lib if found and loaded, NULL if not found and GF_SG_INTERNAL_PROTO for internal
 hardcoded protos (extensions of MPEG-4 scene graph used for module deveopment)
 */
-#define GF_SG_INTERNAL_PROTO	(GF_SceneGraph *) 0xFFFFFFFF
+#define GF_SG_INTERNAL_PROTO	(PTR_TO_U_CAST -1)
 
 
 #ifndef GPAC_DISABLE_VRML
@@ -477,6 +496,8 @@ note that this must be called by the user to be effective,; otherwise the max ro
 from the routes present in scene*/
 void gf_sg_set_max_defined_route_id(GF_SceneGraph *sg, u32 ID);
 
+/*create a new route from a node output to a given callback/function*/
+void gf_sg_route_new_to_callback(GF_SceneGraph *sg, GF_Node *fromNode, u32 fromField, void *cbk, void ( *route_callback) (void *param, GF_FieldInfo *from_field) );
 
 /*activates all routes currently triggered - this follows the event cascade model of VRML/MPEG4:
 	- routes are collected during eventOut generation
@@ -621,7 +642,7 @@ typedef struct _scriptfield GF_ScriptField;
 /*creates new sript field - script fields are dynamically added to the node, and thus can be accessed through the
 same functions as other GF_Node fields*/
 GF_ScriptField *gf_sg_script_field_new(GF_Node *script, u32 eventType, u32 fieldType, const char *name);
-/*retrieves field info, usefull to get the field index*/
+/*retrieves field info, useful to get the field index*/
 GF_Err gf_sg_script_field_get_info(GF_ScriptField *field, GF_FieldInfo *info);
 
 /*activate eventIn for script node - needed for BIFS field replace*/
@@ -661,6 +682,7 @@ GF_Err gf_node_proto_set_grouping(GF_Node *node);
 /*assigns callback to an eventIn field of an hardcoded proto*/
 GF_Err gf_node_set_proto_eventin_handler(GF_Node *node, u32 fieldIndex, void (*event_in_cbk)(GF_Node *pThis, struct _route *route) );
 
+/*! @} */
 
 
 #ifdef __cplusplus

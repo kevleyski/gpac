@@ -645,7 +645,6 @@ static void gray_hline( TRaster *raster, TCoord  x, TCoord  y, TPos    area, int
 			raster->render_span(y, count, raster->gray_spans, raster->render_span_data );
 			raster->num_gray_spans = 0;
 
-			count = 0;
 			span  = raster->gray_spans;
 		} else
 			span++;
@@ -735,7 +734,7 @@ int evg_raster_render(EVG_Raster raster, EVG_Raster_Params*  params)
 	gray_record_cell( raster );
 
 	/*store odd/even rule*/
-	zero_non_zero_rule = (outline->flags & GF_PATH_FILL_ZERO_NONZERO) ? 1 : 0;
+	zero_non_zero_rule = (outline->flags & GF_PATH_FILL_ZERO_NONZERO) ? GF_TRUE : GF_FALSE;
 
 	/* sort each scanline and render it*/
 	for (i=0; i<size_y; i++) {

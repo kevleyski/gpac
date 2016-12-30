@@ -1,7 +1,32 @@
 extension = {
     setup: false,
     dialog: null,
-    active_addon: null,
+    uhd_demo_enabled: false,
+    uhd_demo_on: false,
+    uhd_state_on: true,
+    addon_url: null,
+    scene_url: null,
+    overlay_position: 0,
+    icon_width: 0,
+    icon_height: 0,
+    movie_width: 0,
+    movie_height: 0,
+    disable_save_session: false,
+    disable_addons: false,
+
+    toggle_uhd_demo: function (val) {
+        this.uhd_demo_on = val;
+        var notif = null;
+        if (this.uhd_demo_on) {
+            notif = gw_new_message(null, 'UHD Demo Enbaled', 'Click to toggle quality');
+        } else {
+            notif = gw_new_message(null, 'UHD Demo Disabled', 'Double-click to re-enable');
+            this.logo.children[0].url[0] = '';
+        }
+        this.do_layout();
+        notif.set_size(20 * gwskin.default_text_font_size, gwskin.default_icon_height + 2 * gwskin.default_text_font_size);
+        notif.show();
+    },
 
     ext_filter_event: function (evt) {
         switch (evt.type) {
@@ -11,6 +36,77 @@ extension = {
             case GF_EVENT_QUIT:
                 this.save_session();
                 return false;
+            case GF_EVENT_DBLCLICK:
+                if (this.uhd_demo_enabled) {
+                    this.toggle_uhd_demo(!this.uhd_demo_on);
+                }
+                return false;
+            case GF_EVENT_MOUSEUP:
+                if (this.uhd_demo_on) {
+                    this.uhd_state_on = !this.uhd_state_on;
+                    gpac.switch_quality(this.uhd_state_on);
+                    return true;
+                }
+                return false;
+
+            case GF_EVENT_MOUSEDOWN:
+                if (this.uhd_demo_on) {
+                    return true;
+                }
+                return false;
+
+            case GF_EVENT_SCENE_SIZE:
+                if (typeof evt.width != 'undefined') {
+                    this.movie_width = evt.width;
+                    this.movie_height = evt.height;
+                    if (this.movie_height > 1080) this.uhd_state_on = true;
+
+                    if (this.uhd_demo_on) {
+                        this.do_layout();
+                    }
+                }
+                return false;
+            case GF_EVENT_KEYDOWN:
+                //alert('key is '+evt.keycode + ' hw code is ' + evt.hwkey);
+
+                var odm = gpac.get_object_manager(this.scene_url);
+                if (!odm || odm.main_addon_url) return false;
+
+                if (evt.keycode == 'F7') {
+                    this.uhd_state_on = !this.uhd_state_on;
+                    gpac.switch_quality(this.uhd_state_on);
+                    return true;
+                }
+
+                if (evt.keycode == 'F6') {
+                    this.overlay_position++;
+                    if (this.overlay_position == 4) {
+                        this.do_deactivate_addon();
+
+                    } else {
+                        if (this.overlay_position == 5) {
+                            this.do_activate_addon();
+                            this.overlay_position = 0;
+                        }
+                        this.set_option('OverlayPosition', '' + this.overlay_position);
+                        this.refresh_addon();
+                    }
+                    return true;
+                }
+/*
+                if (evt.keycode == 'F12') {
+                    gpac.exit();
+                    return true;
+                }
+*/
+                return false;
+			case GF_JS_EVENT_PLAYBACK:
+				//whenever paused, store pause time
+				if (! evt.is_playing) {
+					this.save_session();
+				}
+				return false;
+				
             default:
                 return false;
         }
@@ -18,17 +114,66 @@ extension = {
 
     create_event_filter: function (__anobj) {
         return function (evt) {
-            __anobj.ext_filter_event(evt);
+            return __anobj.ext_filter_event(evt);
+        }
+    },
+
+    do_layout: function () {
+        if (this.uhd_demo_enabled && this.uhd_demo_on) {
+            var url = this.get_option('path');
+            if (this.movie_height > 1080) {
+                url += 'logo_uhd.png';
+                this.logo.scale.x = 1;
+                this.logo.scale.y = 1;
+            } else {
+                url += 'logo_hd.png';
+                this.logo.scale.x = 2;
+                this.logo.scale.y = 2;
+            }
+            this.logo.children[0].url[0] = url;
+        } else {
+            this.logo.children[0].url[0] = '';
         }
     },
 
     start: function () {
         //first launch - register event filter and exit
         if (!this.setup) {
-            gwlib_add_event_filter(this.create_event_filter(this));
+            gwlib_add_event_filter(this.create_event_filter(this), true);
             this.setup = true;
 
+            this.overlay_position = parseInt(this.get_option('OverlayPosition', '0'));
+
+            /*create media nodes element for playback*/
+            this.logo = gw_new_container();
+            this.logo.children[0] = new SFNode('Inline');
+            this.logo.children[0].extension = this;
+            this.logo.children[0].url[0] = '';
+            this.logo.children[0].on_scene_size = function (evt) {
+                this.extension.icon_width = evt.width;
+                this.extension.icon_height = evt.height;
+                this.extension.do_layout();
+            };
+
+            gw_add_child(null, this.logo);
+
+            this.logo.children[0].addEventListener('gpac_scene_attached', this.logo.children[0].on_scene_size, 0);
+
             this.restore_session();
+
+            //check our args
+            var i, argc = gpac.argc;
+            for (i = 1; i < argc; i++) {
+                var arg = gpac.get_arg(i);
+                if (arg == '-demo-uhd') {
+                    this.uhd_demo_enabled = true;
+                    this.toggle_uhd_demo(true);
+                    gwlog(l_war, 'UHD Demo enabled');
+                }
+                else if (arg == '-no-addon') {
+                    this.disable_addons = true;
+                }
+            }
             return;
         }
 
@@ -121,6 +266,16 @@ extension = {
         do_sel = gpac.get_option('Systems', 'DebugPVRScene');
         wnd.dbg_addon.set_checked((do_sel == 'yes') ? true : false);
 
+        gw_new_separator(wnd.area);
+        wnd.uhd_demo = gw_new_checkbox(wnd.area, 'UHD Demo');
+        wnd.uhd_demo.on_check = function (value) {
+            this.parent.parent.extension.uhd_demo_enabled = value;
+            this.parent.parent.extension.set_option('UHDDemo', value ? 'yes' : 'no');
+        }
+        do_sel = this.get_option('UHDDemo', 'no');
+        this.uhd_demo_enabled = (do_sel == 'yes') ? true : false;
+        wnd.uhd_demo.set_checked(this.uhd_demo_enabled);
+        if (this.uhd_demo_enabled) this.uhd_demo_on = true;
 
         wnd.on_display_size = function (width, height) {
             w = 0.9 * width;
@@ -142,11 +297,12 @@ extension = {
             this.edit.set_size(w / 2, gwskin.default_icon_height);
             this.chk_addon.set_size(w / 2, gwskin.default_icon_height);
             this.dbg_addon.set_size(w / 2, gwskin.default_icon_height);
+            this.uhd_demo.set_size(w / 2, gwskin.default_icon_height);
 
-            this.set_size(w, 12 * gwskin.default_icon_height);
+            this.set_size(w, 13 * gwskin.default_icon_height);
         }
 
-        wnd.check_pos(parseInt(this.get_option('OverlayPosition', '0')));
+        wnd.check_pos(this.overlay_position);
         wnd.check_size(parseInt(this.get_option('OverlaySize', '0')));
 
 
@@ -162,27 +318,38 @@ extension = {
     },
 
     refresh_addon: function () {
-        if (this.active_url) {
-            var odm = gpac.get_object_manager(this.active_url);
+        if (this.scene_url) {
+            var odm = gpac.get_object_manager(this.scene_url);
             if (odm) {
                 odm.addon_layout(parseInt(this.get_option('OverlayPosition', '0')), parseInt(this.get_option('OverlaySize', '0')));
             }
         }
     },
 
-    do_activate_addon: function (obj) {
-        var odm = gpac.get_object_manager(obj.scene_url);
+    do_activate_addon: function () {
+        var odm = gpac.get_object_manager(this.scene_url);
         if (odm) {
-            odm.enable_addon(obj.addon_url);
+            odm.enable_addon(this.addon_url);
             odm.addon_layout(parseInt(this.get_option('OverlayPosition', '0')), parseInt(this.get_option('OverlaySize', '0')));
         }
-        this.active_url = obj.scene_url;
     },
+
+    do_deactivate_addon: function () {
+        var odm = gpac.get_object_manager(this.scene_url);
+        if (odm) {
+            odm.enable_addon(this.addon_url, true);
+        }
+    },
+
 
     confirm_addon: function (evt) {
 
+        if (this.disable_addons) return;
+
         if (this.get_option('AutoSelect', 'no') == 'yes') {
-            this.do_activate_addon(evt);
+            this.scene_url = evt.scene_url;
+            this.addon_url = evt.addon_url;
+            this.do_activate_addon();
             return;
         }
 
@@ -198,7 +365,9 @@ extension = {
 
         dlg.on_confirm = function (value) {
             if (!value) return;
-            this.extension.do_activate_addon(this);
+            this.extension.scene_url = evt.scene_url;
+            this.extension.addon_url = evt.addon_url;
+            this.extension.do_activate_addon();
         }
     },
 
@@ -238,6 +407,8 @@ extension = {
             gwlog(l_inf, 'URL was given when opening, skipping session restore');
             return;
         }
+        //this.disable_save_session = true;
+
         var server = this.get_option('SessionServer', null);
         var user = this.get_option('UserID', null);
         if (!server || !user) return;
@@ -246,12 +417,14 @@ extension = {
         var cmd = 'ID=' + user;
 
         var obj = this.do_xhr(url, cmd);
-        if (!obj) return;
+        if (!obj || !obj.data || !obj.data.url || (obj.data.url== '') ) return;
 
         var dlg = gw_new_confirm_wnd(null, 'Restore last session ?');
         dlg.set_alpha(0.95);
         dlg.show();
         dlg.sess = obj.data;
+
+        gwlog(l_deb, 'H2B2VS state to restore: ' + gwskin.stringify(obj.data));
 
         dlg.on_confirm = function (value) {
             if (!value) return;
@@ -260,9 +433,8 @@ extension = {
     },
 
     save_session: function () {
-        var server = this.get_option('SessionServer', null);
-        var user = this.get_option('UserID', null);
-        if (!server || !user) return;
+
+        if (this.disable_save_session) return;
 
         var obj = {};
         var url = gwskin.pvr_url;
@@ -275,8 +447,13 @@ extension = {
         if (typeof gwskin.media_clock != 'undefined') obj.media_clock = gwskin.media_clock;
 
         var str = gwskin.stringify(obj);
+        gwlog(l_deb, 'H2B2VS storing state: ' + str);
 
-        var url = server + 'setData';
+		var server = this.get_option('SessionServer', null);
+		var user = this.get_option('UserID', null);
+		if (!server || !user) return;
+
+		var url = server + 'setData';
         var cmd = 'ID=' + user + '&Data=' + str;
         this.do_xhr(url, cmd);
 

@@ -169,12 +169,17 @@ static void movietexture_update_time(GF_TimeNode *st)
 	equal to startTime, an isActive TRUE event is generated and the time-dependent node becomes active 	*/
 
 	if (! mt->isActive) movietexture_activate(stack, mt, time);
+	stack->txh.stream_finished = GF_FALSE;
 }
 
 void compositor_init_movietexture(GF_Compositor *compositor, GF_Node *node)
 {
 	MovieTextureStack *st;
 	GF_SAFEALLOC(st, MovieTextureStack);
+	if (!st) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate movie texture stack\n"));
+		return;
+	}
 	gf_sc_texture_setup(&st->txh, compositor, node);
 	st->txh.update_texture_fcnt = movietexture_update;
 	st->time_handle.UpdateTimeNode = movietexture_update_time;
@@ -228,12 +233,12 @@ static void imagetexture_destroy(GF_Node *node, void *rs, Bool is_destroy)
 
 		/*cleanup cache if needed*/
 		if (gf_node_get_tag(node)==TAG_MPEG4_CacheTexture) {
-			char section[16];
+			char section[64];
 			const char *opt, *file;
 			Bool delete_file = 1;
 			M_CacheTexture *ct = (M_CacheTexture*)node;
 
-			sprintf(section, "@cache=%08X", (u32) (PTR_TO_U_CAST ct));
+			sprintf(section, "@cache=%p", ct);
 			file = gf_cfg_get_key(txh->compositor->user->config, section, "cacheFile");
 			opt = gf_cfg_get_key(txh->compositor->user->config, section, "expireAfterNTP");
 
@@ -292,10 +297,10 @@ static void imagetexture_update(GF_TextureHandler *txh)
 			if (ct->image.buffer) {
 				char *par = (char *) gf_scene_get_service_url( gf_node_get_graph(txh->owner ) );
 				char *src_url = gf_url_concatenate(par, ct->image.buffer);
-				FILE *test = fopen( src_url ? src_url : ct->image.buffer, "rb");
+				FILE *test = gf_fopen( src_url ? src_url : ct->image.buffer, "rb");
 				if (test) {
 					fseek(test, 0, SEEK_END);
-					ct->data_len = ftell(test);
+					ct->data_len = (u32) gf_ftell(test);
 					ct->data = gf_malloc(sizeof(char)*ct->data_len);
 					fseek(test, 0, SEEK_SET);
 					if (ct->data_len != fread(ct->data, 1, ct->data_len, test)) {
@@ -304,7 +309,7 @@ static void imagetexture_update(GF_TextureHandler *txh)
 						ct->data = NULL;
 						ct->data_len = 0;
 					}
-					fclose(test);
+					gf_fclose(test);
 				} else {
 					GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to load CacheTexture data from file %s: not found\n", src_url ? src_url : ct->image.buffer ) );
 				}
@@ -347,7 +352,7 @@ static void imagetexture_update(GF_TextureHandler *txh)
 				}
 				break;
 			}
-			
+
 #endif // GPAC_DISABLE_AV_PARSERS
 
 			/*cacheURL is specified, store the image*/
@@ -355,7 +360,7 @@ static void imagetexture_update(GF_TextureHandler *txh)
 				u32 i;
 				u8 hash[20];
 				FILE *cached_texture;
-				char szExtractName[GF_MAX_PATH], section[16], *opt, *src_url;
+				char szExtractName[GF_MAX_PATH], section[64], *opt, *src_url;
 				opt = (char *) gf_cfg_get_key(txh->compositor->user->config, "General", "CacheDirectory");
 				if (opt) {
 					strcpy(szExtractName, opt);
@@ -377,15 +382,15 @@ static void imagetexture_update(GF_TextureHandler *txh)
 				strcat(szExtractName, "_");
 
 				strcat(szExtractName, ct->cacheURL.buffer);
-				cached_texture = gf_f64_open(szExtractName, "wb");
+				cached_texture = gf_fopen(szExtractName, "wb");
 				if (cached_texture) {
 					gf_fwrite(ct->data, 1, ct->data_len, cached_texture);
-					fclose(cached_texture);
+					gf_fclose(cached_texture);
 				}
 
 				/*and write cache info*/
 				if (ct->expirationDate!=0) {
-					sprintf(section, "@cache=%08X", (u32) (PTR_TO_U_CAST ct));
+					sprintf(section, "@cache=%p", ct);
 					gf_cfg_set_key(txh->compositor->user->config, section, "serviceURL", src_url);
 					gf_cfg_set_key(txh->compositor->user->config, section, "cacheFile", szExtractName);
 					gf_cfg_set_key(txh->compositor->user->config, section, "cacheName", ct->cacheURL.buffer);
@@ -415,6 +420,10 @@ void compositor_init_imagetexture(GF_Compositor *compositor, GF_Node *node)
 {
 	GF_TextureHandler *txh;
 	GF_SAFEALLOC(txh, GF_TextureHandler);
+	if (!txh) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate image texture stack\n"));
+		return;
+	}
 	gf_sc_texture_setup(txh, compositor, node);
 	txh->update_texture_fcnt = imagetexture_update;
 	gf_node_set_private(node, txh);
@@ -574,6 +583,10 @@ void compositor_init_pixeltexture(GF_Compositor *compositor, GF_Node *node)
 {
 	PixelTextureStack *st;
 	GF_SAFEALLOC(st, PixelTextureStack);
+	if (!st) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate pixel texture stack\n"));
+		return;
+	}
 	gf_sc_texture_setup(&st->txh, compositor, node);
 	st->pixels = NULL;
 	st->txh.update_texture_fcnt = pixeltexture_update;
@@ -600,6 +613,10 @@ void compositor_init_mattetexture(GF_Compositor *compositor, GF_Node *node)
 {
 	GF_TextureHandler *txh;
 	GF_SAFEALLOC(txh, GF_TextureHandler);
+	if (!txh) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate matte texture stack\n"));
+		return;
+	}
 	gf_sc_texture_setup(txh, compositor, node);
 	txh->flags = GF_SR_TEXTURE_MATTE;
 	txh->update_texture_fcnt = matte_update;

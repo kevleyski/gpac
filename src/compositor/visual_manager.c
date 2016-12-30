@@ -30,7 +30,7 @@
 #include <gpac/nodes_svg.h>
 #endif
 
-static Bool visual_draw_bitmap_stub(GF_VisualManager *visual, GF_TraverseState *tr_state, struct _drawable_context *ctx, GF_ColorKey *col_key)
+static Bool visual_draw_bitmap_stub(GF_VisualManager *visual, GF_TraverseState *tr_state, struct _drawable_context *ctx)
 {
 	return 0;
 }
@@ -40,6 +40,10 @@ GF_VisualManager *visual_new(GF_Compositor *compositor)
 {
 	GF_VisualManager *tmp;
 	GF_SAFEALLOC(tmp, GF_VisualManager);
+	if (!tmp) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate new visual\n"));
+		return NULL;
+	}
 
 	tmp->center_coords = 1;
 	tmp->compositor = compositor;

@@ -31,6 +31,21 @@
 extern "C" {
 #endif
 
+
+/*!
+ *	\file <gpac/html5_mse.h>
+ *	\brief Scene graph extensions for Media Source Extensions.
+ */
+	
+/*!
+ *  \addtogroup html5mse_grp HTML5 MSE
+ *	\ingroup html5_grp
+ *	\brief Scene graph extensions for HTML5 media source extensions.
+ *
+ *This section documents the scene graph extensions used for HTML5 media source extensions.
+ *	@{
+ */
+
 #include <gpac/setup.h>
 
 #include <gpac/html5_media.h>
@@ -132,8 +147,10 @@ typedef struct
 
 	struct _html_mediasource *parent;
 
+#ifndef GPAC_DISABLE_SVG
 	/* Object used to fire JavaScript events to */
 	GF_DOMEventTarget		*evt_target;
+#endif
 } GF_HTML_SourceBufferList;
 
 typedef enum
@@ -178,8 +195,10 @@ typedef struct _html_mediasource
 	/* Node the MediaSource is attached to */
 	GF_Node *node;
 
+#ifndef GPAC_DISABLE_SVG
 	/* object implementing Event Target Interface */
 	GF_DOMEventTarget *evt_target;
+#endif
 } GF_HTML_MediaSource;
 
 GF_HTML_MediaSource		*gf_mse_media_source_new();
@@ -218,6 +237,8 @@ GF_Err gf_mse_track_buffer_get_next_packet(GF_HTML_Track *track,
         GF_SLHeader *out_sl_hdr, Bool *sl_compressed,
         GF_Err *out_reception_status, Bool *is_new_data);
 GF_Err gf_mse_track_buffer_release_packet(GF_HTML_Track *track);
+
+/*! @} */
 
 #ifdef __cplusplus
 }

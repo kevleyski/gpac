@@ -84,9 +84,13 @@ typedef HRESULT(WINAPI * DIRECTDRAWCREATEPROC) (GUID *, LPDIRECTDRAW *, IUnknown
 
 
 
-#ifdef GPAC_USE_OGL_ES
+#ifdef GPAC_USE_GLES1X
 #include "GLES/egl.h"
+#elif defined(GPAC_USE_GLES2)
+#include "EGL/egl.h"
 #endif
+
+#define EGL_CHECK_ERR	{s32 res = eglGetError(); if (res!=12288) GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("EGL Error %d file %s line %d\n", res, __FILE__, __LINE__)); }
 
 typedef struct
 {
@@ -130,7 +134,6 @@ typedef struct
 
 	u32 width, height;
 	u32 fs_width, fs_height;
-	u32 fs_store_width, fs_store_height;
 	u32 store_width, store_height;
 	LONG backup_styles;
 	Bool alt_down, ctrl_down;
@@ -159,7 +162,7 @@ typedef struct
 	/*gl*/
 #ifndef GPAC_DISABLE_3D
 
-#ifdef GPAC_USE_OGL_ES
+#if defined(GPAC_USE_GLES1X) || defined(GPAC_USE_GLES2)
 	NativeDisplayType gl_HDC;
 	EGLDisplay egldpy;
 	EGLSurface surface;
@@ -224,7 +227,7 @@ GF_Err DD_SetupOpenGL(GF_VideoOutput *dr, u32 offscreen_width, u32 offscreen_hei
 
 
 void *NewAudioOutput();
-void DeleteAudioOutput(void *);
+void DeleteDxAudioOutput(void *);
 
 
 #define SAFE_DS_RELEASE(p) { if(p) { p->lpVtbl->Release(p); (p)=NULL; } }

@@ -62,8 +62,10 @@ static FormGroup *form_new_group(FormStack *st)
 {
 	FormGroup *fg;
 	GF_SAFEALLOC(fg, FormGroup);
-	memset(&fg->final, 0, sizeof(GF_Rect));
-	memset(&fg->origin, 0, sizeof(GF_Rect));
+	if (!fg) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate form group\n"));
+		return NULL;
+	}
 	fg->children = gf_list_new();
 	gf_list_add(st->grouplist, fg);
 	return fg;
@@ -233,8 +235,8 @@ static void TraverseForm(GF_Node *n, void *rs, Bool is_destroy)
 		if (fm->size.y>=0) st->clip.height = fm->size.y;
 		st->bounds = st->clip = gf_rect_center(st->clip.width, st->clip.height);
 	}
-	recompute_form = 0;
-	if (gf_node_dirty_get(n)) recompute_form = 1;
+	recompute_form = GF_FALSE;
+	if (gf_node_dirty_get(n)) recompute_form = GF_TRUE;
 
 #if FORM_CLIPS
 	if ((tr_state->traversing_mode==TRAVERSE_GET_BOUNDS) && !tr_state->for_node) {
@@ -248,7 +250,7 @@ static void TraverseForm(GF_Node *n, void *rs, Bool is_destroy)
 
 	if (recompute_form) {
 		GF_Rect bounds;
-		GF_LOG(GF_LOG_COMPOSE, GF_LOG_DEBUG, ("[Form] Recomputing positions\n"));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Form] Recomputing positions\n"));
 
 		parent_node_reset((ParentNode2D*)st);
 
@@ -292,6 +294,7 @@ static void TraverseForm(GF_Node *n, void *rs, Bool is_destroy)
 			gf_list_add(fg->children, cg);
 		}
 
+		memset(idx, 0, sizeof(u32)*MAX_FORM_GROUP_INDEX);
 		last_ind = 0;
 		for (i=0; i<fm->constraints.count; i++) {
 			index = 0;
@@ -339,17 +342,26 @@ static void TraverseForm(GF_Node *n, void *rs, Bool is_destroy)
 	/*update clipper*/
 	if (tr_state->traversing_mode==TRAVERSE_SORT) {
 		prev_clip = tr_state->visual->top_clipper;
-		compositor_2d_update_clipper(tr_state, st->clip, &had_clip, &prev_clipper, 0);
+		compositor_2d_update_clipper(tr_state, st->clip, &had_clip, &prev_clipper, GF_FALSE);
 		if (tr_state->has_clip) {
 			tr_state->visual->top_clipper = gf_rect_pixelize(&tr_state->clipper);
 			gf_irect_intersect(&tr_state->visual->top_clipper, &prev_clip);
 		}
 
+#ifndef GPAC_DISABLE_3D
+		if (tr_state->visual->type_3d)
+			visual_3d_reset_clipper_2d(tr_state->visual);
+#endif
+
 		i=0;
-		while ((cg = gf_list_enum(st->groups, &i))) {
+		while ((cg = (ChildGroup*)gf_list_enum(st->groups, &i))) {
 			parent_node_child_traverse(cg, tr_state);
 		}
 
+#ifndef GPAC_DISABLE_3D
+		if (tr_state->visual->type_3d)
+			visual_3d_reset_clipper_2d(tr_state->visual);
+#endif
 		tr_state->visual->top_clipper = prev_clip;
 		if (had_clip) tr_state->clipper = prev_clipper;
 		tr_state->has_clip = had_clip;
@@ -357,7 +369,7 @@ static void TraverseForm(GF_Node *n, void *rs, Bool is_destroy)
 #endif
 	{
 		i=0;
-		while ((cg = gf_list_enum(st->groups, &i))) {
+		while ((cg = (ChildGroup*)gf_list_enum(st->groups, &i))) {
 			parent_node_child_traverse(cg, tr_state);
 		}
 	}
@@ -373,6 +385,10 @@ void compositor_init_form(GF_Compositor *compositor, GF_Node *node)
 {
 	FormStack *stack;
 	GF_SAFEALLOC(stack, FormStack);
+	if (!stack) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate form stack\n"));
+		return;
+	}
 
 	parent_node_setup((ParentNode2D*)stack);
 	stack->grouplist = gf_list_new();

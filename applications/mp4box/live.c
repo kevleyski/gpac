@@ -58,7 +58,8 @@ void PrintStreamerUsage()
 	        "MP4Box can stream ISO files to RTP. The streamer currently doesn't support\n"
 	        "data carrouselling and will therefore not handle BIFS and OD streams properly.\n"
 	        "\n"
-	        "-rtp         enables streamer\n"
+            "-rtp         enables streamer\n"
+            "-run-for=T   runs for T seconds of the media then exits\n"
 	        "-noloop      disables looping when streaming\n"
 	        "-mpeg4       forces MPEG-4 ES Generic for all RTP streams\n"
 	        "-dst=IP      IP destination (uni/multi-cast). Default: 127.0.0.1\n"
@@ -71,9 +72,9 @@ void PrintStreamerUsage()
 	       );
 }
 
-static void on_logs(void *cbk, u32 ll, u32 lm, const char *fmt, va_list list)
+static void on_logs(void *cbk, GF_LOG_Level ll, GF_LOG_Tool lm, const char *fmt, va_list list)
 {
-	FILE *logs = cbk;
+	FILE *logs = (FILE*)cbk;
 	vfprintf(logs, fmt, list);
 	fflush(logs);
 }
@@ -89,10 +90,11 @@ int stream_file_rtp(int argc, char **argv)
 	FILE *logfile=NULL;
 	u16 port = 7000;
 	u32 ttl = 1;
-	Bool loop = 1;
-	Bool mem_track = 0;
-	Bool force_mpeg4 = 0;
-	u32 path_mtu = 1450;
+	Bool loop = GF_TRUE;
+    GF_MemTrackerType mem_track = GF_MemTrackerNone;
+	Bool force_mpeg4 = GF_FALSE;
+    u32 path_mtu = 1450;
+    Double run_for = -1.0;
 	u32 i;
 
 	for (i = 1; i < (u32) argc ; i++) {
@@ -105,17 +107,19 @@ int stream_file_rtp(int argc, char **argv)
 			}
 			inName = arg;
 		}
-		else if (!stricmp(arg, "-noloop")) loop = 0;
-		else if (!stricmp(arg, "-mpeg4")) force_mpeg4 = 1;
+		else if (!stricmp(arg, "-noloop")) loop = GF_FALSE;
+		else if (!stricmp(arg, "-mpeg4")) force_mpeg4 = GF_TRUE;
 		else if (!strnicmp(arg, "-port=", 6)) port = atoi(arg+6);
 		else if (!strnicmp(arg, "-mtu=", 5)) path_mtu = atoi(arg+5);
 		else if (!strnicmp(arg, "-dst=", 5)) ip_dest = arg+5;
 		else if (!strnicmp(arg, "-ttl=", 5)) ttl = atoi(arg+5);
 		else if (!strnicmp(arg, "-ifce=", 6)) ifce_addr = arg+6;
 		else if (!strnicmp(arg, "-sdp=", 5)) sdp_file = arg+5;
-		else if (!stricmp(arg, "-mem-track")) mem_track = 1;
+        else if (!stricmp(arg, "-mem-track")) mem_track = GF_MemTrackerSimple;
+        else if (!stricmp(arg, "-mem-track-stack")) mem_track = GF_MemTrackerBackTrace;
 		else if (!strnicmp(arg, "-logs=", 6)) logs = arg+6;
-		else if (!strnicmp(arg, "-lf=", 4)) logfile = gf_f64_open(arg+4, "wt");
+		else if (!strnicmp(arg, "-lf=", 4)) logfile = gf_fopen(arg+4, "wt");
+        else if (!strnicmp(arg, "-run-for=", 9)) run_for = atof(arg+9);
 	}
 
 	gf_sys_init(mem_track);
@@ -129,7 +133,7 @@ int stream_file_rtp(int argc, char **argv)
 
 	if (!gf_isom_probe_file(inName)) {
 		fprintf(stderr, "File %s is not a valid ISO Media file and cannot be streamed\n", inName);
-		if (logfile) fclose(logfile);
+		if (logfile) gf_fclose(logfile);
 		gf_sys_close();
 		return 1;
 	}
@@ -138,11 +142,14 @@ int stream_file_rtp(int argc, char **argv)
 	if (!file_streamer) {
 		fprintf(stderr, "Cannot create file streamer\n");
 	} else {
+        Bool run = GF_TRUE;
 		u32 check = 50;
 		fprintf(stderr, "Starting streaming %s to %s:%d\n", inName, ip_dest, port);
 		gf_isom_streamer_write_sdp(file_streamer, sdp_file);
 
-		while (1) {
+        if (run_for==0) run=GF_FALSE;
+        
+		while (run) {
 			gf_isom_streamer_send_next_packet(file_streamer, 0, 0);
 			check--;
 			if (!check) {
@@ -152,10 +159,12 @@ int stream_file_rtp(int argc, char **argv)
 				}
 				check = 50;
 			}
+            if ((run_for > 0) && (run_for < gf_isom_streamer_get_current_time(file_streamer)) )
+                break;
 		}
 		gf_isom_streamer_del(file_streamer);
 	}
-	if (logfile) fclose(logfile);
+	if (logfile) gf_fclose(logfile);
 	gf_sys_close();
 	return 0;
 }
@@ -232,7 +241,7 @@ RTPChannel *next_carousel(LiveSession *sess, u32 *timeout)
 	time = (u32) -1;
 	count = gf_list_count(sess->streams);
 	for (i=0; i<count; i++) {
-		RTPChannel *ch = gf_list_get(sess->streams, i);
+		RTPChannel *ch = (RTPChannel*)gf_list_get(sess->streams, i);
 		if (!ch->carousel_period) continue;
 		if (!ch->carousel_size) continue;
 
@@ -262,7 +271,7 @@ static void live_session_callback(void *calling_object, u16 ESID, char *data, u3
 	RTPChannel *rtpch;
 	u32 i=0;
 
-	while ( (rtpch = gf_list_enum(livesess->streams, &i))) {
+	while ( (rtpch = (RTPChannel*)gf_list_enum(livesess->streams, &i))) {
 		if (rtpch->ESID == ESID) {
 
 			/*store carousel data*/
@@ -354,6 +363,10 @@ static void live_session_setup(LiveSession *livesess, char *ip, u16 port, u32 pa
 		gf_seng_get_stream_config(livesess->seng, i, &ESID, &config, &config_len, &st, &oti, &ts);
 
 		GF_SAFEALLOC(rtpch, RTPChannel);
+		if (!rtpch) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Cannot allocate rtp input handler\n"));
+			continue;
+		}
 		rtpch->timescale = ts;
 		rtpch->init_time = gf_sys_clock();
 
@@ -385,9 +398,9 @@ static void live_session_setup(LiveSession *livesess, char *ip, u16 port, u32 pa
 		port += 2;
 	}
 	if (sdp) {
-		FILE *out = gf_f64_open(sdp_name, "wt");
+		FILE *out = gf_fopen(sdp_name, "wt");
 		fprintf(out, "%s", sdp);
-		fclose(out);
+		gf_fclose(out);
 		gf_free(sdp);
 	}
 }
@@ -489,7 +502,7 @@ int live_session(int argc, char **argv)
 	aggregate_au = 1;
 	es_id = 0;
 	no_rap = 0;
-	gf_sys_init(GF_FALSE);
+	gf_sys_init(GF_MemTrackerNone);
 
 	memset(&livesess, 0, sizeof(LiveSession));
 
@@ -620,6 +633,7 @@ int live_session(int argc, char **argv)
 					e = gf_seng_encode_from_string(livesess.seng, 0, 0, szCom, live_session_callback);
 					if (e) fprintf(stderr, "Processing command failed: %s\n", gf_error_to_string(e));
 					e = gf_seng_aggregate_context(livesess.seng, 0);
+					if (e) fprintf(stderr, "Aggregating context failed: %s\n", gf_error_to_string(e));
 					livesess.critical = 0;
 					update_context = 1;
 				}
@@ -642,6 +656,7 @@ int live_session(int argc, char **argv)
 					if (e) fprintf(stderr, "Processing command failed: %s\n", gf_error_to_string(e));
 					livesess.critical = 0;
 					e = gf_seng_aggregate_context(livesess.seng, 0);
+					if (e) fprintf(stderr, "Aggregating context failed: %s\n", gf_error_to_string(e));
 
 				}
 				break;
@@ -677,13 +692,13 @@ int live_session(int argc, char **argv)
 				fprintf(stderr, "Update file modified - processing\n");
 				last_src_modif = mod_time;
 
-				srcf = gf_f64_open(src_name, "rt");
+				srcf = gf_fopen(src_name, "rt");
 				if (!srcf) continue;
 
 				/*checks if we have a broadcast config*/
 				if (!fgets(flag_buf, 200, srcf))
 					flag_buf[0] = '\0';
-				fclose(srcf);
+				gf_fclose(srcf);
 
 				aggregate_on_stream = (u16) -1;
 				adjust_carousel_time = force_rap = discard_pending = signal_rap = signal_critical = 0;
@@ -850,6 +865,8 @@ exit:
 
 #endif /*defined(GPAC_DISABLE_ISOM) || defined(GPAC_DISABLE_ISOM_WRITE)*/
 
+#ifndef GPAC_DISABLE_MPEG2TS
+
 u32 grab_live_m2ts(const char *grab_m2ts, const char *grab_ifce, const char *outName)
 {
 	char data[0x80000];
@@ -862,13 +879,13 @@ u32 grab_live_m2ts(const char *grab_m2ts, const char *grab_ifce, const char *out
 	GF_RTPReorder *ch = NULL;
 #endif
 	GF_Socket *sock;
-	GF_Err e = gf_m2ts_get_socket(grab_m2ts, grab_ifce, 0x80000, &sock);
+	GF_Err e = gf_m2ts_get_socket(grab_m2ts, grab_ifce, GF_M2TS_UDP_BUFFER_SIZE, &sock);
 
 	if (e) {
 		fprintf(stderr, "Cannot open %s: %s\n", grab_m2ts, gf_error_to_string(e));
 		return 1;
 	}
-	output = gf_f64_open(outName, "wb");
+	output = gf_fopen(outName, "wb");
 	if (!output) {
 		fprintf(stderr, "Cannot open %s: check path and rights\n", outName);
 		gf_sk_del(sock);
@@ -926,10 +943,10 @@ u32 grab_live_m2ts(const char *grab_m2ts, const char *grab_ifce, const char *out
 			fwrite(data, size, 1, output);
 		}
 	}
-	nb_pck = gf_f64_tell(output);
+	nb_pck = gf_ftell(output);
 	nb_pck /= 188;
 	fprintf(stderr, "Captured "LLU" TS packets\n", nb_pck );
-	fclose(output);
+	gf_fclose(output);
 	gf_sk_del(sock);
 
 #ifndef GPAC_DISABLE_STREAMING
@@ -939,5 +956,6 @@ u32 grab_live_m2ts(const char *grab_m2ts, const char *grab_ifce, const char *out
 	return 0;
 }
 
+#endif /* GPAC_DISABLE_MPEG2TS */
 
 

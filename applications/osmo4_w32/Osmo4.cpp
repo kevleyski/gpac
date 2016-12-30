@@ -351,7 +351,7 @@ const char *static_gpac_get_url()
 	return (const char *) static_szCmdLine;
 }
 
-static void osmo4_do_log(void *cbk, u32 level, u32 tool, const char *fmt, va_list list)
+static void osmo4_do_log(void *cbk, GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list list)
 {
 	FILE *logs = (FILE *) cbk;
 	vfprintf(logs, fmt, list);
@@ -375,7 +375,7 @@ BOOL Osmo4::InitInstance()
 	while (szApplicationPath[strlen((char *) szApplicationPath)-1] != '\\') szApplicationPath[strlen((char *) szApplicationPath)-1] = 0;
 	if (szApplicationPath[strlen((char *) szApplicationPath)-1] != '\\') strcat(szApplicationPath, "\\");
 
-	gf_sys_init(GF_FALSE);
+	gf_sys_init(GF_MemTrackerNone);
 
 	/*setup user*/
 	memset(&m_user, 0, sizeof(GF_User));
@@ -492,7 +492,7 @@ BOOL Osmo4::InitInstance()
 	/*check log file*/
 	const char *str = gf_cfg_get_key(m_user.config, "General", "LogFile");
 	if (str) {
-		m_logs = gf_f64_open(str, "wt");
+		m_logs = gf_fopen(str, "wt");
 		gf_log_set_callback(m_logs, osmo4_do_log);
 	}
 	else m_logs = NULL;
@@ -579,7 +579,7 @@ int Osmo4::ExitInstance()
 		CloseHandle(m_hMutex);
 		static_gpac_hwnd = NULL;
 	}
-	if (m_logs) fclose(m_logs);
+	if (m_logs) gf_fclose(m_logs);
 	return CWinApp::ExitInstance();
 }
 

@@ -30,6 +30,22 @@
 extern "C" {
 #endif
 
+
+/*! \file "gpac/setup.h"
+ *	\brief base data types of GPAC.
+ *
+ * This file contains the base data types of GPAC, depending on the platform.
+*/
+
+/*! \addtogroup setup_grp base data types
+ *	\ingroup utils_grp
+ *	\brief Base data types of GPAC.
+ *
+ *	This section documents the base data types of GPAC.
+ *	@{
+ */
+
+
 /*This is to handle cases where config.h is generated at the root of the gpac build tree (./configure)
 This is only needed when building libgpac and modules when libgpac is not installed*/
 #ifdef GPAC_HAVE_CONFIG_H
@@ -300,6 +316,7 @@ typedef u8 bin128[16];
 #define GF_EPSILON_FLOAT	FLT_EPSILON
 #define GF_SHORT_MAX		SHRT_MAX
 #define GF_SHORT_MIN		SHRT_MIN
+#define GF_UINT_MAX			UINT_MAX
 #define GF_INT_MAX			INT_MAX
 #define GF_INT_MIN			INT_MIN
 
@@ -343,11 +360,11 @@ u64 gf_memory_size(); /*gets memory allocated in bytes*/
 
 #else
 
-#define gf_malloc malloc
-#define gf_calloc calloc
-#define gf_realloc realloc
-#define gf_free free
-#define gf_strdup strdup
+void* gf_malloc(size_t size);
+void* gf_calloc(size_t num, size_t size_of);
+void* gf_realloc(void *ptr, size_t size);
+void gf_free(void *ptr);
+char* gf_strdup(const char *str);
 
 #endif
 
@@ -362,7 +379,11 @@ u64 gf_memory_size(); /*gets memory allocated in bytes*/
 #define LLXPAD( pad ) "%" pad "I64x"
 #define LLD_CAST
 #define LLU_CAST
+#ifdef _WIN64
+#define PTR_TO_U_CAST (u64)
+#else
 #define PTR_TO_U_CAST (u32)
+#endif
 
 #elif defined (__SYMBIAN32__)
 
@@ -418,9 +439,8 @@ u64 gf_memory_size(); /*gets memory allocated in bytes*/
 #define PTR_TO_U_CAST
 #endif
 
-
-#ifndef GF_EXPORT
-#if defined(__GNUC__) && __GNUC__ >= 4 && !defined(TARGET_OS_IPHONE) && !defined(TARGET_IPHONE_SIMULATOR)
+#if !defined(GF_EXPORT)
+#if defined(__GNUC__) && __GNUC__ >= 4 && !defined(GPAC_IPHONE)
 #define GF_EXPORT __attribute__((visibility("default")))
 #else
 /*use def files for windows or let compiler decide*/
@@ -428,10 +448,9 @@ u64 gf_memory_size(); /*gets memory allocated in bytes*/
 #endif
 #endif
 
-#if defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR)
+#if defined(GPAC_IPHONE)
 #define GPAC_STATIC_MODULES
 #endif
-
 
 /*safety checks on macros*/
 
@@ -540,11 +559,13 @@ u64 gf_memory_size(); /*gets memory allocated in bytes*/
 # endif
 #endif
 
-#ifndef GPAC_HAS_SPIDERMONKEY
+#if !defined(GPAC_HAS_SPIDERMONKEY) || defined(GPAC_DISABLE_SVG)
 # ifndef GPAC_DISABLE_MSE
 # define GPAC_DISABLE_MSE
 # endif
 #endif
+
+/*! @} */
 
 #ifdef __cplusplus
 }

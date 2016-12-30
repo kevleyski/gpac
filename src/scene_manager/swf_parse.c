@@ -346,7 +346,12 @@ static SWFShapeRec *swf_new_shape_rec()
 {
 	SWFShapeRec *style;
 	GF_SAFEALLOC(style, SWFShapeRec);
+	if (!style) return NULL;
 	GF_SAFEALLOC(style->path, SWFPath);
+	if (!style->path) {
+		gf_free(style);
+		return NULL;
+	}
 	return style;
 }
 
@@ -478,7 +483,8 @@ static void swf_parse_styles(SWFReader *read, u32 revision, SWFShape *shape, u32
 
 static void swf_path_realloc_pts(SWFPath *path, u32 nbPts)
 {
-	path->pts = (SFVec2f*)gf_realloc(path->pts, sizeof(SFVec2f) * (path->nbPts + nbPts));
+	if (path)
+		path->pts = (SFVec2f*)gf_realloc(path->pts, sizeof(SFVec2f) * (path->nbPts + nbPts));
 }
 
 static void swf_path_add_com(SWFShapeRec *sr, SFVec2f pt, SFVec2f ctr, u32 type)
@@ -608,6 +614,10 @@ static void swf_resort_path(SWFPath *a, SWFReader *read)
 
 	paths = gf_list_new();
 	GF_SAFEALLOC(sorted, SWFPath);
+	if (!sorted) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_PARSER, ("[SWF Parsing] Fail to allocate path for resorting\n"));
+		return;
+	}
 	swf_path_realloc_pts(sorted, 1);
 	sorted->pts[sorted->nbPts] = a->pts[0];
 	sorted->nbPts++;
@@ -648,7 +658,7 @@ static void swf_resort_path(SWFPath *a, SWFReader *read)
 restart:
 	for (i=0; i<gf_list_count(paths); i++) {
 		p = (SWFPath*)gf_list_get(paths, i);
-		j=i+1;
+
 		for (j=i+1; j < gf_list_count(paths); j++) {
 			np = (SWFPath*)gf_list_get(paths, j);
 
@@ -904,7 +914,7 @@ static GF_Err swf_parse_shape_def(SWFReader *read, SWFFont *font, u32 revision)
 	}
 
 	is_empty = 1;
-	comType = 0;
+
 	/*parse all points*/
 	fill0 = fill1 = strike = 0;
 	sf0 = sf1 = sl = NULL;
@@ -941,7 +951,6 @@ static GF_Err swf_parse_shape_def(SWFReader *read, SWFFont *font, u32 revision)
 			if (read->flags & GF_SM_SWF_NO_LINE) strike = 0;
 
 			/*moveto*/
-			comType = 0;
 			orig.x = FLT2FIX( x * SWF_TWIP_SCALE );
 			orig.y = FLT2FIX( y * SWF_TWIP_SCALE );
 			end = orig;
@@ -1249,7 +1258,7 @@ static GF_Err swf_place_obj(SWFReader *read, u32 revision)
 	clip_depth = 0;
 	ID = 0;
 	depth = 0;
-	has_clip_actions = has_clip = has_name = has_ratio = has_cmat = has_mat = has_id = has_move = 0;
+	has_cmat = has_mat = has_move = 0;
 
 	gf_cmx_init(&cmat);
 	gf_mx2d_init(mat);
@@ -1259,7 +1268,6 @@ static GF_Err swf_place_obj(SWFReader *read, u32 revision)
 	/*SWF 1.0*/
 	if (revision==0) {
 		ID = swf_get_16(read);
-		has_id = 1;
 		depth = swf_get_16(read);
 		bitsize = 32;
 		bitsize += swf_get_matrix(read, &mat);
@@ -1325,7 +1333,7 @@ static GF_Err swf_place_obj(SWFReader *read, u32 revision)
 	if ((type==SWF_MOVE) && !had_depth) swf_report(read, GF_BAD_PARAM, "Accessing empty depth level %d", depth);
 
 	ds = NULL;
-	shape_id = 0;
+
 	/*usual case: (re)place depth level*/
 	switch (type) {
 	case SWF_MOVE:
@@ -1411,6 +1419,8 @@ static GF_Err swf_def_font(SWFReader *read, u32 revision)
 	u32 start;
 
 	GF_SAFEALLOC(ft, SWFFont);
+	if (!ft) return GF_OUT_OF_MEM;
+	
 	ft->glyphs = gf_list_new();
 	ft->fontID = swf_get_16(read);
 	e = GF_OK;
@@ -1596,6 +1606,8 @@ static GF_Err swf_def_text(SWFReader *read, u32 revision)
 			}
 
 			GF_SAFEALLOC(gr, SWFGlyphRec);
+			if (!gr) return GF_OUT_OF_MEM;
+			
 			gf_list_add(txt.text, gr);
 			gr->fontID = fontID;
 			gr->fontSize = font_height;
@@ -1716,7 +1728,7 @@ static GF_Err swf_def_edit_text(SWFReader *read)
 static void swf_delete_sound_stream(SWFReader *read)
 {
 	if (!read->sound_stream) return;
-	if (read->sound_stream->output) fclose(read->sound_stream->output);
+	if (read->sound_stream->output) gf_fclose(read->sound_stream->output);
 	if (read->sound_stream->szFileName) gf_free(read->sound_stream->szFileName);
 	gf_free(read->sound_stream);
 	read->sound_stream = NULL;
@@ -1776,6 +1788,7 @@ static GF_Err swf_def_sound(SWFReader *read)
 {
 	SWFSound *snd;
 	GF_SAFEALLOC(snd , SWFSound);
+	if (!snd) return GF_OUT_OF_MEM;
 	snd->ID = swf_get_16(read);
 	snd->format = swf_read_int(read, 4);
 	snd->sound_rate = swf_read_int(read, 2);
@@ -1809,7 +1822,7 @@ static GF_Err swf_def_sound(SWFReader *read)
 		} else {
 			snd->szFileName = gf_strdup(szName);
 		}
-		snd->output = gf_f64_open(snd->szFileName, "wb");
+		snd->output = gf_fopen(snd->szFileName, "wb");
 
 		alloc_size = 4096;
 		frame = (char*)gf_malloc(sizeof(char)*4096);
@@ -1914,6 +1927,7 @@ static GF_Err swf_soundstream_hdr(SWFReader *read)
 	}
 
 	GF_SAFEALLOC(snd, SWFSound);
+	if (!snd) return GF_OUT_OF_MEM;
 
 	/*rec_mix = */swf_read_int(read, 8);
 	/*0: uncompressed, 1: ADPCM, 2: MP3*/
@@ -1976,7 +1990,7 @@ static GF_Err swf_soundstream_block(SWFReader *read)
 
 		/*error at setup*/
 		if (!read->sound_stream->output) {
-			read->sound_stream->output = gf_f64_open(read->sound_stream->szFileName, "wb");
+			read->sound_stream->output = gf_fopen(read->sound_stream->szFileName, "wb");
 			if (!read->sound_stream->output)
 				return swf_func_skip(read);
 		}
@@ -2035,7 +2049,6 @@ static GF_Err swf_def_hdr_jpeg(SWFReader *read)
 
 static GF_Err swf_def_bits_jpeg(SWFReader *read, u32 version)
 {
-	GF_Err e;
 	u32 ID;
 	FILE *file = NULL;
 	char szName[1024];
@@ -2061,7 +2074,7 @@ static GF_Err swf_def_bits_jpeg(SWFReader *read, u32 version)
 	}
 
 	if (version!=3)
-		file = gf_f64_open(szName, "wb");
+		file = gf_fopen(szName, "wb");
 
 	if (version==1 && read->jpeg_hdr_size) {
 		/*remove JPEG EOI*/
@@ -2093,11 +2106,12 @@ static GF_Err swf_def_bits_jpeg(SWFReader *read, u32 version)
 			gf_fwrite(buf+skip, 1, size-skip, file);
 	}
 	if (version!=3)
-		fclose(file);
+		gf_fclose(file);
 
 	if (version==3) {
 #ifndef GPAC_DISABLE_AV_PARSERS
 		char *dst, *raw;
+		GF_Err e;
 		u8 oti;
 		u32 osize, w, h, j, pf;
 		GF_BitStream *bs;
@@ -2111,7 +2125,9 @@ static GF_Err swf_def_bits_jpeg(SWFReader *read, u32 version)
 		raw = gf_malloc(sizeof(char)*osize);
 		memset(raw, 0, sizeof(char)*osize);
 		e = gf_img_jpeg_dec( (char *) buf+skip, size-skip, &w, &h, &pf, raw, &osize, 4);
-		assert(e == GF_OK);
+		if (e != GF_OK) {
+			swf_report(read, e, "Cannopt decode JPEG image");
+		}
 
 		/*read alpha map and decompress it*/
 		if (size<AlphaPlaneSize) buf = gf_realloc(buf, sizeof(u8)*AlphaPlaneSize);
@@ -2137,9 +2153,9 @@ static GF_Err swf_def_bits_jpeg(SWFReader *read, u32 version)
 		buf = gf_realloc(buf, sizeof(char)*osize);
 		gf_img_png_enc(raw, w, h, h*4, GF_PIXEL_RGBA, (char *)buf, &osize);
 
-		file = gf_f64_open(szName, "wb");
+		file = gf_fopen(szName, "wb");
 		gf_fwrite(buf, 1, osize, file);
-		fclose(file);
+		gf_fclose(file);
 
 		gf_free(raw);
 #endif //GPAC_DISABLE_AV_PARSERS
@@ -2431,7 +2447,6 @@ GF_Err gf_sm_load_run_swf(GF_SceneLoader *load)
 	if (!read) return GF_BAD_PARAM;
 
 	/*parse all tags*/
-	e = GF_OK;
 	while (1) {
 		e = swf_parse_tag(read);
 		if (e) break;
@@ -2481,7 +2496,7 @@ void gf_swf_reader_del(SWFReader *read)
 	while (gf_list_count(read->sounds)) {
 		SWFSound *snd = (SWFSound *)gf_list_get(read->sounds, 0);
 		gf_list_rem(read->sounds, 0);
-		if (snd->output) fclose(snd->output);
+		if (snd->output) gf_fclose(snd->output);
 		if (snd->szFileName) gf_free(snd->szFileName);
 		gf_free(snd);
 	}
@@ -2490,7 +2505,8 @@ void gf_swf_reader_del(SWFReader *read)
 
 	if (read->jpeg_hdr) gf_free(read->jpeg_hdr);
 	if (read->localPath) gf_free(read->localPath);
-	fclose(read->input);
+	gf_fclose(read->input);
+	gf_free(read->inputName);
 	gf_free(read);
 }
 
@@ -2506,10 +2522,11 @@ SWFReader *gf_swf_reader_new(const char *localPath, const char *inputName)
 {
 	SWFReader *read;
 	FILE *input;
-	input = gf_f64_open(inputName, "rb");
+	input = gf_fopen(inputName, "rb");
 	if (!input) return NULL;
 
 	GF_SAFEALLOC(read, SWFReader);
+	if (!read) return NULL;
 	read->inputName = gf_strdup(inputName);
 	read->input = input;
 	read->bs = gf_bs_from_file(input, GF_BITSTREAM_READ);
@@ -2584,7 +2601,6 @@ GF_Err gf_sm_load_init_swf(GF_SceneLoader *load)
 	GF_Err e;
 
 	if (!load->ctx || !load->scene_graph || !load->fileName) return GF_BAD_PARAM;
-	e = GF_OK;
 
 	read = gf_swf_reader_new(load->localPath, load->fileName);
 	read->load = load;
@@ -2603,8 +2619,11 @@ GF_Err gf_sm_load_init_swf(GF_SceneLoader *load)
 	}
 
 	if (!(load->swf_import_flags & GF_SM_SWF_USE_SVG)) {
+#ifndef GPAC_DISABLE_VRML
 		e = swf_to_bifs_init(read);
+#endif
 	} else {
+#ifndef GPAC_DISABLE_SVG
 		char svgFileName[GF_MAX_PATH];
 		FILE *svgFile;
 		if (load->svgOutFile) {
@@ -2613,13 +2632,14 @@ GF_Err gf_sm_load_init_swf(GF_SceneLoader *load)
 			} else {
 				sprintf(svgFileName, "%s.svg", load->svgOutFile);
 			}
-			svgFile = gf_f64_open(svgFileName, "wt");
+			svgFile = gf_fopen(svgFileName, "wt");
 			if (!svgFile) return GF_BAD_PARAM;
 		} else {
 			svgFile = stdout;
 		}
 		gf_swf_reader_set_user_mode(read, svgFile, swf_svg_write_text_sample, swf_svg_write_text_header);
 		e = swf_to_svg_init(read, read->flags, load->swf_flatten_limit);
+#endif
 	}
 	if (e) goto exit;
 

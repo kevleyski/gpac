@@ -22,14 +22,14 @@ OBJS=avcap.o
 
 SRCS := $(OBJS:.o=.c) 
 
-LIB=gm_avcap.$(DYN_LIB_SUFFIX)
+LIB=gm_avcap$(DYN_LIB_SUFFIX)
 
 
 all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CXX) -w $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(LINKLIBS)
+	$(CXX) -w $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(LINKLIBS) $(LDFLAGS)
 
 clean: 
 	rm -f $(OBJS) ../../bin/gcc/$(LIB)

@@ -29,7 +29,7 @@
 #include <gpac/network.h>
 #include <gpac/nodes_mpeg4.h>
 
-#ifndef GPAC_DISABLE_VRML
+#if !defined(GPAC_DISABLE_VRML) && !defined(GPAC_DISABLE_SCENEGRAPH)
 
 typedef struct
 {
@@ -50,6 +50,8 @@ typedef struct
 	FILE *src;
 	u32 file_pos, sax_max_duration;
 	Bool progressive_support;
+
+	const char *service_url;
 } CTXLoadPriv;
 
 
@@ -151,23 +153,23 @@ static Bool CTXLoad_CheckDownload(CTXLoadPriv *priv)
 	FILE *f;
 	u32 now = gf_sys_clock();
 
-	if (!priv->file_size && (now - priv->last_check_time < 1000) ) return 0;
+	if (!priv->file_size && (now - priv->last_check_time < 1000) ) return GF_FALSE;
 
-	f = gf_f64_open(priv->file_name, "rt");
-	if (!f) return 0;
-	gf_f64_seek(f, 0, SEEK_END);
-	size = gf_f64_tell(f);
-	fclose(f);
+	f = gf_fopen(priv->file_name, "rt");
+	if (!f) return GF_FALSE;
+	gf_fseek(f, 0, SEEK_END);
+	size = gf_ftell(f);
+	gf_fclose(f);
 
 	/*we MUST have a complete file for now ...*/
 	if (!priv->file_size) {
-		if (priv->last_check_size == size) return 1;
+		if (priv->last_check_size == size) return GF_TRUE;
 		priv->last_check_size = size;
 		priv->last_check_time = now;
 	} else {
-		if (size==priv->file_size) return 1;
+		if (size==priv->file_size) return GF_TRUE;
 	}
-	return 0;
+	return GF_FALSE;
 }
 
 
@@ -182,6 +184,7 @@ static GF_Err CTXLoad_Setup(GF_BaseDecoder *plug)
 	priv->load.is = priv->scene;
 	priv->load.scene_graph = priv->scene->graph;
 	priv->load.fileName = priv->file_name;
+	priv->load.src_url = priv->service_url;
 	priv->load.flags = GF_SM_LOAD_FOR_PLAYBACK;
 	priv->load.localPath = gf_modules_get_option((GF_BaseInterface *)plug, "General", "CacheDirectory");
 	priv->load.swf_import_flags = GF_SM_SWF_STATIC_DICT | GF_SM_SWF_QUAD_CURVE | GF_SM_SWF_SCALABLE_LINE | GF_SM_SWF_SPLIT_TIMELINE;
@@ -221,11 +224,12 @@ static GF_Err CTXLoad_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 	priv->nb_streams = 1;
 	priv->load_flags = 0;
 	priv->base_stream_id = esd->ESID;
+	priv->service_url = esd->service_url;
 
 
 	CTXLoad_Setup(plug);
 
-	priv->progressive_support = 0;
+	priv->progressive_support = GF_FALSE;
 	priv->sax_max_duration = 0;
 
 	ext = strrchr(priv->file_name, '.');
@@ -236,7 +240,7 @@ static GF_Err CTXLoad_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 	        || !stricmp(ext, "x3d") || !stricmp(ext, "x3dz")
 	   ) {
 		ext = gf_modules_get_option((GF_BaseInterface *)plug, "SAXLoader", "Progressive");
-		priv->progressive_support = (ext && !stricmp(ext, "yes")) ? 1 : 0;
+		priv->progressive_support = (ext && !stricmp(ext, "yes")) ? GF_TRUE : GF_FALSE;
 	}
 	if (priv->progressive_support) {
 		ext = gf_modules_get_option((GF_BaseInterface *)plug, "SAXLoader", "MaxDuration");
@@ -274,15 +278,15 @@ static Bool CTXLoad_StreamInRootOD(GF_ObjectDescriptor *od, u32 ESID)
 {
 	u32 i, count;
 	/*no root, only one stream possible*/
-	if (!od) return 1;
+	if (!od) return GF_TRUE;
 	count = gf_list_count(od->ESDescriptors);
 	/*idem*/
-	if (!count) return 1;
+	if (!count) return GF_TRUE;
 	for (i=0; i<count; i++) {
 		GF_ESD *esd = (GF_ESD *)gf_list_get(od->ESDescriptors, i);
-		if (esd->ESID==ESID) return 1;
+		if (esd->ESID==ESID) return GF_TRUE;
 	}
-	return 0;
+	return GF_FALSE;
 }
 
 
@@ -306,7 +310,7 @@ static void CTXLoad_CheckStreams(CTXLoadPriv *priv )
 	i=0;
 	while ((sc = (GF_StreamContext *)gf_list_enum(priv->ctx->streams, &i))) {
 		/*all streams in root OD are handled with ESID 0 to differentiate with any animation streams*/
-		if (CTXLoad_StreamInRootOD(priv->ctx->root_od, sc->ESID)) sc->in_root_od = 1;
+		if (CTXLoad_StreamInRootOD(priv->ctx->root_od, sc->ESID)) sc->in_root_od = GF_TRUE;
 		if (!sc->timeScale) sc->timeScale = 1000;
 
 		j=0;
@@ -346,15 +350,15 @@ static GF_Err CTXLoad_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u
 		/*seek on root stream: destroy the context manager and reload it. We cannot seek on the main stream
 		because commands may have changed node attributes/children and we d'ont track the initial value*/
 		if (priv->load_flags && (priv->base_stream_id == ES_ID)) {
-			if (priv->src) fclose(priv->src);
+			if (priv->src) gf_fclose(priv->src);
 			priv->src = NULL;
 			gf_sm_load_done(&priv->load);
 			priv->file_pos = 0;
 			/*queue scene for detach*/
-			gf_term_lock_media_queue(priv->scene->root_od->term, 1);
+			gf_term_lock_media_queue(priv->scene->root_od->term, GF_TRUE);
 			priv->scene->root_od->action_type = GF_ODM_ACTION_SCENE_RECONNECT;
 			gf_list_add(priv->scene->root_od->term->media_queue, priv->scene->root_od);
-			gf_term_lock_media_queue(priv->scene->root_od->term, 0);
+			gf_term_lock_media_queue(priv->scene->root_od->term, GF_FALSE);
 
 			return CTXLoad_Setup((GF_BaseDecoder *)plug);
 		}
@@ -377,21 +381,24 @@ static GF_Err CTXLoad_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u
 			u32 entry_time;
 			char file_buf[4096+1];
 			if (!priv->src) {
-				priv->src = gf_f64_open(priv->file_name, "rb");
+				priv->src = gf_fopen(priv->file_name, "rb");
 				if (!priv->src) return GF_URL_ERROR;
 				priv->file_pos = 0;
 			}
 			priv->load.type = GF_SM_LOAD_XMTA;
 			e = GF_OK;
 			entry_time = gf_sys_clock();
-			gf_f64_seek(priv->src, priv->file_pos, SEEK_SET);
+			gf_fseek(priv->src, priv->file_pos, SEEK_SET);
 			while (1) {
-				u32 diff, nb_read;
-				nb_read = (u32) fread(file_buf, 1, 4096, priv->src);
+				u32 diff;
+				s32 nb_read = (s32) fread(file_buf, 1, 4096, priv->src);
+				if (nb_read<0) {
+					return GF_IO_ERR;
+				}
 				file_buf[nb_read] = 0;
 				if (!nb_read) {
 					if (priv->file_pos==priv->file_size) {
-						fclose(priv->src);
+						gf_fclose(priv->src);
 						priv->src = NULL;
 						priv->load_flags = 2;
 						gf_sm_load_done(&priv->load);
@@ -400,7 +407,7 @@ static GF_Err CTXLoad_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u
 					break;
 				}
 
-				e = gf_sm_load_string(&priv->load, file_buf, 0);
+				e = gf_sm_load_string(&priv->load, file_buf, GF_FALSE);
 				priv->file_pos += nb_read;
 				if (e) break;
 				diff = gf_sys_clock() - entry_time;
@@ -472,8 +479,8 @@ static GF_Err CTXLoad_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u
 			sc->last_au_time = 0;
 		}
 
-		can_delete_com = 0;
-		if (sc->in_root_od && (priv->load_flags==2)) can_delete_com = 1;
+		can_delete_com = GF_FALSE;
+		if (sc->in_root_od && (priv->load_flags==2)) can_delete_com = GF_TRUE;
 
 		/*we're in the right stream, apply update*/
 		j=0;
@@ -532,7 +539,7 @@ static GF_Err CTXLoad_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u
 			else if (sc->streamType == GF_STREAM_OD) {
 				/*apply the commands*/
 				while (gf_list_count(au->commands)) {
-					Bool keep_com = 0;
+					Bool keep_com = GF_FALSE;
 					GF_ODCom *com = (GF_ODCom *)gf_list_get(au->commands, 0);
 					gf_list_rem(au->commands, 0);
 					switch (com->tag) {
@@ -584,21 +591,23 @@ static GF_Err CTXLoad_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u
 									gf_odf_encode_ui_config(cfg, &esd->decoderConfig->decoderSpecificInfo);
 									gf_odf_desc_del((GF_Descriptor *) cfg);
 									ODS_SetupOD(priv->scene, od);
+								} else if (esd->decoderConfig->streamType==GF_STREAM_OCR) {
+									ODS_SetupOD(priv->scene, od);
 								} else {
 									gf_odf_desc_del((GF_Descriptor *) od);
 								}
 								continue;
 							}
-                            //solve url before import
-                            if (mux->src_url) {
-                                char *res_url = gf_url_concatenate(mux->src_url, mux->file_name);
-                                if (res_url) {
-                                    gf_free(mux->file_name);
-                                    mux->file_name = res_url;
-                                }
-                                gf_free(mux->src_url);
-                                mux->src_url = NULL;
-                            }
+							//solve url before import
+							if (mux->src_url) {
+								char *res_url = gf_url_concatenate(mux->src_url, mux->file_name);
+								if (res_url) {
+									gf_free(mux->file_name);
+									mux->file_name = res_url;
+								}
+								gf_free(mux->src_url);
+								mux->src_url = NULL;
+							}
 							/*text import*/
 							if (mux->textNode) {
 #ifdef GPAC_DISABLE_MEDIA_IMPORT
@@ -621,16 +630,16 @@ static GF_Err CTXLoad_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u
 
 							/*soundstreams are a bit of a pain, they may be declared before any data gets written*/
 							if (mux->delete_file) {
-								FILE *t = gf_f64_open(mux->file_name, "rb");
+								FILE *t = gf_fopen(mux->file_name, "rb");
 								if (!t) {
-									keep_com = 1;
+									keep_com = GF_TRUE;
 									gf_list_insert(odU->objectDescriptors, od, 0);
 									break;
 								}
-								fclose(t);
+								gf_fclose(t);
 							}
 							/*remap to remote URL - warning, the URL has already been resolved according to the parent path*/
-							remote = gf_malloc(sizeof(char) * (strlen("gpac://")+strlen(mux->file_name)+1) );
+							remote = (char*)gf_malloc(sizeof(char) * (strlen("gpac://")+strlen(mux->file_name)+1) );
 							strcpy(remote, "gpac://");
 							strcat(remote, mux->file_name);
 							k = od->objectDescriptorID;
@@ -776,7 +785,12 @@ GF_BaseDecoder *NewContextLoader()
 	GF_SceneDecoder *tmp;
 
 	GF_SAFEALLOC(tmp, GF_SceneDecoder);
+	if (!tmp) return NULL;
 	GF_SAFEALLOC(priv, CTXLoadPriv);
+	if (!priv) {
+		gf_free(tmp);
+		return NULL;
+	}
 	priv->files_to_delete = gf_list_new();
 
 	tmp->privateStack = priv;
@@ -793,14 +807,14 @@ GF_BaseDecoder *NewContextLoader()
 	return (GF_BaseDecoder*)tmp;
 }
 
-#endif
+#endif //defined(GPAC_DISABLE_VRML) && !defined(GPAC_DISABLE_SCENEGRAPH)
 
 
 GPAC_MODULE_EXPORT
 const u32 *QueryInterfaces()
 {
 	static u32 si [] = {
-#ifndef GPAC_DISABLE_VRML
+#if !defined(GPAC_DISABLE_VRML) && !defined(GPAC_DISABLE_SCENEGRAPH)
 		GF_SCENE_DECODER_INTERFACE,
 #endif
 		0
@@ -812,7 +826,7 @@ GPAC_MODULE_EXPORT
 GF_BaseInterface *LoadInterface(u32 InterfaceType)
 {
 	switch (InterfaceType) {
-#ifndef GPAC_DISABLE_VRML
+#if !defined(GPAC_DISABLE_VRML) && !defined(GPAC_DISABLE_SCENEGRAPH)
 	case GF_SCENE_DECODER_INTERFACE:
 		return (GF_BaseInterface *)NewContextLoader();
 #endif
@@ -825,7 +839,7 @@ GPAC_MODULE_EXPORT
 void ShutdownInterface(GF_BaseInterface *ifce)
 {
 	switch (ifce->InterfaceType) {
-#ifndef GPAC_DISABLE_VRML
+#if !defined(GPAC_DISABLE_VRML) && !defined(GPAC_DISABLE_SCENEGRAPH)
 	case GF_SCENE_DECODER_INTERFACE:
 		DeleteContextLoader((GF_BaseDecoder *)ifce);
 		break;

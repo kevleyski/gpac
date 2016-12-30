@@ -36,9 +36,9 @@ extern "C" {
  */
 
 /*!
- *	\addtogroup utf_grp UTF
- *	\ingroup utils_grp
- *	\brief UTF encoding functions
+ * \addtogroup uni_grp
+ * \ingroup utfuni_grp
+ * \brief UTF encoding functions
  *
  *This section documents the UTF functions of the GPAC framework.\n
  *The wide characters in GPAC are unsignad shorts, in other words GPAC only supports UTF8 and UTF16 coding styles.
@@ -88,6 +88,8 @@ size_t gf_utf8_wcslen(const unsigned short *s);
  *\return 1 if the main direction is right-to-left, 0 otherwise
  */
 Bool gf_utf8_reorder_bidi(u16 *utf_string, u32 len);
+
+static const size_t UTF8_MAX_BYTES_PER_CHAR = 4;
 
 /*! @} */
 

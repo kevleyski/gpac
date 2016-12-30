@@ -261,15 +261,11 @@ GF_Err gf_crypt_init(GF_Crypt *td, void *key, u32 lenofkey, const void *IV)
 
 	if (ok == 0) { /* not supported key size */
 		key_size = gf_crypt_get_key_size(td);
-		if (sizes != NULL) {
-			for (i = 0; i < num_of_sizes; i++) {
-				if (lenofkey <= sizes[i]) {
-					key_size = sizes[i];
-					break;
-				}
+		for (i = 0; i < num_of_sizes; i++) {
+			if (lenofkey <= sizes[i]) {
+				key_size = sizes[i];
+				break;
 			}
-		} else { /* well every key size is supported! */
-			key_size = lenofkey;
 		}
 	} else {
 		key_size = lenofkey;

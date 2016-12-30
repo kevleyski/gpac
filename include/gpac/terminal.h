@@ -31,6 +31,28 @@
 extern "C" {
 #endif
 
+
+/*!
+ *	\file <gpac/terminal.h>
+ *	\brief GPAC media player API.
+ */
+	
+/*! \defgroup playback_grp Media Player
+ *	\brief GPAC media player (streaming engine and compositor).
+ *	
+*/
+	
+/*!
+ *\addtogroup terminal_grp Terminal
+ *\ingroup playback_grp
+ *\brief GPAC media player APIs.
+ *
+ *This section documents the user-level API of the GPAC media player.
+ *	@{
+ */
+	
+
+
 #include <gpac/user.h>
 
 /*creates a new terminal for a userApp callback*/
@@ -59,8 +81,10 @@ Return value:
 */
 u32 gf_term_play_from_time(GF_Terminal *term, u64 from_time, u32 pause_at_first_frame);
 /*connect URL and seek right away - only needed when reloading the complete player (avoids waiting
-for connection and post a seek..)*/
-void gf_term_connect_from_time(GF_Terminal *term, const char *URL, u64 time_in_ms, Bool pause_at_first_frame);
+for connection and post a seek..)
+pause_at_first_frame: if 1, pauses rendering and streaming when starting, if 2 pauses only rendering
+*/
+void gf_term_connect_from_time(GF_Terminal *term, const char *URL, u64 time_in_ms, u32 pause_at_first_frame);
 
 /*same as gf_term_connect but specifies a parent path*/
 void gf_term_connect_with_path(GF_Terminal *term, const char *URL, const char *parent_URL);
@@ -75,6 +99,9 @@ framerate
 Double gf_term_get_framerate(GF_Terminal *term, Bool absoluteFPS);
 /*get main scene current time in milliseconds*/
 u32 gf_term_get_time_in_ms(GF_Terminal *term);
+
+/*get elapsed time in milliseconds since loading of the scene - may be different from scene time when seeking or live content*/
+u32 gf_term_get_elapsed_time_in_ms(GF_Terminal *term);
 
 /*returns current URL address*/
 const char *gf_term_get_url(GF_Terminal *term);
@@ -111,7 +138,7 @@ GF_Err gf_term_get_visual_output_size(GF_Terminal *term, u32 *width, u32 *height
 /*process shortcuts*/
 void gf_term_process_shortcut(GF_Terminal *term, GF_Event *ev);
 
-void gf_term_set_speed(GF_Terminal *term, Fixed speed);
+GF_Err gf_term_set_speed(GF_Terminal *term, Fixed speed);
 
 /*sends a set of scene commands (BT, XMT, X3D, LASeR+XML) to the scene
 type indicates the language used - accepted values are
@@ -163,6 +190,9 @@ GF_Err gf_term_process_flush_video(GF_Terminal *term);
 /*NOT NEEDED WHEN THE TERMINAL IS HANDLING THE DISPLAY WINDOW (cf user.h)*/
 Bool gf_term_user_event(GF_Terminal *term, GF_Event *event);
 
+/*post event to terminal*/
+Bool gf_term_send_event(GF_Terminal *term, GF_Event *evt);
+
 /*post extended user mouse interaction to terminal
 	X and Y are point coordinates in the display expressed in 2D coord system top-left (0,0), Y increasing towards bottom
 	@xxx_but_down: specifiy whether the mouse button is down(2) or up (1), 0 if unchanged
@@ -212,6 +242,8 @@ void gf_term_switch_quality(GF_Terminal *term, Bool up);
 
 /*get global clock in milliseconds*/
 u32 gf_term_get_clock(GF_Terminal *term);
+
+/*! @} */
 
 #ifdef __cplusplus
 }

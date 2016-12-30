@@ -208,7 +208,7 @@ GF_Err gf_term_get_object_info(GF_Terminal *term, GF_ObjectManager *odm, GF_Medi
 			}
 		}
 		info->current_time /= 1000;
-		info->nb_droped = codec->nb_droped;
+		info->nb_dropped = codec->nb_dropped;
 	} else if (odm->subscene) {
 		if (odm->subscene->scene_codec) {
 			if (odm->subscene->scene_codec->ck) {
@@ -217,7 +217,7 @@ GF_Err gf_term_get_object_info(GF_Terminal *term, GF_ObjectManager *odm, GF_Medi
 			}
 			info->duration = (Double) (s64)odm->subscene->duration;
 			info->duration /= 1000;
-			info->nb_droped = odm->subscene->scene_codec->nb_droped;
+			info->nb_dropped = odm->subscene->scene_codec->nb_dropped;
 			codec = odm->subscene->scene_codec;
 		} else if (odm->subscene->is_dynamic_scene) {
 			if (odm->subscene->dyn_ck) {
@@ -297,7 +297,7 @@ GF_Err gf_term_get_object_info(GF_Terminal *term, GF_ObjectManager *odm, GF_Medi
 		if (codec->decio && codec->decio->GetName) {
 			info->codec_name = codec->decio->GetName(codec->decio);
 		} else {
-			info->codec_name = codec->decio->module_name;
+			info->codec_name = codec->decio ? codec->decio->module_name : "internal decoder";
 		}
 		info->od_type = codec->type;
 
@@ -329,7 +329,10 @@ GF_Err gf_term_get_object_info(GF_Terminal *term, GF_ObjectManager *odm, GF_Medi
 	}
 
 	ch = (GF_Channel*)gf_list_get(odm->channels, 0);
-	if (ch && ch->esd->langDesc) info->lang = ch->esd->langDesc->langCode;
+	if (ch && ch->esd->langDesc) {
+		info->lang = ch->esd->langDesc->langCode;
+		info->lang_code = ch->esd->langDesc->full_lang_code;
+	}
 
 	if (odm->mo && odm->mo->URLs.count)
 		info->media_url = odm->mo->URLs.vals[0].url;
@@ -465,7 +468,7 @@ GF_Err gf_term_dump_scene(GF_Terminal *term, char *rad_name, char **filename, Bo
 		else if(!strncmp(szExt, ".bt", 3) || !strncmp(szExt, ".xmt", 4) || !strncmp(szExt, ".mp4", 4) ) mode = xml_dump ? GF_SM_DUMP_XMTA : GF_SM_DUMP_BT;
 	}
 
-	dumper = gf_sm_dumper_new(sg, rad_name, ' ', mode);
+	dumper = gf_sm_dumper_new(sg, rad_name, GF_FALSE, ' ', mode);
 
 	if (!dumper) return GF_IO_ERR;
 	e = gf_sm_dump_graph(dumper, skip_protos, 0);

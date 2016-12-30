@@ -35,24 +35,23 @@
 #include "visual_manager_3d.h"
 
 
-enum
-{
-	GF_3D_STEREO_NONE = 0,
-	GF_3D_STEREO_TOP,
-	GF_3D_STEREO_SIDE,
-	/*all modes above GF_3D_STEREO_SIDE require shaders*/
+//startof GL3/ES2.0 specifics
 
-	/*custom interleaving using GLSL shaders*/
-	GF_3D_STEREO_CUSTOM,
-	/*some built-in interleaving modes*/
-	/*each pixel correspond to a different view*/
-	GF_3D_STEREO_COLUMNS,
-	GF_3D_STEREO_ROWS,
-	/*special case of sub-pixel interleaving for 2 views*/
-	GF_3D_STEREO_ANAGLYPH,
-	/*SpatialView 19'' 5views interleaving*/
-	GF_3D_STEREO_5VSP19,
+/* number of preprocessor flags for GL3/ES2.0 */
+#define GF_GL_NUM_OF_FLAGS			5
+#define GF_GL_NB_FRAG_SHADERS		(1<<(GF_GL_NUM_OF_FLAGS) )	//=2^GF_GL_NUM_OF_FLAGS
+#define GF_GL_NB_VERT_SHADERS		(1<<(GF_GL_NUM_OF_FLAGS-1) )	//=2^GF_GL_NUM_OF_FLAGS-1 (YUV ignored in vertex shader)
+
+/* setting preprocessor flags for GL3/ES2.0 shaders */
+enum {
+	GF_GL_HAS_TEXTURE = 1,
+	GF_GL_HAS_LIGHT = (1<<1),
+	GF_GL_HAS_COLOR = (1<<2),
+	GF_GL_HAS_CLIP = (1<<3),
+	//only for fragment shaders
+	GF_GL_IS_YUV = 1<<4,
 };
+//endof
 
 enum
 {
@@ -126,11 +125,14 @@ struct _visual_manager
 		BackColor for background nodes
 		0x00000000 for composite,
 		compositor clear color otherwise
-		offscreen_clear is set to 1 when the clear targets the canvas buffer in hybrid GL mode
+		offscreen_clear is set to 1 when the clear targets the entire canvas buffer in hybrid GL mode (full redraw)
+		                       to 2 when the clear targets a part of the canvas buffer in hybrid GL mode (dirty area clean)
 	*/
-	void (*ClearSurface)(GF_VisualManager *visual, GF_IRect *rc, u32 BackColor, Bool offscreen_clear);
+	void (*ClearSurface)(GF_VisualManager *visual, GF_IRect *rc, u32 BackColor, u32 offscreen_clear);
 	/*draws specified texture as flat bitmap*/
-	Bool (*DrawBitmap)(GF_VisualManager *visual, GF_TraverseState *tr_state, DrawableContext *ctx, GF_ColorKey *col_key);
+	Bool (*DrawBitmap)(GF_VisualManager *visual, GF_TraverseState *tr_state, DrawableContext *ctx);
+	/*checks if the visual is ready for being drawn on. Returns GF_FALSE if no draw operation can be sent*/
+	Bool (*CheckAttached)(GF_VisualManager *visual);
 
 	/*raster surface interface*/
 	GF_SURFACE raster_surface;
@@ -166,6 +168,10 @@ struct _visual_manager
 	GF_List *fog_stack;
 #endif
 
+	Bool gl_setup;
+
+	GF_IRect clipper_2d;
+	Bool has_clipper_2d;
 	/*the one and only camera associated with the visual*/
 	GF_Camera camera;
 
@@ -195,20 +201,18 @@ struct _visual_manager
 	GF_SHADERID autostereo_glsl_program;
 	GF_SHADERID autostereo_glsl_fragment;
 
-	GF_SHADERID yuv_glsl_program;
-	GF_SHADERID yuv_glsl_fragment;
-	GF_SHADERID yuv_rect_glsl_program;
-	GF_SHADERID yuv_rect_glsl_fragment;
-
 	GF_SHADERID current_texture_glsl_program;
 
 
+	Bool needs_projection_matrix_reload;
+
+	/*GL state to emulate with GLSL [ES2.0]*/
 	Bool has_material_2d;
 	SFColorRGBA mat_2d;
 
 	Bool has_material;
 	SFColorRGBA materials[4];
-	Float shininess;
+	Fixed shininess;
 
 	Bool state_light_on, state_blend_on, state_color_on;
 
@@ -216,8 +220,6 @@ struct _visual_manager
 
 	Bool has_tx_matrix;
 	GF_Matrix tx_matrix;
-
-	Bool needs_projection_matrix_reload;
 
 	GF_LightInfo lights[GF_MAX_GL_LIGHTS];
 	Bool has_inactive_lights;
@@ -227,17 +229,31 @@ struct _visual_manager
 	SFColor fog_color;
 	Fixed fog_density, fog_visibility;
 
+	/*end of GL state to emulate with GLSL*/
 
-	GF_SHADERID glsl_vertex;
-	GF_SHADERID glsl_fragment;
+//startof GL3/ES2.0 elements
+	/* shaders used for shader-only drawing */
 	GF_SHADERID glsl_program;
 
-#endif
+	/* Storing Compiled Shaders */
+	GF_SHADERID glsl_programs[GF_GL_NB_FRAG_SHADERS];
+	GF_SHADERID glsl_vertex_shaders[GF_GL_NB_VERT_SHADERS];
+	GF_SHADERID glsl_fragment_shaders[GF_GL_NB_FRAG_SHADERS];
+
+	/* If GF_TRUE the Array of Shaders is built */
+	Bool glsl_has_shaders;
+
+	/* Compilation/Features Flags for dynamic shader */
+	u32 glsl_flags;
+//endof
+
+#endif	//!GPAC_DISABLE_3D
 
 #ifdef GF_SR_USE_DEPTH
 	Fixed depth_vp_position, depth_vp_range;
 #endif
 
+	u32 yuv_pixelformat_type;
 };
 
 /*constructor/destructor*/

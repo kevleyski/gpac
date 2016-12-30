@@ -95,7 +95,7 @@ Bool visual_2d_node_cull(GF_TraverseState *tr_state, GF_Rect *bounds);
 
 void visual_2d_pick_node(GF_VisualManager *visual, GF_TraverseState *tr_state, GF_Event *ev, GF_ChildNodeItem *children);
 
-void visual_2d_clear_surface(GF_VisualManager *visual, GF_IRect *rc, u32 BackColor, Bool is_offscreen);
+void visual_2d_clear_surface(GF_VisualManager *visual, GF_IRect *rc, u32 BackColor, u32 is_offscreen);
 
 /*gets a drawable context on this visual*/
 DrawableContext *visual_2d_get_drawable_context(GF_VisualManager *visual);
@@ -142,6 +142,11 @@ Bool visual_2d_overlaps_overlay(GF_VisualManager *visual, DrawableContext *ctx, 
 void visual_2d_flush_overlay_areas(GF_VisualManager *visual, GF_TraverseState *tr_state);
 /*finally blit the overlays - MUST be called once the main visual has been flushed*/
 void visual_2d_draw_overlays(GF_VisualManager *visual);
+
+
+#ifndef GPAC_DISABLE_3D
+void visual_2d_flush_hybgl_canvas(GF_VisualManager *visual, GF_TextureHandler *txh, struct _drawable_context *ctx, GF_TraverseState *tr_state);
+#endif
 
 #endif	/*_VISUAL_MANAGER_2D_*/
 

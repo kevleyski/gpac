@@ -8,7 +8,10 @@
 
 <p style="text-align: center;">
 <br/>
-<b><span style="Font-Size: 24pt">GPAC Configuration file documentation<br/>Version 0.5.2-dev</span></b>
+<b><span style="Font-Size: 24pt">GPAC Configuration file documentation
+<br/>
+GPAC Version 0.6.2-DEV
+</span></b>
 <br/>
 </p>
 
@@ -46,6 +49,8 @@ The config file is ordered by sections and keys.
 <b><a href="#OpenHEVC" style="text-decoration: underline;">OpenHEVC</a></b>
 <b><a href="#DirectFB" style="text-decoration: underline;">DirectFB</a></b>
 <b><a href="#DektecVideo" style="text-decoration: underline;">DektecVideo</a></b>
+<b><a href="#M2TS" style="text-decoration: underline;">M2TS</a></b>
+<b><a href="#RAW" style="text-decoration: underline;">RAWVideo</a></b>
 
 </p>
 <br/><br/>
@@ -324,12 +329,12 @@ Disables YUV hardware support (YUV hardware support may not be available for the
 <b>TextureFromDecoderMemory</b> [value: <i>"yes" "no"</i>]
 <p style="text-indent: 5%">
 Allows video textures to be build directly from video decoder internal buffers. This may increase performances on some systems. Default is no.</p>
-
-
-
 <b>ForceOpenGL</b> [value: <i>"always", "disable", "hybrid", "raster"</i>]
 <p style="text-indent: 5%">
 Specifies that 2D rendering will be performed by OpenGL rather than raster 2D. This will involve polygon tesselation which may not be supported on all platforms, and 2D graphics will not loo as nice as 2D mode. The hybrid mode performs software drawing of 2D graphics with no textures (better quality) and uses OpenGL for all textures. The raster mode only uses OpenGL for pixel IO but does not perform polygin fill (no tesselation) (slow, mainly for test purposes).</p>
+<b>EnablePBO</b> [value: <i>"yes", "no"</i>]
+<p style="text-indent: 5%">
+Uses PixelBufferObjects to push YUV textures to GPU in OpenGL Mode.. This may slightly increase the performances of the playback.</p>
 <b>DefaultNavigationMode</b> [value: <i>"Walk", "Fly", "Examine"</i>]
 <p style="text-indent: 5%">
 Overrides the default navigation mode of MPEG-4/VRML (Walk) and X3D (Examine).</p>
@@ -374,12 +379,13 @@ Specifies whether text shall be drawn to a texture and then rendered or directly
 <p style="text-indent: 5%">
 Read-only option listing the OpenGL extensions supported by the GL driver. Only valid after the 3D renderer has been used.
 </p>
-<b>StereoType</b> [value: <i>"None", "SideBySide", "TopToBottom", "Anaglyph", "Columns", "Rows", "SPV19", "Custom"</i>]
+<b>StereoType</b> [value: <i>"None", "SideBySide", "StereoHeadset", "TopToBottom", "Anaglyph", "Columns", "Rows", "SPV19", "Custom"</i>]
 <p style="text-indent: 5%">
 Specifies the stereo output type (default "None"). If your graphic card does not support OpenGL shaders, only <i>SideBySide</i> and <i>TopToBottom</i> modes will be available.</p>
 <ul>
 <li>"SideBySide": images are displayed side by side from left to right.</li>
 <li>"TopToBottom": images are displayed from top (laft view) to bottom (right view).</li>
+<li>"StereoHeadset": same as SideBySide except that view aspect ratio is not changed.</li>
 <li>"Anaglyph": Standard color anaglyph (red for left view, green and blue for right view) is used.</li>
 <li>"Columns": images are interleaved by columns, left view on even columns and left view on odd columns.</li>
 <li>"Rows": images are interleaved by columns, left view on even rows and left view on odd rows.</li>
@@ -407,6 +413,10 @@ Specifies the camera layout. The default value is OffAxis in (auto-)stereo modes
 <b>ViewDistance</b> [value: <i>integer</i>]
 <p style="text-indent: 5%">
 Specifies the distance in cm between the camera and the zero-disparity plane. There is currently no automatic calibration of depth in GPAC.</p>
+
+<b>Output8bit</b> [value: <i>"yes" "no"</i>]
+<p style="text-indent: 5%">
+Specifies whether 10 bit textures should be converted to 8 bit before GPU upload or use as is. Default is no if screen supports 10 bpp, yes otherwise.</p>
 
 
 <br/><br/>
@@ -507,6 +517,15 @@ Specifies the length of the decoding buffer in milliseconds. The client will wai
 Specifies rebuffering length of the decoding buffer in milliseconds. Whenever the decoding buffer fullness is less than this value, the object clock is paused and 
 the stream rebuffered till BufferLength. Therefore a value of 0 means no rebuffering. A module may decide to use a different value based on protocol and network jitters.
 </p>
+<b>BufferMaxOccupancy</b> [value: <i>positive integer</i>]
+<p style="text-indent: 5%">
+Specifies maximum buffer occupancy for buffer regulation. Corresponds to the max amount of data to be prefetch. Any value less than BufferLength will be forced to BufferLength.
+</p>
+
+<b>LowLatencyBufferMax</b> [value: <i>positive integer</i>]
+<p style="text-indent: 5%">
+Specifies the maximum buffer level for low latency mode, in ms. If media buffer max is above this value, full buffering will be done (clock resume at first frame displayed). Default value is 500 ms.</p>
+</p>
 <b>MobileIP</b> [value: <i>IP Address</i>]
 <p style="text-indent: 5%">
 Specifies a Mobile IP interface overriding the default IP. If set, all sockets will be locally bound to this IP address.</p>
@@ -523,6 +542,7 @@ Specifies the default HTTP rebuffer time in ms. When playback position reaches d
 <p style="text-indent: 5%">
 Specifies whether auto rebuffering is used. When auto-rebuffering is used, playback only resumes when estimated time to download the rest of the movie is less than remaining time of the playback. Default value is no.</p>
 </p>
+
 
 
 <br/><br/>
@@ -560,6 +580,9 @@ Specifies whether downloaded files shall be removed once used.</p>
 <b>DisableCache</b> [value: <i>"yes" "no"</i>]
 <p style="text-indent: 5%">
 Specifies whether HTTP caching instructions are disabled or not.</p>
+<b>AllowOfflineCache</b> [value: <i>"yes" "no"</i>]
+<p style="text-indent: 5%">
+When enabled, allows HTTP request to use cached file if any when network is not available.</p>
 <b>MaxRate</b> [value: <i>positive integer</i>]
 <p style="text-indent: 5%">
 Specifies a maximum data rate in kilo bits per seconds for file downloading. This is used for simulation purposes. A value of 0 means no rate restriction.</p>
@@ -569,6 +592,9 @@ Specifies an alternate user agent (default one is "GPAC $VERSION").</p>
 <b>HTTPHeadTimeout</b> [value: <i>positive integer</i>]
 <p style="text-indent: 5%">
 Specifies timeout in milliseconds before considering HEAD request failed. 0 means no HEAD request is issued, only GET.</p>
+<b>AllowBrokenCertificate</b> [value: <i>yes no</i>]
+<p style="text-indent: 5%">
+If set to yes, ignores invalid certificates and process anyway. Default is no.</p>
 
 <br/><br/>
 <a name="HTTPProxy"></a>
@@ -723,18 +749,25 @@ Specifies whether downloaded files should not be deleted.</p>
 <b>AutoSwitchCount</b> [value: <i>positive integer</i>]
 <p style="text-indent: 5%">
 For debug purposes, instructs the player to switch representation every N segments. If 0 (default), switching is disabled.</p>
-<b>BufferMode</b> [value: <i>segments, minBuffer, none</i>]
+<b>BufferingMode</b> [value: <i>segments, minBuffer, none</i>]
 <p style="text-indent: 5%">
 Selects buffer mode:
 <ul> 
 <li>segments: buffers complete segments as indicated in MPD before handing them to the player.</li>
-<li>minBuffer: asks the player to buffer media for the time indicated in the MPD (default mode), but segments are not pre-buffered.</li> 
+<li>minBuffer: asks the player to buffer media for the time indicated in the MPD, but segments are not pre-buffered. Default mode.</li> 
 <li>none: uses the  player settings for buffering.</li> 
 </ul>
 </p>
-<b>DisableSwitching</b> [value: <i>yes, no</i>]
+<b>NetworkAdaptation</b> [value: <i>disabled, bandwidth, buffer</i>]
 <p style="text-indent: 5%">
-Disables automatic adaptation logic. Default is no</p>
+Sets automatic adaptation logic mode:
+<ul>
+<li>disabled: no adaptation to network condition is used.</li>
+<li>bandwidth: network adaptation is based only on available download rate.</li> 
+<li>buffer: network adaptation is based on available download rate for quality increase and buffer levels for quality drops. Default mode.</li> 
+</ul>
+
+</p>
 <b>MemoryStorage</b> [value: <i>yes, no</i>]
 <p style="text-indent: 5%">
 Files are only stored in memory and destroyed after playback, no disk IO is used. Default is yes</p>
@@ -744,9 +777,11 @@ Forces the player to set the output video resolution to the max resolution avail
 <b>UseScreenResolution</b> [value: <i>yes, no</i>]
 <p style="text-indent: 5%">
 Disables all resolutions that are higher than the screen resolution. Default is yes</p>
-<b>StartRepresentation</b> [value: <i>minBandwidth, maxBandwidth, minQuality, maxQuality</i>]
+<b>StartRepresentation</b> [value: <i>minBandwidth, maxBandwidth, maxBandwidthTiles, minQuality, maxQuality</i>]
 <p style="text-indent: 5%">
-Instructs the DASH client to start playing the indicated representation before doing any switching. Default is minBandwidth.</p>
+Instructs the DASH client to start playing the indicated representation before doing any switching. Default is minBandwidth.
+<i>maxBandwidthTiles</i> selects the highest bandwidth for tiles with high priority and lowest for other tiles, whereas <i>maxBandwidth</i> selects the highest bandwidth for tiles with high priority and closest lower bandwidth for other tiles.
+</p>
 <b>InitialTimeshift</b> [value: <i>positive integer </i> ]
 <p style="text-indent: 5%">
 If between 0 and 100, indicates the percentage of the timeshift buffer when starting playback.<br/> 
@@ -758,7 +793,7 @@ Sets low-latency mode enabled. In low-latency mode, media data is parsed as soon
 If chunk is selected, media data is re-parsed at each HTTP 1.1 chunk end. If always is selected, media data is re-parsed as soon as HTTP data is received.</p> 
 <b>AllowAbort</b> [value: <i>yes, no</i>]
 <p style="text-indent: 5%">
-Enables aborts of HTTP transfer when rate gets too low. This may result in a packet drops. Default is no.</p>
+Enables aborts of HTTP transfer when rate gets too low. This imply data loss and may also result in a connection loss. Default is no.</p>
 <b>UseServerUTC</b> [value: <i>yes, no</i>]
 <p style="text-indent: 5%">
 Enables using <i>Server-UTC</i> HTTP header to compensate any drift between client and server. Default is yes.</p>
@@ -766,12 +801,51 @@ Enables using <i>Server-UTC</i> HTTP header to compensate any drift between clie
 <p style="text-indent: 5%">
 Plays only the adaptation set indicated by its index in the MPD. If index is negative, all sets are used (default mode).
 </p>
+<b>TimeBetween404</b> [value: <i>unsigned integer</i>]
+<p style="text-indent: 5%">
+Sets how many millisconds to wait between two 404 on the same segment. Default is 500. 
+</p>
+<b>SegmentExpirationThreshold</b> [value: <i>unsigned integer</i>]
+<p style="text-indent: 5%">
+Sets how many millisconds to wait after the segment AvailabilityEndDate before considering the segment lost. Default is 100. 
+</p>
+<b>ThreadedDownload</b> [value: <i>yes no</i>]
+<p style="text-indent: 5%">
+Enables threade download of media segments. When low latency mode is used, this option is forced to yes. Default is no. 
+</p>
+<b>SpeedAdaptation</b> [value: <i>yes no</i>]
+<p style="text-indent: 5%">
+Enables adaptation based on playback speed. Default is no. 
+</p>
 <b>SwitchProbeCount</b> [value: <i>unsigned integer</i>]
 <p style="text-indent: 5%">
 Sets how many segments the client shall wait before switching up bandwidth. If 0, switch will happen as soon as the bandwidth is enough, but this is more prone to network variations. 
 Default value is 1.
 </p>
-
+<b>AgressiveSwitching</b> [value: <i>yes no</i>]
+<p style="text-indent: 5%">
+If yes, switching targets to the closest bandwidth fitting the available download rate. If no, switching targets the lowest bitrate representation that is above the currently played (eg does not try to switch to max bandwidth). Default value is no.
+</p>
+<b>TileAdaptation</b> [value: <i>none, rows, reverseRows, middleRows, columns, reverseColumns, middleColumns, center</i>]
+<p style="text-indent: 5%">
+Selects how bitrate is shared across tiles of a video:
+<ul> 
+<li>none: bitrate is shared equaly accross all tiles (default).</li>
+<li>rows: bitrate decreases for each row of tiles starting from the top, same rate for each tile on the row.</li> 
+<li>reverseRows: bitrate decreases for each row of tiles starting from the bottom, same rate for each tile on the row.</li> 
+<li>middleRows: bitrate decreased for top and bottom rows only, same rate for each tile on the row.</li> 
+<li>columns: bitrate decreases for each columns of tiles starting from the left, same rate for each tile on the columns.</li> 
+<li>reverseColumns: bitrate decreases for each columns of tiles starting from the right, same rate for each tile on the columns.</li> 
+<li>middleColumns: bitrate decreased for left and right columns only, same rate for each tile on the columns.</li> 
+<li>center: bitrate decreased for all tiles on the edge of the picture.</li> 
+<li>edges: bitrate decreased for all tiles on the center of the picture.</li> 
+</ul>
+</p>
+<b>TileRateDecrease</b> [value: <i>percentage</i>]
+<p style="text-indent: 5%">
+Indicates the amount of bandwidth to use at each quality level. The rate is recursively applied at each level, e.g. if 50%, Level1 gets 50%, level2 gets 25%, ... If 100, automatic rate allocation will be done by maximizing the quality in order of priority. 
+If 0, bitstream will not be smoothed across tiles/qualities, and concurrency may happen between different media.
+Default is 100.</p>
 
 
 <br/><br/>
@@ -890,6 +964,32 @@ The "DektecVideo" section of the config file holds the configuration options for
 <b>SDIOutput</b> [value: <i>unsigned integer</i>]
 <p style="text-indent: 5%">
 Specifies the output port of the card. Default value is 1.</p>
+
+<br/><br/>
+
+<a name="M2TS"></a>
+<span style="text-decoration: underline;"><b>Section "M2TS"</b></span> <i><a href="#Overview">Back to top</a></i>
+<p>
+The "M2TS" section of the config file holds configuration options for MPEG-2 TS demultiplexer module.</a>
+</p>
+<b>ForceTEMILocation</b> [value: <i>URL string</i>]
+<p style="text-indent: 5%">
+Overrides the URL in TEMI location descriptor with the specified value.</p>
+<b>RecordTo</b> [value: <i>file path</i>]
+<p style="text-indent: 5%">
+Records the TS content to the specified file.</p>
+
+<a name="RAW"></a>
+<span style="text-decoration: underline;"><b>Section "RAWVideo"</b></span> <i><a href="#Overview">Back to top</a></i>
+<p>
+The "RAWVideo" section of the config file holds configuration options for Raw video and audio output module.</a>
+</p>
+<b>RawOutput</b> [value: <i>"null" or any string</i>]
+<p style="text-indent: 5%">
+If set to <i>null</i> string, the raw output does nothing (no bliting calls, no backbuffer) - used for bench mode only.</p>
+<b>PixelFormat</b> [value: <i>555, 565, rgb, bgr, rgb32, bgr32, rgba, argb</i>]
+<p style="text-indent: 5%">
+Sets the output video format of the raw module, mostly used for testing. The default format is rgb.</p>
 
 </body>
 </html>

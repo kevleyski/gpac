@@ -28,11 +28,11 @@
 
 /*!
  *	\file <gpac/download.h>
- *	\brief Downloader functions.
+ *	\brief HTTP(S) Downloader.
  */
 
 /*!
- *	\addtogroup dld_grp downloader
+ *	\addtogroup dld_grp Downloader
  *	\ingroup utils_grp
  *	\brief File Downloader objects
  *
@@ -159,28 +159,28 @@ typedef enum
 } GF_NetIOStatus;
 
 /*!session download flags*/
-enum
+typedef enum
 {
 	/*!session is not threaded, the user must explicitely fetch the data , either with the function gf_dm_sess_fetch_data
 	or the function gf_dm_sess_process- if the session is threaded, the user must call gf_dm_sess_process to start the session*/
-	GF_NETIO_SESSION_NOT_THREADED	=	1,
-	/*! session data is live, e.g. data will be sent to the user if threaded mode (live streams like radios & co)
-			Whether the data is cached or not to disk cannot be controlled by the user at the current time.
-	*/
-	GF_NETIO_SESSION_NOT_CACHED	=	1<<1,
+	GF_NETIO_SESSION_NOT_THREADED = 1,
+	/*! session data is cached or not */
+	GF_NETIO_SESSION_NOT_CACHED = 1<<1,
+	/*! forces data notification even when session is threaded*/
+	GF_NETIO_SESSION_NOTIFY_DATA = 1<<2,
 	/*indicates that the connection to the server should be kept once the download is successfully completed*/
-	GF_NETIO_SESSION_PERSISTENT =	1<<2,
+	GF_NETIO_SESSION_PERSISTENT = 1<<3,
 	/*file is stored in memory, and the cache name is set to gpac://%u@%p, where %d is the size in bytes and %d is the the pointer to the memory.
 	Memory cached files are destroyed upon downloader destruction*/
-	GF_NETIO_SESSION_MEMORY_CACHE	=	1<<3,
-};
+	GF_NETIO_SESSION_MEMORY_CACHE = 1<<4,
+} GF_NetIOFlags;
 
 
 /*!protocol I/O parameter*/
 typedef struct
 {
 	/*!parameter message type*/
-	u32 msg_type;
+	GF_NetIOStatus msg_type;
 	/*error code if any. Valid for all message types.*/
 	GF_Err error;
 	/*!data received or data to send. Only valid for GF_NETIO_GET_CONTENT and GF_NETIO_DATA_EXCHANGE (when no cache is setup) messages*/
@@ -392,10 +392,10 @@ u64 gf_dm_sess_get_utc_start(GF_DownloadSession *sess);
 /*!
  *\brief fetch session object
  *
- *Fetch the session object (process all headers and data transfer). This is only usable if the session is not threaded
+ *Fetches the session object (process all headers and data transfer). This is only usable if the session is not threaded
  *\param sess the download session
  *\return the last error in the session or 0 if none*/
-GF_Err gf_dm_sess_process(GF_DownloadSession * sess);
+GF_Err gf_dm_sess_process(GF_DownloadSession *sess);
 
 /*!
  *\brief fetch session object headers
@@ -412,6 +412,7 @@ GF_Err gf_dm_sess_process_headers(GF_DownloadSession * sess);
  *\param sess the download session
  *\return the session status*/
 u32 gf_dm_sess_get_status(GF_DownloadSession * sess);
+
 /*!
  *\brief Get session resource url
  *
@@ -420,6 +421,7 @@ u32 gf_dm_sess_get_status(GF_DownloadSession * sess);
  *\return the associated URL
  */
 const char *gf_dm_sess_get_resource_name(GF_DownloadSession *sess);
+
 /*!
  *\brief Get session original resource url
  *
@@ -429,18 +431,18 @@ const char *gf_dm_sess_get_resource_name(GF_DownloadSession *sess);
  */
 const char *gf_dm_sess_get_original_resource_name(GF_DownloadSession *sess);
 
-
+#ifndef GPAC_DISABLE_CORE_TOOLS
 /*!
  * \brief Download a file over the network using a download manager
- * \param dm The downlaod manager to use, function will use all associated cache ressources
+ * \param dm The download manager to use, function will use all associated cache ressources
  * \param url The url to download
  * \param filename The filename to download
  * \param start_range start position of a byte range
  * \param end_range end position of a byte range
+ * \param redirected_url If not NULL, \p redirected_url will be allocated and filled with the URL after redirection. Caller takes ownership
  * \return GF_OK if everything went fine, an error otherwise
  */
-GF_Err gf_dm_wget_with_cache(GF_DownloadManager * dm,
-                             const char *url, const char *filename, u64 start_range, u64 end_range);
+GF_Err gf_dm_wget_with_cache(GF_DownloadManager * dm, const char *url, const char *filename, u64 start_range, u64 end_range, char **redirected_url);
 
 /*!
  * \brief Same as gf_dm_wget_with_cache, but initializes the GF_DownloadManager by itself.
@@ -449,9 +451,12 @@ GF_Err gf_dm_wget_with_cache(GF_DownloadManager * dm,
  * \param filename The filename to download
  * \param start_range start position of a byte range
  * \param end_range end position of a byte range
+ * \param redirected_url If not NULL, \p redirected_url will be allocated and filled with the URL after redirection. Caller takes ownership
  * \return GF_OK if everything went fine, an error otherwise
  */
-GF_Err gf_dm_wget(const char *url, const char *filename, u64 start_range, u64 end_range);
+GF_Err gf_dm_wget(const char *url, const char *filename, u64 start_range, u64 end_range, char **redirected_url);
+
+#endif /* GPAC_DISABLE_CORE_TOOLS */
 
 /*!
  *\brief Reset session
@@ -533,7 +538,7 @@ u32 gf_dm_get_data_rate(GF_DownloadManager *dm);
  *
  *Gets the cumultated bitrate in of all active sessions.
  *\param dm the download manager object
- *\return the cumulated rate in bits per sec. If 0, HTTP rate is not limited
+ *\return the cumulated rate in bits per sec.
  */
 u32 gf_dm_get_global_rate(GF_DownloadManager *dm);
 
@@ -541,7 +546,7 @@ u32 gf_dm_get_global_rate(GF_DownloadManager *dm);
 /*
  *\brief fetches remote file in memory
  *
- *Fetches remote file in memory .
+ *Fetches remote file in memory.
  *\param url the data to fetch
  *\param out_data output data (allocated by function)
  *\param out_size output data size
@@ -559,7 +564,7 @@ GF_Err gf_dm_get_file_memory(const char *url, char **out_data, u32 *out_size, ch
  *\param req_hdr_size request header size in bytes. May be NULL.
  *\param rsp_hdr_size response header size in bytes. May be NULL.
  *\param connect_time connection time in micro seconds. May be NULL.
- *\param reply_time ellapsed time between request sent and response header received, in micro seconds. May be NULL.
+ *\param reply_time elapsed time between request sent and response header received, in micro seconds. May be NULL.
  *\param download_time download time since request sent, in micro seconds. May be NULL.
  *\return error code if any
  */

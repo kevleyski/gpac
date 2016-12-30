@@ -43,8 +43,8 @@ void group_2d_traverse(GF_Node *node, GroupingNode2D *group, GF_TraverseState *t
 	backup = gf_node_dirty_get(node);
 	if (backup & GF_SG_CHILD_DIRTY) {
 		GF_SensorHandler *hsens;
-        Bool check_anchor=0;
-        u32 ntag = gf_node_get_tag(node);
+		Bool check_anchor=0;
+		u32 ntag = gf_node_get_tag(node);
 		group->flags &= ~GROUP_HAS_SENSORS;
 		if (group->sensors) gf_list_reset(group->sensors);
 
@@ -54,9 +54,9 @@ void group_2d_traverse(GF_Node *node, GroupingNode2D *group, GF_TraverseState *t
 		but still mark the group as empty*/
 		group->bounds.width = 0;
 		/*special case for anchor which is a parent node acting as a sensor*/
-        if (ntag==TAG_MPEG4_Anchor) check_anchor=1;
+		if (ntag==TAG_MPEG4_Anchor) check_anchor=1;
 #ifndef GPAC_DISABLE_X3D
-        else if (ntag==TAG_X3D_Anchor) check_anchor=1;
+		else if (ntag==TAG_X3D_Anchor) check_anchor=1;
 #endif
 		if (check_anchor) {
 			GF_SensorHandler *gf_sc_anchor_get_handler(GF_Node *n);
@@ -221,7 +221,7 @@ void group_2d_traverse_with_order(GF_Node *node, GroupingNode2D *group, GF_Trave
 	backup = gf_node_dirty_get(node);
 	if (backup & GF_SG_CHILD_DIRTY) {
 		GF_SensorHandler *hsens;
-        Bool check_anchor=0;
+		Bool check_anchor=0;
 		/*never trigger bounds recompute in 2D since we don't cull 2D groups*/
 		u32 ntag = gf_node_get_tag(node);
 		group->flags &= ~GROUP_HAS_SENSORS;
@@ -426,6 +426,12 @@ void group_3d_traverse(GF_Node *node, GroupingNode *group, GF_TraverseState *tr_
 	GF_ChildNodeItem *l;
 
 	if (gf_node_dirty_get(node) & GF_SG_CHILD_DIRTY) {
+		//we are drawing 3D object but configured for 2D, force 3D
+		if (!tr_state->visual->type_3d && tr_state->visual->compositor->hybrid_opengl) {
+			tr_state->visual->compositor->root_visual_setup=0;
+			tr_state->visual->compositor->force_type_3d=1;
+		}
+		
 		/*need to recompute bounds*/
 		if (tr_state->traversing_mode!=TRAVERSE_GET_BOUNDS) {
 			/*traverse subtree to recompute bounds*/
@@ -451,11 +457,9 @@ void group_3d_traverse(GF_Node *node, GroupingNode *group, GF_TraverseState *tr_
 				hsens = compositor_mpeg4_get_sensor_handler_ex(l->node, GF_TRUE);
 				if (hsens) {
 					group->flags |= GROUP_HAS_SENSORS;
-					break;
 				}
 				else if (get_light_type(l->node)) {
 					group->flags |= GROUP_HAS_LIGHTS;
-					break;
 				}
 				l = l->next;
 			}
@@ -645,6 +649,10 @@ void parent_node_start_group(ParentNode2D *group, GF_Node *n, Bool discardable)
 		n = cg->child;
 	}
 	GF_SAFEALLOC(cg, ChildGroup);
+	if (!cg) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate child group\n"));
+		return;
+	}
 	cg->child = n;
 	cg->text_type = discardable;
 	gf_list_add(group->groups, cg);
@@ -679,7 +687,7 @@ void parent_node_traverse(GF_Node *node, ParentNode2D *group, GF_TraverseState *
 	GF_ChildNodeItem *l;
 
 	if (gf_node_dirty_get(node) & GF_SG_CHILD_DIRTY) {
-        Bool check_anchor=0;
+		Bool check_anchor=0;
 		/*parent groups must recompute their bounds themselves since they modify children layout*/
 		u32 ntag = gf_node_get_tag(node);
 		group->flags &= ~GROUP_HAS_SENSORS;

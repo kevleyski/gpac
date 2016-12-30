@@ -20,14 +20,14 @@ OBJS=wav_out.o
 
 SRCS := $(OBJS:.o=.c) 
 
-LIB=gm_wav_audio.$(DYN_LIB_SUFFIX)
+LIB=gm_wav_audio$(DYN_LIB_SUFFIX)
 #LDFLAGS+=-export-symbols wav_out.def 
 
 all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) -L../../bin/gcc -lgpac $(EXTRALIBS) 
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) -L../../bin/gcc -lgpac $(EXTRALIBS)  $(LDFLAGS)
 
 clean: 
 	rm -f $(OBJS) ../../bin/gcc/$(LIB)

@@ -53,7 +53,7 @@ OBJS=x11_out.o
 
 SRCS := $(OBJS:.o=.c) 
 
-LIB=gm_x11_out.$(DYN_LIB_SUFFIX)
+LIB=gm_x11_out$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
 #LDFLAGS+=-export-symbols  
 endif
@@ -63,9 +63,9 @@ all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) -lX11 -L../../bin/gcc -lgpac $(EXTRALIBS)
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) -lX11 -L../../bin/gcc -lgpac $(EXTRALIBS) $(LDFLAGS)
 ifeq ($(STATICBUILD),yes)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/gm_x11_out-static.$(DYN_LIB_SUFFIX) $(OBJS) -lX11 -L../../bin/gcc -lgpac_static $(EXTRALIBS)
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/gm_x11_out-static$(DYN_LIB_SUFFIX) $(OBJS) -lX11 -L../../bin/gcc -lgpac_static $(EXTRALIBS) $(LDFLAGS)
 endif
 
 

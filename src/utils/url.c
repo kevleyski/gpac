@@ -36,9 +36,7 @@ enum
 	/*relative URL*/
 	GF_URL_TYPE_RELATIVE ,
 	/*any other URL*/
-	GF_URL_TYPE_ANY,
-	/*BLOB URL*/
-	GF_URL_TYPE_BLOB
+	GF_URL_TYPE_ANY
 };
 
 /*resolve the protocol type, for a std URL: http:// or ftp:// ...*/
@@ -47,12 +45,13 @@ static u32 URL_GetProtocolType(const char *pathName)
 	char *begin;
 	if (!pathName) return GF_URL_TYPE_ANY;
 
+	/* URL with the data scheme are not relative to avoid concatenation */
+	if (!strnicmp(pathName, "data:", 5)) return GF_URL_TYPE_ANY;
+
 	if ((pathName[0] == '/') || (pathName[0] == '\\')
 	        || (pathName[1] == ':')
 	        || ((pathName[0] == ':') && (pathName[1] == ':'))
 	   ) return GF_URL_TYPE_FILE;
-
-	if (!strncmp(pathName, "blob:", 5)) return GF_URL_TYPE_BLOB;
 
 	begin = strstr(pathName, "://");
 	if (!begin) begin = strstr(pathName, "|//");
@@ -65,7 +64,7 @@ static u32 URL_GetProtocolType(const char *pathName)
 Bool gf_url_is_local(const char *pathName)
 {
 	u32 mode = URL_GetProtocolType(pathName);
-	return (mode==GF_URL_TYPE_ANY) ? 0 : 1;
+	return (mode==GF_URL_TYPE_ANY) ? GF_FALSE : GF_TRUE;
 }
 
 char *gf_url_get_absolute_path(const char *pathName, const char *parentPath)
@@ -97,14 +96,19 @@ GF_EXPORT
 char *gf_url_concatenate(const char *parentName, const char *pathName)
 {
 	u32 pathSepCount, i, prot_type;
-	char *outPath, *name, *rad;
+	char *outPath, *name, *rad, *tmp2;
 	char tmp[GF_MAX_PATH];
 
 	if (!pathName && !parentName) return NULL;
 	if (!pathName) return gf_strdup(parentName);
 	if (!parentName) return gf_strdup(pathName);
 
-	if ( (strlen(parentName) > GF_MAX_PATH) || (strlen(pathName) > GF_MAX_PATH) ) return NULL;
+	if (!strncmp(pathName, "data:", 5)) return gf_strdup(pathName);
+
+	if ((strlen(parentName) > GF_MAX_PATH) || (strlen(pathName) > GF_MAX_PATH)) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("URL too long for concatenation: \n%s\n", pathName));
+		return NULL;
+	}
 
 	prot_type = URL_GetProtocolType(pathName);
 	if (prot_type != GF_URL_TYPE_RELATIVE) {
@@ -148,7 +152,7 @@ char *gf_url_concatenate(const char *parentName, const char *pathName)
 			i++;
 		}
 		name = gf_url_concatenate(the_path, pathName);
-		outPath = gf_malloc(strlen(parentName) + strlen(name) + 2);
+		outPath = (char*)gf_malloc(strlen(parentName) + strlen(name) + 2);
 		sprintf(outPath, "%s=%s", parentName, name);
 		rad[0] = '=';
 		gf_free(name);
@@ -219,7 +223,10 @@ char *gf_url_concatenate(const char *parentName, const char *pathName)
 	//strip query part or fragment part
 	rad = strchr(tmp, '?');
 	if (rad) rad[0] = 0;
-	rad = strchr(tmp, '#');
+	tmp2 = strrchr(tmp, '/');
+	if (!tmp2) tmp2 = strrchr(tmp, '\\');
+	if (!tmp2) tmp2 = tmp;
+	rad = strchr(tmp2, '#');
 	if (rad) rad[0] = 0;
 
 	/*remove the last /*/
@@ -289,33 +296,57 @@ void gf_url_to_fs_path(char *sURL)
 	}
 }
 
+//TODO handle reserved characters
+const char *pce_special = " %";
+const char *pce_encoded = "0123456789ABCDEF";
+
 char *gf_url_percent_encode(const char *path)
 {
-	char *outpath, *sep;
-	u32 count;
+	char *outpath;
+	u32 i, count, len;
 	if (!path) return NULL;
 
-	sep = strchr(path, ' ');
-	if (!sep) return gf_strdup(path);
-	count = 1;
-	sep ++;
-	while (1) {
-		sep = strchr(sep, ' ');
-		if (!sep) break;
-		sep ++;
-		count ++;
-		sep++;
+	len = (u32) strlen(path);
+	count = 0;
+	for (i=0; i<len; i++) {
+		u8 c = path[i];
+		if (strchr(pce_special, c) != NULL) {
+			if ((i+2<len) && ((strchr(pce_encoded, path[i+1]) == NULL) || (strchr(pce_encoded, path[i+2]) == NULL))) {
+				count+=2;
+			}
+		} else if (c>>7) {
+			count+=2;
+		}
 	}
-	outpath = gf_malloc(sizeof(char) * (strlen(path) + 2*count + 1));
+	if (!count) return gf_strdup(path);
+	outpath = (char*)gf_malloc(sizeof(char) * (len + count + 1));
 	strcpy(outpath, path);
-	while (1) {
-		sep = strchr(outpath, ' ');
-		if (!sep) break;
-		memmove(sep+3, sep+1, strlen(sep+1)+1);
-		sep[0] = '%';
-		sep[1] = '2';
-		sep[2] = '0';
+
+	count = 0;
+	for (i=0; i<len; i++) {
+		Bool do_enc = GF_FALSE;
+		u8 c = path[i];
+
+		if (strchr(pce_special, c) != NULL) {
+			if ((i+2<len) && ((strchr(pce_encoded, path[i+1]) == NULL) || (strchr(pce_encoded, path[i+2]) == NULL))) {
+				do_enc = GF_TRUE;
+			}
+		} else if (c>>7) {
+			do_enc = GF_TRUE;
+		}
+
+		if (do_enc) {
+			char szChar[3];
+			sprintf(szChar, "%02X", c);
+			outpath[i+count] = '%';
+			outpath[i+count+1] = szChar[0];
+			outpath[i+count+2] = szChar[1];
+			count+=2;
+		} else {
+			outpath[i+count] = c;
+		}
 	}
+	outpath[i+count] = 0;
 	return outpath;
 }
 
@@ -339,9 +370,9 @@ Bool gf_url_get_resource_path(const char *sURL, char *res_path)
 	if (!sep) sep = strrchr(res_path, '\\');
 	if (sep) {
 		sep[1] = 0;
-		return 1;
+		return GF_TRUE;
 	}
-	return 0;
+	return GF_FALSE;
 }
 
 

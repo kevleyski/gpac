@@ -55,7 +55,7 @@ int dc_str_to_resolution(char *str, int *width, int *height)
 }
 
 
-#define DEFAULT_VIDEO_BITRATE    400000
+#define DEFAULT_VIDEO_BITRATE    1000000
 #define DEFAULT_VIDEO_FRAMERATE  25
 #define DEFAULT_VIDEO_WIDTH      640
 #define DEFAULT_VIDEO_HEIGHT     480
@@ -153,8 +153,12 @@ static void dc_create_configuration(CmdData *cmd_data)
 				gf_cfg_set_key(conf, section_name, "channels", value);
 			}
 
-			if (!gf_cfg_get_key(conf, section_name, "codec"))
-				gf_cfg_set_key(conf, section_name, "codec", DEFAULT_AUDIO_CODEC);
+			if (!gf_cfg_get_key(conf, section_name, "codec")) {
+				if (strlen(cmd_data->audio_data_conf.codec))
+					gf_cfg_set_key(conf, section_name, "codec", cmd_data->audio_data_conf.codec);
+				else
+					gf_cfg_set_key(conf, section_name, "codec", DEFAULT_AUDIO_CODEC);
+			}
 		}
 	}
 }
@@ -228,14 +232,14 @@ int dc_read_configuration(CmdData *cmd_data)
 	fprintf(stdout, "\33[34m\33[1m");
 	fprintf(stdout, "Configurations:\n");
 	for (i=0; i<gf_list_count(cmd_data->video_lst); i++) {
-		VideoDataConf *video_data_conf = gf_list_get(cmd_data->video_lst, i);
+		VideoDataConf *video_data_conf = (VideoDataConf*)gf_list_get(cmd_data->video_lst, i);
 		fprintf(stdout, "    id:%s\tres:%dx%d\tvbr:%d\n", video_data_conf->filename,
 		        video_data_conf->width, video_data_conf->height,
 		        video_data_conf->bitrate/*, video_data_conf->framerate, video_data_conf->codec*/);
 	}
 
 	for (i=0; i<gf_list_count(cmd_data->audio_lst); i++) {
-		AudioDataConf *audio_data_conf = gf_list_get(cmd_data->audio_lst, i);
+		AudioDataConf *audio_data_conf = (AudioDataConf*)gf_list_get(cmd_data->audio_lst, i);
 		fprintf(stdout, "    id:%s\tabr:%d\n", audio_data_conf->filename, audio_data_conf->bitrate/*, audio_data_conf->samplerate, audio_data_conf->channels,audio_data_conf->codec*/);
 	}
 	fprintf(stdout, "\33[0m");
@@ -287,7 +291,7 @@ int dc_read_switch_config(CmdData *cmd_data)
 		const char *section_type = gf_cfg_get_key(conf, section_name, "type");
 
 		if (strcmp(section_type, "video") == 0) {
-			VideoDataConf *video_data_conf = gf_malloc(sizeof(VideoDataConf));
+			VideoDataConf *video_data_conf = (VideoDataConf*)gf_malloc(sizeof(VideoDataConf));
 
 			strcpy(video_data_conf->source_id, section_name);
 			strcpy(video_data_conf->filename, gf_cfg_get_key(conf, section_name, "source"));
@@ -307,7 +311,7 @@ int dc_read_switch_config(CmdData *cmd_data)
 		}
 		else if (strcmp(section_type, "audio") == 0)
 		{
-			AudioDataConf *audio_data_conf = gf_malloc(sizeof(AudioDataConf));
+			AudioDataConf *audio_data_conf = (AudioDataConf*)gf_malloc(sizeof(AudioDataConf));
 			strcpy(audio_data_conf->source_id, section_name);
 			strcpy(audio_data_conf->filename, gf_cfg_get_key(conf, section_name, "source"));
 
@@ -328,14 +332,14 @@ int dc_read_switch_config(CmdData *cmd_data)
 	fprintf(stdout, "\33[34m\33[1m");
 	fprintf(stdout, "Sources:\n");
 	for (i=0; i<gf_list_count(cmd_data->vsrc); i++) {
-		VideoDataConf *video_data_conf = gf_list_get(cmd_data->vsrc, i);
+		VideoDataConf *video_data_conf = (VideoDataConf*)gf_list_get(cmd_data->vsrc, i);
 		strftime(start_time, 20, "%Y-%m-%d %H:%M:%S", localtime(&video_data_conf->start_time));
 		strftime(end_time, 20, "%Y-%m-%d %H:%M:%S", localtime(&video_data_conf->end_time));
 		fprintf(stdout, "    id:%s\tsource:%s\tstart:%s\tend:%s\n", video_data_conf->source_id, video_data_conf->filename, start_time, end_time);
 	}
 
 	for (i=0; i<gf_list_count(cmd_data->asrc); i++) {
-		AudioDataConf *audio_data_conf = gf_list_get(cmd_data->asrc, i);
+		AudioDataConf *audio_data_conf = (AudioDataConf*)gf_list_get(cmd_data->asrc, i);
 		strftime(start_time, 20, "%Y-%m-%d %H:%M:%S", localtime(&audio_data_conf->start_time));
 		strftime(end_time, 20, "%Y-%m-%d %H:%M:%S", localtime(&audio_data_conf->end_time));
 		fprintf(stdout, "    id:%s\tsource:%s\tstart:%s\tend:%s\n", audio_data_conf->source_id, audio_data_conf->filename, start_time, end_time);
@@ -356,7 +360,7 @@ void dc_cmd_data_init(CmdData *cmd_data)
 	cmd_data->ast_offset = -1;
 	cmd_data->min_buffer_time = -1;
 	cmd_data->minimum_update_period = -1;
-	cmd_data->use_source_timing = 1;
+	cmd_data->use_source_timing = GF_TRUE;
 
 	cmd_data->audio_lst = gf_list_new();
 	cmd_data->video_lst = gf_list_new();
@@ -367,14 +371,14 @@ void dc_cmd_data_init(CmdData *cmd_data)
 void dc_cmd_data_destroy(CmdData *cmd_data)
 {
 	while (gf_list_count(cmd_data->audio_lst)) {
-		AudioDataConf *audio_data_conf = gf_list_last(cmd_data->audio_lst);
+		AudioDataConf *audio_data_conf = (AudioDataConf*)gf_list_last(cmd_data->audio_lst);
 		gf_list_rem_last(cmd_data->audio_lst);
 		gf_free(audio_data_conf);
 	}
 	gf_list_del(cmd_data->audio_lst);
 
 	while (gf_list_count(cmd_data->video_lst)) {
-		VideoDataConf *video_data_conf = gf_list_last(cmd_data->video_lst);
+		VideoDataConf *video_data_conf = (VideoDataConf*)gf_list_last(cmd_data->video_lst);
 		gf_list_rem_last(cmd_data->video_lst);
 		gf_free(video_data_conf);
 	}
@@ -385,23 +389,23 @@ void dc_cmd_data_destroy(CmdData *cmd_data)
 	gf_cfg_del(cmd_data->conf);
 	gf_cfg_del(cmd_data->switch_conf);
 	if (cmd_data->logfile)
-		fclose(cmd_data->logfile);
+		gf_fclose(cmd_data->logfile);
 
 	dc_task_destroy(&cmd_data->task_list);
 
 	gf_sys_close();
 }
 
-static void on_dc_log(void *cbk, u32 ll, u32 lm, const char *av_fmt_ctx, va_list list)
+static void on_dc_log(void *cbk, GF_LOG_Level ll, GF_LOG_Tool lm, const char *av_fmt_ctx, va_list list)
 {
-	FILE *logs = cbk;
+	FILE *logs = (FILE*)cbk;
 	vfprintf(logs, av_fmt_ctx, list);
 	fflush(logs);
 }
 
 int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 {
-	Bool use_mem_track = GF_FALSE;
+	GF_MemTrackerType mem_track = GF_MemTrackerNone;
 	int i;
 
 	const char *command_usage =
@@ -413,6 +417,7 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 	    "    -logs LOGS               set log tools and levels, formatted as a ':'-separated list of toolX[:toolZ]@levelX\n"
 #ifdef GPAC_MEMORY_TRACKING
 	    "    -mem-track               enable the memory tracker\n"
+        "    -mem-track-stack         enable the memory tracker with stack dumping\n"
 #endif
 	    "    -conf filename           set the configuration file name (default: dashcast.conf)\n"
 	    "    -switch-source filename  set the configuration file name for source switching\n"
@@ -422,7 +427,8 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 	    "    -live-media              system is live and input is a media file\n"
 	    "    -no-loop                 system does not loop on the input media file when live\n"
 	    "    -dynamic-ast             changes segment availability start time at each MPD generation (old behaviour but not allowed in most profiles)\n"
-	    "    -insert-utc              inserts UTC clock at the start of each segment\n"
+    	"    -insert-utc              inserts UTC clock at the start of each segment\n"
+	    "    -no-rewrite              Do not rewrite the MPD as a static one at the end of the live session\n"
 	    "\n"
 	    "Source options:\n"
 	    "    -npts                    use frame counting for timestamps (not error-free) instead of source timing (default)\n"
@@ -437,7 +443,6 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 	    "                                - if input is from stdin, use \"pipe:\"\n"
 	    "    -vf string               set the input video format\n"
 #ifdef WIN32
-	    "                                - to capture from a VfW webcam, set vfwcap\n"
 	    "                                - to capture from a directshow device, set dshow\n"
 #else
 	    "                                - to capture from a webcam, set video4linux2\n"
@@ -449,6 +454,7 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 	    "    -vfr N                   force the input video framerate\n"
 	    "    -vres WxH                force the video resolution (e.g. 640x480)\n"
 	    "    -vcrop XxY               crop the source video from X pixels left and Y pixels top. Must be used with -vres.\n"
+	    "    -demux-buffer SIZE       sets demux buffer size to SIZE.\n"
 	    "* Audio options:\n"
 	    "    -a string                set the source name for an audio input\n"
 	    "                                - if input is from microphone, use \"plughw:[x],[y]\"\n"
@@ -476,7 +482,7 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 	    "\n"
 	    "DASH options:\n"
 	    "    -seg-dur dur:int         set the segment duration in millisecond (default value: 1000)\n"
-	    "    -frag-dur dur:int        set the fragment duration in millisecond (default value: 1000)\n"
+	    "    -frag dur:int            set the fragment duration in millisecond (default value: 1000) (same as -frag-dur)\n"
 	    "    -seg-marker marker:4cc   add a marker box named marker at the end of DASH segment\n"
 	    "    -out outdir:str          outdir is the output data directory (default: output)\n"
 	    "    -mpd mpdname:str         mpdname is the MPD file name (default: dashcast.mpd)\n"
@@ -493,9 +499,11 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 	    "    DashCast -av test.avi -live-media\n"
 	    "    DashCast -a test_audio.mp3 -v test_audio.mp4 -live-media\n"
 #ifdef WIN32
-	    "    DashCast -vf vfwcap -vres 1280x720 -vfr 24 -v 0 -live\n"
 	    "    DashCast -vf dshow  -vres 1280x720 -vfr 24 -v video=\"screen-capture-recorder\" -live (please install http://screencapturer.sf.net/)\n"
-	    "    DashCast -vf dshow  -vres 1280x720 -vfr 24 -v video=\"YOUR-WEBCAM\" -pixf yuv420p -live\n"
+	    "    DashCast -vf dshow  -vres 1280x720 -vfr 24 -v video=\"YOUR-WEBCAM\" -pixf yuv420p -live (see https://trac.ffmpeg.org/wiki/DirectShow)\n"
+#elif defined(__DARWIN) || defined(__APPLE__)
+	    "    DashCast -vf avfoundation -vres 1280x720 -v \"FaceTime HD Camera\" -vfr 25 -live\n"
+	    "    DashCast -vf avfoundation -vres 1280x720 -v \"Capture screen 0\" -vfr 25 -live\n"
 #else
 	    "    DashCast -vf video4linux2 -vres 1280x720 -vfr 24 -v4l2f mjpeg -v /dev/video0 -af alsa -a plughw:1,0 -live\n"
 	    "    DashCast -vf x11grab -vres 800x600 -vfr 25 -v :0.0 -live\n"
@@ -512,23 +520,28 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 #ifdef GPAC_MEMORY_TRACKING
 	i = 1;
 	while (i < argc) {
-		if (strcmp(argv[i], "-mem-track") == 0) {
-			use_mem_track = GF_TRUE;
-			break;
-		}
+        if (strcmp(argv[i], "-mem-track") == 0) {
+            mem_track = GF_MemTrackerSimple;
+            break;
+        }
+        else if (strcmp(argv[i], "-mem-track-stack") == 0) {
+            mem_track = GF_MemTrackerBackTrace;
+            break;
+        }
 		i++;
 	}
 #endif
 
-	gf_sys_init(use_mem_track);
+	gf_sys_init(mem_track);
 
-	if (use_mem_track) {
+	gf_log_set_tool_level(GF_LOG_ALL, GF_LOG_WARNING);
+	if (mem_track) {
 		gf_log_set_tool_level(GF_LOG_MEMORY, GF_LOG_INFO);
 	}
 
 	/* Initialize command data */
 	dc_cmd_data_init(cmd_data);
-	cmd_data->use_mem_track = use_mem_track;
+	cmd_data->mem_track = mem_track;
 
 	i = 1;
 	while (i < argc) {
@@ -695,7 +708,7 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 			}
 			cmd_data->seg_dur = atoi(argv[i]);
 			i++;
-		} else if (strcmp(argv[i], "-frag-dur") == 0) {
+		} else if ((strcmp(argv[i], "-frag-dur") == 0) || (strcmp(argv[i], "-frag") == 0)) {
 			DASHCAST_CHECK_NEXT_ARG
 			if (cmd_data->frag_dur != 0) {
 				fprintf(stderr, "Fragment duration has already been specified.\n");
@@ -749,6 +762,10 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 			}
 			cmd_data->min_buffer_time = (float)atof(argv[i]);
 			i++;
+		} else if (strcmp(argv[i], "-demux-buffer") == 0) {
+			DASHCAST_CHECK_NEXT_ARG
+			cmd_data->video_data_conf.demux_buffer_size = (int)atoi(argv[i]);
+			i++;
 		} else if (strcmp(argv[i], "-base-url") == 0) {
 			DASHCAST_CHECK_NEXT_ARG
 			if (strcmp(cmd_data->base_url, "") != 0) {
@@ -765,7 +782,7 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 			cmd_data->mode = LIVE_CAMERA;
 			i++;
 		} else if (strcmp(argv[i], "-npts") == 0) {
-			cmd_data->use_source_timing = 0;
+			cmd_data->use_source_timing = GF_FALSE;
 			i++;
 		} else if (strcmp(argv[i], "-live-media") == 0) {
 			cmd_data->mode = LIVE_MEDIA;
@@ -775,6 +792,9 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 			i++;
 		} else if (strcmp(argv[i], "-insert-utc") == 0) {
 			cmd_data->insert_utc = 1;
+			i++;
+		} else if (strcmp(argv[i], "-no-rewrite") == 0) {
+			cmd_data->no_mpd_rewrite = 1;
 			i++;
 		} else if (strcmp(argv[i], "-dynamic-ast") == 0) {
 			cmd_data->use_dynamic_ast = 1;
@@ -790,14 +810,14 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 				return 1;
 			}
 			i++;
-		} else if (strcmp(argv[i], "-mem-track") == 0) {
+		} else if (!strcmp(argv[i], "-mem-track") || !strcmp(argv[i], "-mem-track-stack") ) {
 			i++;
 #ifndef GPAC_MEMORY_TRACKING
-			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("WARNING - GPAC not compiled with Memory Tracker - ignoring \"-mem-track\"\n"));
+			GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("WARNING - GPAC not compiled with Memory Tracker - ignoring \"%s\"\n", argv[i]));
 #endif
 		} else if (!strcmp(argv[i], "-lf") || !strcmp(argv[i], "-log-file")) {
 			DASHCAST_CHECK_NEXT_ARG
-			cmd_data->logfile = gf_f64_open(argv[i], "wt");
+			cmd_data->logfile = gf_fopen(argv[i], "wt");
 			gf_log_set_callback(cmd_data->logfile, on_dc_log);
 			i++;
 		} else if (strcmp(argv[i], "-gdr") == 0) {
@@ -857,6 +877,11 @@ int dc_parse_command(int argc, char **argv, CmdData *cmd_data)
 
 	if (cmd_data->min_buffer_time == -1) {
 		cmd_data->min_buffer_time = 1.0;
+	}
+
+	if ((cmd_data->minimum_update_period == -1) && (cmd_data->mode == LIVE_CAMERA)) {
+		fprintf(stderr, "MPD refresh time not set in live - defaulting to segment duration\n");
+		cmd_data->minimum_update_period = cmd_data->seg_dur / 1000;
 	}
 
 	//safety checks

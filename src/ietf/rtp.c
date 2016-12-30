@@ -67,7 +67,6 @@ void gf_rtp_del(GF_RTPChannel *ch)
 }
 
 
-
 GF_EXPORT
 GF_Err gf_rtp_setup_transport(GF_RTPChannel *ch, GF_RTSPTransport *trans_info, const char *remote_address)
 {
@@ -167,7 +166,7 @@ GF_Err gf_rtp_initialize(GF_RTPChannel *ch, u32 UDPBufferSize, Bool IsSource, u3
 	u16 port;
 	GF_Err e;
 
-	if (IsSource && !PathMTU) return GF_BAD_PARAM;
+	if (!ch || (IsSource && !PathMTU)) return GF_BAD_PARAM;
 
 	if (ch->rtp) gf_sk_del(ch->rtp);
 	ch->rtp = NULL;
@@ -193,11 +192,11 @@ GF_Err gf_rtp_initialize(GF_RTPChannel *ch, u32 UDPBufferSize, Bool IsSource, u3
 		if (!ch->net_info.IsUnicast) {
 			if (IsSource) {
 				if (ch->net_info.destination && !gf_sk_is_multicast_address(ch->net_info.destination)) {
-					ch->net_info.IsUnicast = 1;
+					ch->net_info.IsUnicast = GF_TRUE;
 				}
 			} else {
 				if (ch->net_info.source && !gf_sk_is_multicast_address(ch->net_info.source)) {
-					ch->net_info.IsUnicast = 1;
+					ch->net_info.IsUnicast = GF_TRUE;
 				}
 			}
 		}
@@ -227,7 +226,7 @@ GF_Err gf_rtp_initialize(GF_RTPChannel *ch, u32 UDPBufferSize, Bool IsSource, u3
 			//Bind to multicast (auto-join the group).
 			//we do not bind the socket if this is a source-only channel because some servers
 			//don't like that on local loop ...
-			e = gf_sk_setup_multicast(ch->rtp, ch->net_info.source, ch->net_info.port_first, ch->net_info.TTL, 0, local_ip);
+			e = gf_sk_setup_multicast(ch->rtp, ch->net_info.source, ch->net_info.port_first, ch->net_info.TTL, GF_FALSE, local_ip);
 			if (e) return e;
 		}
 		if (UDPBufferSize) gf_sk_set_buffer_size(ch->rtp, IsSource, UDPBufferSize);
@@ -266,7 +265,7 @@ GF_Err gf_rtp_initialize(GF_RTPChannel *ch, u32 UDPBufferSize, Bool IsSource, u3
 		} else {
 			if (!ch->net_info.port_last) ch->net_info.port_last = ch->net_info.client_port_last;
 			//Bind to multicast (auto-join the group)
-			e = gf_sk_setup_multicast(ch->rtcp, ch->net_info.source, ch->net_info.port_last, ch->net_info.TTL, 0, local_ip);
+			e = gf_sk_setup_multicast(ch->rtcp, ch->net_info.source, ch->net_info.port_last, ch->net_info.TTL, GF_FALSE, local_ip);
 			if (e) return e;
 		}
 	}
@@ -438,7 +437,7 @@ GF_Err gf_rtp_decode_rtp(GF_RTPChannel *ch, char *pck, u32 pck_size, GF_RTPHeade
 	}
 	if (ch->first_SR && !ch->SenderSSRC && rtp_hdr->SSRC) {
 		ch->SenderSSRC = rtp_hdr->SSRC;
-		GF_LOG(GF_LOG_WARNING, GF_LOG_RTP, ("[RTP] Assigning SSRC %d because none has been signaled\n", ch->SenderSSRC));
+		GF_LOG(GF_LOG_INFO, GF_LOG_RTP, ("[RTP] Assigning SSRC to %d because none was specified through SDP/RTSP\n", ch->SenderSSRC));
 	}
 
 
@@ -459,6 +458,25 @@ GF_Err gf_rtp_decode_rtp(GF_RTPChannel *ch, char *pck, u32 pck_size, GF_RTPHeade
 		ch->num_sn_loops += 1;
 	}
 
+	if (ch->last_SR_rtp_time) {
+		s32 diff_sec = ((s32) rtp_hdr->TimeStamp - (s32) ch->last_SR_rtp_time) / (s32) ch->TimeScale;
+		u32 sec = ch->last_SR_NTP_sec;
+		s64 frac;
+		//frac = ch->last_SR_NTP_frac;
+
+		frac = (s32) rtp_hdr->TimeStamp - (s32) ch->last_SR_rtp_time - diff_sec*(s32)ch->TimeScale;
+		frac *= 0xFFFFFFFF;
+		frac /= ch->TimeScale;
+		frac += ch->last_SR_NTP_frac;
+		if (frac>0xFFFFFFFF) {
+			sec += 1;
+			frac -= 0xFFFFFFFF;
+		}
+		rtp_hdr->recomputed_ntp_ts = sec + diff_sec;
+		rtp_hdr->recomputed_ntp_ts <<= 32;
+		rtp_hdr->recomputed_ntp_ts |= frac;
+	}
+
 	ntp = gf_rtp_channel_time(ch);
 	deviance = ntp - rtp_hdr->TimeStamp;
 	delta = deviance - ch->last_deviance;
@@ -470,7 +488,7 @@ GF_Err gf_rtp_decode_rtp(GF_RTPChannel *ch, char *pck, u32 pck_size, GF_RTPHeade
 	lost = 0;
 	LastSeq = ch->last_pck_sn;
 	CurrSeq = (u32) rtp_hdr->SequenceNumber;
-	ch->packet_loss = 0;
+	ch->packet_loss = GF_FALSE;
 	/*next sequential pck*/
 	if ( ( (LastSeq + 1) & 0xffff ) == CurrSeq ) {
 		ch->last_num_pck_rcv += 1;
@@ -491,7 +509,7 @@ GF_Err gf_rtp_decode_rtp(GF_RTPChannel *ch, char *pck, u32 pck_size, GF_RTPHeade
 		ch->last_num_pck_expected += lost;
 		ch->last_num_pck_rcv += 1;
 		ch->last_num_pck_loss += lost;
-		ch->packet_loss = 1;
+		ch->packet_loss = GF_TRUE;
 	}
 	ch->last_pck_sn = CurrSeq;
 
@@ -551,10 +569,9 @@ GF_Err gf_rtp_send_packet(GF_RTPChannel *ch, GF_RTPHeader *rtp_hdr, char *pck, u
 	if (!ch || !rtp_hdr
 	        || !ch->send_buffer
 	        || !pck
-	        || (rtp_hdr->CSRCCount && !rtp_hdr->CSRC)
 	        || (rtp_hdr->CSRCCount > 15)) return GF_BAD_PARAM;
 
-	if (rtp_hdr->CSRCCount) fast_send=0;
+	if (rtp_hdr->CSRCCount) fast_send = GF_FALSE;
 
 	if (12 + pck_size + 4*rtp_hdr->CSRCCount > ch->send_buffer_size) return GF_IO_ERR;
 
@@ -767,6 +784,7 @@ GF_RTPReorder *gf_rtp_reorderer_new(u32 MaxCount, u32 MaxDelay)
 	if (MaxCount <= 1 || !MaxDelay) return NULL;
 
 	GF_SAFEALLOC(tmp , GF_RTPReorder);
+	if (!tmp) return NULL;
 	tmp->MaxCount = MaxCount;
 	tmp->MaxDelay = MaxDelay;
 	return tmp;

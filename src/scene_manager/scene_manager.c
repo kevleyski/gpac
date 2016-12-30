@@ -39,6 +39,7 @@ GF_SceneManager *gf_sm_new(GF_SceneGraph *graph)
 
 	if (!graph) return NULL;
 	GF_SAFEALLOC(tmp, GF_SceneManager);
+	if (!tmp) return NULL;
 	tmp->streams = gf_list_new();
 	tmp->scene_graph = graph;
 	return tmp;
@@ -64,6 +65,7 @@ GF_StreamContext *gf_sm_stream_new(GF_SceneManager *ctx, u16 ES_ID, u8 streamTyp
 	}
 
 	GF_SAFEALLOC(tmp, GF_StreamContext);
+	if (!tmp) return NULL;
 	tmp->AUs = gf_list_new();
 	tmp->ESID = ES_ID;
 	tmp->streamType = streamType;
@@ -187,6 +189,7 @@ GF_AUContext *gf_sm_stream_au_new(GF_StreamContext *stream, u64 timing, Double t
 			/*insert AU*/
 			else if ((time_sec && time_sec<tmp->timing_sec) || (timing && timing<tmp->timing)) {
 				GF_SAFEALLOC(tmp, GF_AUContext);
+				if (!tmp) return NULL;
 				tmp->commands = gf_list_new();
 				if (isRap) tmp->flags = GF_SM_AU_RAP;
 				tmp->timing = timing;
@@ -198,6 +201,7 @@ GF_AUContext *gf_sm_stream_au_new(GF_StreamContext *stream, u64 timing, Double t
 		}
 	}
 	GF_SAFEALLOC(tmp, GF_AUContext);
+	if (!tmp) return NULL;
 	tmp->commands = gf_list_new();
 	if (isRap) tmp->flags = GF_SM_AU_RAP;
 	tmp->timing = timing;
@@ -715,7 +719,8 @@ GF_Err gf_sm_load_init(GF_SceneLoader *load)
 	case GF_SM_LOAD_QT:
 		return gf_sm_load_init_qt(load);
 #endif
-
+	default:
+		return GF_NOT_SUPPORTED;
 	}
 	return GF_NOT_SUPPORTED;
 }
@@ -754,17 +759,18 @@ void gf_sm_update_bitwrapper_buffer(GF_Node *node, const char *fileName)
 	if (!strnicmp(buffer, "file://", 7)) {
 		char *url = gf_url_concatenate(fileName, buffer+7);
 		if (url) {
-			FILE *f = fopen(url, "rb");
+			FILE *f = gf_fopen(url, "rb");
 			if (f) {
 				fseek(f, 0, SEEK_END);
 				data_size = (u32) ftell(f);
 				fseek(f, 0, SEEK_SET);
 				data = gf_malloc(sizeof(char)*data_size);
 				if (data) {
-					size_t s = fread(data, 1, data_size, f);
-					assert(s == data_size);
+					if (fread(data, 1, data_size, f) != data_size) {
+						GF_LOG(GF_LOG_ERROR, GF_LOG_SCENE, ("[Scene Manager] error reading bitwrapper file %s\n", url));
+					}
 				}
-				fclose(f);
+				gf_fclose(f);
 			}
 			gf_free(url);
 		}

@@ -48,13 +48,13 @@ typedef struct
 static Bool svg_check_download(SVGIn *svgin)
 {
 	u64 size;
-	FILE *f = gf_f64_open(svgin->file_name, "rb");
-	if (!f) return 0;
-	gf_f64_seek(f, 0, SEEK_END);
-	size = gf_f64_tell(f);
-	fclose(f);
-	if (size==svgin->file_size) return 1;
-	return 0;
+	FILE *f = gf_fopen(svgin->file_name, "rb");
+	if (!f) return GF_FALSE;
+	gf_fseek(f, 0, SEEK_END);
+	size = gf_ftell(f);
+	gf_fclose(f);
+	if (size==svgin->file_size) return GF_TRUE;
+	return GF_FALSE;
 }
 
 #define SVG_PROGRESSIVE_BUFFER_SIZE		4096
@@ -76,6 +76,7 @@ static GF_Err svgin_deflate(SVGIn *svgin, const char *buffer, u32 buffer_len)
 
 	err = inflateInit(&d_stream);
 	if (err == Z_OK) {
+		e = GF_OK;
 		while (d_stream.total_in < buffer_len) {
 			err = inflate(&d_stream, Z_NO_FLUSH);
 			if (err < Z_OK) {
@@ -83,14 +84,14 @@ static GF_Err svgin_deflate(SVGIn *svgin, const char *buffer, u32 buffer_len)
 				break;
 			}
 			svg_data[d_stream.total_out - done] = 0;
-			e = gf_sm_load_string(&svgin->loader, svg_data, 0);
+			e = gf_sm_load_string(&svgin->loader, svg_data, GF_FALSE);
 			if (e || (err== Z_STREAM_END)) break;
 			done = (u32) d_stream.total_out;
 			d_stream.avail_out = 2048;
 			d_stream.next_out = (Bytef*)svg_data;
 		}
 		inflateEnd(&d_stream);
-		return GF_OK;
+		return e;
 	}
 	return GF_NON_COMPLIANT_BITSTREAM;
 }
@@ -146,7 +147,6 @@ static GF_Err SVG_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u32 i
 				nb_read = gzread(svgin->src, file_buf, SVG_PROGRESSIVE_BUFFER_SIZE);
 				/*we may have read nothing but we still need to call parse in case the parser got suspended*/
 				if (nb_read<=0) {
-					nb_read = 0;
 					if ((e==GF_EOS) && gzeof(svgin->src)) {
 						gf_set_progress("SVG Parsing", svgin->file_pos, svgin->file_size);
 						gzclose(svgin->src);
@@ -158,7 +158,7 @@ static GF_Err SVG_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u32 i
 
 				file_buf[nb_read] = file_buf[nb_read+1] = 0;
 
-				e = gf_sm_load_string(&svgin->loader, file_buf, 0);
+				e = gf_sm_load_string(&svgin->loader, file_buf, GF_FALSE);
 				svgin->file_pos += nb_read;
 
 
@@ -178,7 +178,7 @@ static GF_Err SVG_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u32 i
 
 	/*!OTI for streaming SVG - GPAC internal*/
 	case GPAC_OTI_SCENE_SVG:
-		e = gf_sm_load_string(&svgin->loader, inBuffer, 0);
+		e = gf_sm_load_string(&svgin->loader, inBuffer, GF_FALSE);
 		break;
 
 	/*!OTI for streaming SVG + gz - GPAC internal*/
@@ -195,7 +195,7 @@ static GF_Err SVG_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u32 i
 		char * buf2 = gf_malloc(inBufferLength);
 		GF_BitStream *bs = gf_bs_new(inBuffer, inBufferLength, GF_BITSTREAM_READ);
 		memcpy(buf2, inBuffer, inBufferLength);
-//			FILE *f = gf_f64_open("dump.svg", "wb");
+//			FILE *f = gf_fopen("dump.svg", "wb");
 //
 		while (gf_bs_available(bs)) {
 			pos = gf_bs_get_position(bs);
@@ -215,13 +215,13 @@ static GF_Err SVG_ProcessData(GF_SceneDecoder *plug, const char *inBuffer, u32 i
 			if (dims_hdr & GF_DIMS_UNIT_C) {
 				e = svgin_deflate(svgin, buf2 + pos + nb_bytes + 1, size - 1);
 			} else {
-				e = gf_sm_load_string(&svgin->loader, buf2 + pos + nb_bytes + 1, 0);
+				e = gf_sm_load_string(&svgin->loader, buf2 + pos + nb_bytes + 1, GF_FALSE);
 			}
 			buf2[pos + nb_bytes + size] = prev;
 			gf_bs_skip_bytes(bs, size-1);
 
 		}
-//          fclose(f);
+//          gf_fclose(f);
 		gf_bs_del(bs);
 	}
 	break;
@@ -378,7 +378,7 @@ static GF_Err SVG_SetCapabilities(GF_BaseDecoder *plug, GF_CodecCapability cap)
 {
 	if (cap.CapCode==GF_CODEC_ABORT) {
 		SVGIn *svgin = (SVGIn *)plug->privateStack;
-		gf_sm_load_suspend(&svgin->loader, 1);
+		gf_sm_load_suspend(&svgin->loader, GF_TRUE);
 	}
 	return GF_OK;
 }
@@ -393,9 +393,14 @@ GF_BaseInterface *LoadInterface(u32 InterfaceType)
 	if (InterfaceType != GF_SCENE_DECODER_INTERFACE) return NULL;
 
 	GF_SAFEALLOC(sdec, GF_SceneDecoder)
+	if (!sdec) return NULL;
 	GF_REGISTER_MODULE_INTERFACE(sdec, GF_SCENE_DECODER_INTERFACE, "GPAC SVG Parser", "gpac distribution");
 
 	GF_SAFEALLOC(svgin, SVGIn);
+	if (!svgin) {
+		gf_free(sdec);
+		return NULL;
+	}
 	sdec->privateStack = svgin;
 	sdec->AttachStream = SVG_AttachStream;
 	sdec->CanHandleStream = SVG_CanHandleStream;

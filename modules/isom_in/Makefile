@@ -19,7 +19,7 @@ OBJS= load.o read.o read_ch.o isom_cache.o
 
 SRCS := $(OBJS:.o=.c) 
 
-LIB=gm_isom_in.$(DYN_LIB_SUFFIX)
+LIB=gm_isom_in$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
 #LDFLAGS+=-export-symbols isom_in.def 
 endif
@@ -29,9 +29,9 @@ all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) -L../../bin/gcc -lgpac $(EXTRALIBS)
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) -L../../bin/gcc -lgpac $(EXTRALIBS) $(LDFLAGS)
 ifeq ($(STATICBUILD),yes)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/gm_isom_in-static.$(DYN_LIB_SUFFIX) $(OBJS) -L../../bin/gcc -lgpac_static $(EXTRALIBS) 
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/gm_isom_in-static$(DYN_LIB_SUFFIX) $(OBJS) -L../../bin/gcc -lgpac_static $(EXTRALIBS)  $(LDFLAGS)
 endif
 
 clean: 

@@ -31,6 +31,7 @@ GF_Path *gf_path_new()
 {
 	GF_Path *gp;
 	GF_SAFEALLOC(gp, GF_Path);
+	if (!gp) return NULL;
 	gp->fineness = FIX_ONE;
 	return gp;
 }
@@ -292,16 +293,16 @@ GF_Err gf_path_add_subpath(GF_Path *gp, GF_Path *src, GF_Matrix2D *mx)
 {
 	u32 i;
 	if (!src) return GF_OK;
-	gp->contours = gf_realloc(gp->contours, sizeof(u32) * (gp->n_contours + src->n_contours));
+	gp->contours = (u32*)gf_realloc(gp->contours, sizeof(u32) * (gp->n_contours + src->n_contours));
 	if (!gp->contours) return GF_OUT_OF_MEM;
 	for (i=0; i<src->n_contours; i++) {
 		gp->contours[i+gp->n_contours] = src->contours[i] + gp->n_points;
 	}
 	gp->n_contours += src->n_contours;
 	gp->n_alloc_points += src->n_alloc_points;
-	gp->points = gf_realloc(gp->points, sizeof(GF_Point2D)*gp->n_alloc_points);
+	gp->points = (GF_Point2D*)gf_realloc(gp->points, sizeof(GF_Point2D)*gp->n_alloc_points);
 	if (!gp->points) return GF_OUT_OF_MEM;
-	gp->tags = gf_realloc(gp->tags, sizeof(u8)*gp->n_alloc_points);
+	gp->tags = (u8*)gf_realloc(gp->tags, sizeof(u8)*gp->n_alloc_points);
 	if (!gp->tags) return GF_OUT_OF_MEM;
 	memcpy(gp->points + gp->n_points, src->points, sizeof(GF_Point2D)*src->n_points);
 	if (mx) {
@@ -470,7 +471,7 @@ GF_Err gf_path_add_svg_arc_to(GF_Path *gp, Fixed end_x, Fixed end_y, Fixed r_x, 
 	start_x = gp->points[gp->n_points-1].x;
 	start_y = gp->points[gp->n_points-1].y;
 
-	phi = gf_mulfix(gf_divfix(x_axis_rotation, 180), GF_PI);
+	phi = gf_mulfix(x_axis_rotation/180, GF_PI);
 	cos_phi = gf_cos(phi);
 	sin_phi = gf_sin(phi);
 	xmid = (start_x - end_x)/2;
@@ -535,10 +536,6 @@ GF_Err gf_path_add_svg_arc_to(GF_Path *gp, Fixed end_x, Fixed end_y, Fixed r_x, 
 	c_x = gf_mulfix(cos_phi, cxp) - gf_mulfix(sin_phi, cyp) + (start_x + end_x)/2;
 	c_y = gf_mulfix(sin_phi, cxp) + gf_mulfix(cos_phi, cyp) + (start_y + end_y)/2;
 
-	ux = FIX_ONE;
-	uy = 0;
-	normu = FIX_ONE;
-
 	vx = gf_divfix(xmidp-cxp,r_x);
 	vy = gf_divfix(ymidp-cyp,r_y);
 	normv = gf_sqrt(gf_mulfix(vx, vx) + gf_mulfix(vy,vy));
@@ -549,7 +546,6 @@ GF_Err gf_path_add_svg_arc_to(GF_Path *gp, Fixed end_x, Fixed end_y, Fixed r_x, 
 
 	ux = vx;
 	uy = vy;
-	normu = normv;
 
 	vx = gf_divfix(-xmidp-cxp,r_x);
 	vy = gf_divfix(-ymidp-cyp,r_y);
@@ -571,7 +567,7 @@ GF_Err gf_path_add_svg_arc_to(GF_Path *gp, Fixed end_x, Fixed end_y, Fixed r_x, 
 	for (i=1; i<=num_steps; i++) {
 		Fixed _vx, _vy;
 		Fixed _vxp, _vyp;
-		Fixed angle = start_angle + sweep_angle*i/num_steps;
+		Fixed angle = start_angle + sweep_angle*(s32)i/(s32)num_steps;
 		_vx = gf_mulfix(r_x, gf_cos(angle));
 		_vy = gf_mulfix(r_y, gf_sin(angle));
 		_vxp = gf_mulfix(cos_phi, _vx) - gf_mulfix(sin_phi, _vy) + c_x;
@@ -791,7 +787,6 @@ GF_Err gf_path_get_bounds(GF_Path *gp, GF_Rect *rc)
 		return GF_OK;
 	}
 	pt = gp->points;
-	end = pt + gp->n_points;
 	xMin = xMax = cxMin = cxMax = pt->x;
 	yMin = yMax = cyMin = cyMax = pt->y;
 	pt++;
@@ -1075,9 +1070,9 @@ Bool gf_path_point_over(GF_Path *gp, Fixed x, Fixed y)
 
 	/*check if not in bounds*/
 	gf_path_get_bounds(gp, &rc);
-	if ((x<rc.x) || (y>rc.y) || (x>rc.x+rc.width) || (y<rc.y-rc.height)) return 0;
+	if ((x<rc.x) || (y>rc.y) || (x>rc.x+rc.width) || (y<rc.y-rc.height)) return GF_FALSE;
 
-	if (!gp || (gp->n_points<2)) return 0;
+	if (!gp || (gp->n_points<2)) return GF_FALSE;
 
 	pt.x = x;
 	pt.y = y;
@@ -1142,15 +1137,15 @@ Bool gf_path_point_over(GF_Path *gp, Fixed x, Fixed y)
 			i++;
 		}
 	}
-	if (gp->flags & GF_PATH_FILL_ZERO_NONZERO) return wn ? 1 : 0;
-	return wn%2 ? 1 : 0;
+	if (gp->flags & GF_PATH_FILL_ZERO_NONZERO) return wn ? GF_TRUE : GF_FALSE;
+	return wn%2 ? GF_TRUE : GF_FALSE;
 }
 
 GF_EXPORT
 Bool gf_path_is_empty(GF_Path *gp)
 {
-	if (gp && gp->contours) return 0;
-	return 1;
+	if (gp && gp->contours) return GF_FALSE;
+	return GF_TRUE;
 }
 
 /*iteration info*/
@@ -1218,18 +1213,18 @@ GF_EXPORT
 Bool gf_path_iterator_get_transform(GF_PathIterator *path, Fixed offset, Bool follow_tangent, GF_Matrix2D *mat, Bool smooth_edges, Fixed length_after_point)
 {
 	GF_Matrix2D final, rot;
-	Bool tang = 0;
+	Bool tang = GF_FALSE;
 	Fixed res, angle, angleNext;
 	u32 i;
 	Fixed curLen = 0;
-	if (!path) return 0;
+	if (!path) return GF_FALSE;
 
 	for (i=0; i<path->num_seg; i++) {
 		if (curLen + path->seg[i].len >= offset) goto found;
 		curLen += path->seg[i].len;
 	}
-	if (!follow_tangent) return 0;
-	tang = 1;
+	if (!follow_tangent) return GF_FALSE;
+	tang = GF_TRUE;
 	i--;
 
 found:
@@ -1284,7 +1279,7 @@ found:
 	gf_mx2d_add_rotation(&rot, 0, 0, angle);
 	gf_mx2d_add_matrix(mat, &rot);
 	gf_mx2d_add_matrix(mat, &final);
-	return 1;
+	return GF_TRUE;
 }
 
 GF_EXPORT

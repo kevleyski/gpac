@@ -30,7 +30,7 @@
 int main(int argc, char **argv)
 {
 #ifdef GPAC_MEMORY_TRACKING
-	Bool use_mem_track = 0;
+	GF_MemTrackerType mem_track = GF_MemTrackerNone;
 #endif
 	s32 res;
 	CmdData cmd_data;
@@ -45,7 +45,7 @@ int main(int argc, char **argv)
 	res = dc_run_controler(&cmd_data);
 
 #ifdef GPAC_MEMORY_TRACKING
-	use_mem_track = cmd_data.use_mem_track;
+	mem_track = cmd_data.mem_track;
 #endif
 
 	/* Destroy command data */
@@ -54,11 +54,12 @@ int main(int argc, char **argv)
 	if (res) return res;
 
 #ifdef GPAC_MEMORY_TRACKING
-	if (use_mem_track && (gf_memory_size() != 0)) {
-        gf_memory_print();
+	if (mem_track && (gf_memory_size() || gf_file_handles_count() )) {
+        gf_log_set_tool_level(GF_LOG_MEMORY, GF_LOG_INFO);
+		gf_memory_print();
 		return 2;
 	}
-#endif	
+#endif
 	return 0;
 }
 

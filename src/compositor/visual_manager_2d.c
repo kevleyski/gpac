@@ -111,7 +111,9 @@ DrawableContext *visual_2d_get_drawable_context(GF_VisualManager *visual)
 	drawctx_reset(visual->cur_context);
 	visual->num_nodes_current_frame ++;
 
-	if (1) {
+	//pre-allocate some contexts
+#if 0
+	{
 		u32 i;
 		DrawableContext *last = visual->cur_context;
 		for (i=0; i<50; i++) {
@@ -122,6 +124,8 @@ DrawableContext *visual_2d_get_drawable_context(GF_VisualManager *visual)
 		}
 		last->next = NULL;
 	}
+#endif
+
 	return visual->cur_context;
 }
 
@@ -233,6 +237,10 @@ void visual_2d_setup_projection(GF_VisualManager *visual, GF_TraverseState *tr_s
 
 #ifndef GPAC_DISABLE_3D
 	gf_mx_init(tr_state->model_matrix);
+	if (tr_state->camera && (visual->compositor->visual==visual)) {
+		tr_state->camera->vp.width = INT2FIX(visual->compositor->output_width);
+		tr_state->camera->vp.height = INT2FIX(visual->compositor->output_height);
+	}
 #endif
 
 	visual->top_clipper = gf_rect_pixelize(&rc);
@@ -269,11 +277,15 @@ GF_Err visual_2d_init_draw(GF_VisualManager *visual, GF_TraverseState *tr_state)
 	if (e)
 		return e;
 
+	tr_state->immediate_for_defer = GF_FALSE;
 	draw_mode = 0;
-	if (tr_state->immediate_draw) draw_mode = 1;
+	if (tr_state->immediate_draw) {
+		draw_mode = 1;
+	}
 	/*if we're requested to invalidate everything, switch to direct drawing but don't reset bounds*/
 	else if (tr_state->invalidate_all) {
 		tr_state->immediate_draw = 1;
+		tr_state->immediate_for_defer = GF_TRUE;
 		draw_mode = 2;
 	}
 	tr_state->invalidate_all = 0;
@@ -333,6 +345,11 @@ GF_Err visual_2d_init_draw(GF_VisualManager *visual, GF_TraverseState *tr_state)
 #endif
 	{
 		visual->ClearSurface(visual, NULL, 0, 0);
+#ifndef GPAC_DISABLE_3D
+		if (visual->compositor->hybrid_opengl) {
+			visual->ClearSurface(visual, NULL, 0, GF_TRUE);
+		}
+#endif
 	}
 	return GF_OK;
 }
@@ -460,12 +477,6 @@ static u32 register_context_rect(GF_RectArray *ra, DrawableContext *ctx, u32 ctx
 	/*node is modified*/
 	needs_redraw = (ctx->flags & CTX_REDRAW_MASK) ? 1 : 0;
 
-#ifndef GPAC_DISABLE_3D
-	if (ctx->flags & CTX_HYBOGL_NO_CLEAR) {
-		return 2;
-	}
-#endif
-
 	/*node is not transparent*/
 	if ((ctx->flags & CTX_NO_ANTIALIAS) && !(ctx->flags & CTX_IS_TRANSPARENT) ) {
 #ifdef TRACK_OPAQUE_REGIONS
@@ -473,6 +484,12 @@ static u32 register_context_rect(GF_RectArray *ra, DrawableContext *ctx, u32 ctx
 #endif
 		if ((*first_opaque==NULL) && needs_redraw) *first_opaque = ctx;
 	}
+
+#ifndef GPAC_DISABLE_3D
+	if (ctx->flags & CTX_HYBOGL_NO_CLEAR) {
+		return 2;
+	}
+#endif
 
 	for (i=0; i<ra->count; i++) {
 		if (needs_redraw) {
@@ -519,6 +536,8 @@ static u32 register_context_rect(GF_RectArray *ra, DrawableContext *ctx, u32 ctx
 
 static void register_dirty_rect(GF_RectArray *ra, GF_IRect *rc)
 {
+	if (!rc->width || !rc->height) return;
+
 	/*technically this is correct however the gain is not that big*/
 #if 0
 
@@ -561,6 +580,7 @@ Bool visual_2d_terminate_draw(GF_VisualManager *visual, GF_TraverseState *tr_sta
 	GF_IRect refreshRect;
 	Bool redraw_all;
 	Bool hyb_force_redraw=GF_FALSE;
+	u32 hyb_force_background = 0;
 #ifndef GPAC_DISABLE_VRML
 	M_Background2D *bck = NULL;
 	DrawableContext *bck_ctx = NULL;
@@ -598,15 +618,18 @@ Bool visual_2d_terminate_draw(GF_VisualManager *visual, GF_TraverseState *tr_sta
 		if (!bck->isBound) {
 			if (visual->last_had_back) {
 				if (redraw_all_on_background_change) redraw_all = 1;
-				else hyb_force_redraw = 1;
+				else hyb_force_background = 1;
 			}
 			visual->last_had_back = 0;
 		} else {
 			bck_ctx = b2d_get_context(bck, visual->back_stack);
 			if (!visual->last_had_back || (bck_ctx->flags & CTX_REDRAW_MASK) ) {
 				if (redraw_all_on_background_change) redraw_all = 1;
-				else hyb_force_redraw = 1;
 			}
+			/*in hybridGL we will have to force background draw even if no change, since backbuffer GL is not persistent*/
+			if (!redraw_all_on_background_change)
+				hyb_force_background = 1;
+
 			visual->last_had_back = (bck_ctx->aspect.fill_texture && !bck_ctx->aspect.fill_texture->transparent) ? 2 : 1;
 		}
 	} else
@@ -614,7 +637,9 @@ Bool visual_2d_terminate_draw(GF_VisualManager *visual, GF_TraverseState *tr_sta
 		if (visual->last_had_back) {
 			visual->last_had_back = 0;
 			if (redraw_all_on_background_change) redraw_all = 1;
-			else hyb_force_redraw = 1;
+			else hyb_force_background = 1;
+		} else if (!redraw_all_on_background_change) {
+			hyb_force_background = 1;
 		}
 
 	num_nodes = 0;
@@ -625,7 +650,7 @@ Bool visual_2d_terminate_draw(GF_VisualManager *visual, GF_TraverseState *tr_sta
 		drawctx_update_info(ctx, visual);
 		if (!redraw_all) {
 			u32 res;
-			assert( gf_irect_inside(&visual->top_clipper, &ctx->bi->clip) );
+//			assert( gf_irect_inside(&visual->top_clipper, &ctx->bi->clip) );
 			res = register_context_rect(&visual->to_redraw, ctx, num_nodes, &first_opaque);
 			if (res) {
 				num_changed ++;
@@ -690,18 +715,27 @@ Bool visual_2d_terminate_draw(GF_VisualManager *visual, GF_TraverseState *tr_sta
 	}
 
 	/*nothing to redraw*/
-	if (!hyb_force_redraw && ra_is_empty(&visual->to_redraw) ) {
+	if (ra_is_empty(&visual->to_redraw) ) {
+		if (!hyb_force_redraw && !hyb_force_background) {
 #ifndef GPAC_DISABLE_3D
-		//force canvas draw
-		visual->nb_objects_on_canvas_since_last_ogl_flush = 1;
+			//force canvas draw
+			visual->nb_objects_on_canvas_since_last_ogl_flush = 1;
 #endif
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Visual2D] No changes found since last frame - skipping redraw\n"));
-		goto exit;
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_COMPOSE, ("[Visual2D] No changes found since last frame - skipping redraw\n"));
+			goto exit;
+		}
+
+		//openGL, force redraw of complete scene but signal we shoud only draw the background, not clear the canvas (nothing to redraw except GL textures)
+		if (hyb_force_redraw) { 
+			hyb_force_background = 2;
+			ra_add(&visual->to_redraw, &visual->surf_rect);
+		}
 	}
 	has_changed = 1;
 	tr_state->traversing_mode = TRAVERSE_DRAW_2D;
 
-	if (!hyb_force_redraw && first_opaque && (visual->to_redraw.count==1) && gf_rect_equal(first_opaque->bi->clip, visual->to_redraw.list[0].rect)) {
+	//if only one opaque object has changed and not moved, skip background unless hybgl mode
+	if (!visual->compositor->hybrid_opengl && !hyb_force_redraw && !hyb_force_background && first_opaque && (visual->to_redraw.count==1) && gf_rect_equal(first_opaque->bi->clip, visual->to_redraw.list[0].rect)) {
 		visual->has_modif=0;
 		goto skip_background;
 	}
@@ -724,11 +758,27 @@ Bool visual_2d_terminate_draw(GF_VisualManager *visual, GF_TraverseState *tr_sta
 		bck_ctx->bi->unclip = gf_rect_ft(&bck_ctx->bi->clip);
 		bck_ctx->next = visual->context;
 		bck_ctx->flags |= CTX_BACKROUND_NOT_LAYER;
+
+		//for hybrid openGL, only redraw background but do not erase canvas
+		if (hyb_force_background==2)
+			bck_ctx->flags |= CTX_BACKROUND_NO_CLEAR;
+
 		gf_node_traverse(bck_ctx->drawable->node, tr_state);
+
 		bck_ctx->flags &= ~CTX_BACKROUND_NOT_LAYER;
+		bck_ctx->flags &= ~CTX_BACKROUND_NO_CLEAR;
 	} else
 #endif /*GPAC_DISABLE_VRML*/
 	{
+
+#ifndef GPAC_DISABLE_3D
+		//cleanup openGL screen
+		if (visual->compositor->hybrid_opengl) {
+			compositor_2d_hybgl_clear_surface(tr_state->visual, NULL, 0, GF_FALSE);
+		}
+#endif
+
+		//and clean dirty rect - for hybrid openGL this will clear the canvas, otherwise the 2D backbuffer
 		count = visual->to_redraw.count;
 		for (k=0; k<count; k++) {
 			GF_IRect rc;
@@ -739,12 +789,16 @@ Bool visual_2d_terminate_draw(GF_VisualManager *visual, GF_TraverseState *tr_sta
 			rc = visual->to_redraw.list[k].rect;
 			visual->ClearSurface(visual, &rc, 0, 1);
 		}
-#ifndef GPAC_DISABLE_3D
-		if (!count && hyb_force_redraw) {
-			compositor_2d_hybgl_clear_surface(tr_state->visual, NULL, 0, GF_FALSE);
-		}
-#endif
 	}
+	if (!visual->to_redraw.count) {
+		visual->has_modif=0;
+#ifndef GPAC_DISABLE_3D
+		//force canvas flush
+		visual->nb_objects_on_canvas_since_last_ogl_flush = 1;
+#endif
+		goto exit;
+	}
+
 	if (!redraw_all && !has_clear) visual->has_modif=0;
 
 skip_background:

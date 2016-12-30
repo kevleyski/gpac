@@ -389,7 +389,6 @@ u32 gf_xml_get_attribute_tag(GF_Node *elt, char *attribute_name, u32 ns)
 
 	if (!ns) {
 		ns_sep = strchr(attribute_name, ':');
-		ns = GF_XMLNS_UNDEFINED;
 		if (ns_sep) {
 			ns_sep[0] = 0;
 			ns = gf_sg_get_namespace_code(elt->sgprivate->scenegraph, attribute_name);
@@ -641,7 +640,7 @@ const char *gf_xml_get_element_name(GF_Node *n)
 	ns = n ? gf_sg_get_namespace_code(n->sgprivate->scenegraph, NULL) : 0;
 	count = sizeof(xml_elements) / sizeof(struct xml_elt_def);
 	for (i=0; i<count; i++) {
-		if (n->sgprivate->tag==xml_elements[i].tag) {
+		if (n && n->sgprivate && (n->sgprivate->tag==xml_elements[i].tag)) {
 			char *xmlns;
 			if (!n || (ns == xml_elements[i].xmlns))
 				return xml_elements[i].name;
@@ -671,7 +670,6 @@ GF_NamespaceType gf_xml_get_element_namespace(GF_Node *n)
 	}
 	return GF_XMLNS_UNDEFINED;
 }
-
 
 u32 gf_node_get_attribute_count(GF_Node *node)
 {
@@ -723,6 +721,7 @@ SVGAttribute *gf_node_create_attribute_from_datatype(u32 data_type, u32 attribut
 	if (!data_type) return NULL;
 
 	GF_SAFEALLOC(att, SVGAttribute);
+	if (!att) return NULL;
 	att->data_type = (u16) data_type;
 	att->tag = (u16) attribute_tag;
 	att->data = gf_svg_create_attribute_value(att->data_type);
@@ -755,6 +754,7 @@ GF_Err gf_node_get_attribute_by_name(GF_Node *node, char *name, u32 xmlns_code, 
 		}
 		if (create_if_not_found) {
 			GF_SAFEALLOC(att, GF_DOMFullAttribute);
+			if (!att) return GF_OUT_OF_MEM;
 			att->data_type = (u16) DOM_String_datatype;
 			att->tag = (u16) TAG_DOM_ATT_any;
 			att->data = gf_svg_create_attribute_value(att->data_type);
@@ -1036,28 +1036,29 @@ static u32 check_existing_file(char *base_file, char *ext, char *data, u32 data_
 
 	sprintf(szFile, "%s%04X%s", base_file, idx, ext);
 
-	f = gf_f64_open(szFile, "rb");
+	f = gf_fopen(szFile, "rb");
 	if (!f) return 0;
 
-	gf_f64_seek(f, 0, SEEK_END);
-	fsize = gf_f64_tell(f);
+	gf_fseek(f, 0, SEEK_END);
+	fsize = gf_ftell(f);
 	if (fsize==data_size) {
 		u32 offset=0;
 		char cache[1024];
-		gf_f64_seek(f, 0, SEEK_SET);
+		gf_fseek(f, 0, SEEK_SET);
 		while (fsize) {
 			u32 read = (u32) fread(cache, 1, 1024, f);
+			if ((s32) read < 0) return 0;
 			fsize -= read;
 			if (memcmp(cache, data+offset, sizeof(char)*read)) break;
 			offset+=read;
 		}
-		fclose(f);
+		gf_fclose(f);
 		f = NULL;
 		/*same file*/
 		if (!fsize) return 2;
 	}
 	if (f)
-		fclose(f);
+		gf_fclose(f);
 	return 1;
 }
 
@@ -1136,7 +1137,7 @@ GF_Err gf_node_store_embedded_data(XMLRI *iri, const char *cache_dir, const char
 	strcat(szFile, ext);
 
 	if (!existing) {
-		f = gf_f64_open(szFile, "wb");
+		f = gf_fopen(szFile, "wb");
 		if (!f) {
 			gf_free(data);
 			gf_free(iri->string);
@@ -1144,7 +1145,7 @@ GF_Err gf_node_store_embedded_data(XMLRI *iri, const char *cache_dir, const char
 			return GF_IO_ERR;
 		}
 		gf_fwrite(data, data_size, 1, f);
-		fclose(f);
+		gf_fclose(f);
 	}
 	gf_free(data);
 	gf_free(iri->string);

@@ -30,6 +30,19 @@
 extern "C" {
 #endif
 
+/*!
+ *	\file <gpac/webvtt.h>
+ *	\brief Helper functions for WebVTT parsing.
+ */
+
+/*!
+ *	\ingroup media_grp
+ *	\brief Helper functions for WebVTT parsing
+ *
+ *This section documents the audio and video parsing functions of the GPAC framework.
+ *	@{
+ */
+
 /* WebVTT types */
 typedef enum {
 	WEBVTT_ID,
@@ -64,7 +77,9 @@ typedef struct _webvtt_cue
 
 void gf_webvtt_cue_del(GF_WebVTTCue * cue);
 
+#ifndef GPAC_DISABLE_VTT
 GF_Err gf_webvtt_dump_header_boxed(FILE *dump, const char *data, u32 dataLength, u32 *printLength);
+#endif
 
 #ifdef GPAC_HAS_SPIDERMONKEY
 #include <gpac/internal/scenegraph_dev.h>
@@ -75,6 +90,8 @@ GF_Err gf_webvtt_js_addCue(GF_Node *node, const char *id,
                            const char *payload);
 GF_Err gf_webvtt_js_removeCues(GF_Node *node);
 #endif
+
+/*! @} */
 
 #ifdef __cplusplus
 }

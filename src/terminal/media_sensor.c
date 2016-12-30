@@ -77,10 +77,17 @@ void RenderMediaSensor(GF_Node *node, void *rs, Bool is_destroy)
 	/*check OCR streams*/
 	else if (st->stream->odm->ocr_codec) ck = st->stream->odm->ocr_codec->ck;
 
-	if (ck && gf_clock_is_started(ck) ) {
+	if (ck && ck->clock_init ) {
 		if (do_update_clock)
 			st->stream->odm->media_current_time = gf_clock_media_time(ck);
 		mediasensor_update_timing(st->stream->odm, 0);
+	}
+	//if main addon is VoD , fire a timeshift update
+	else if (st->stream->odm->subscene && st->stream->odm->subscene->sys_clock_at_main_activation) {
+		GF_Event evt;
+		memset(&evt, 0, sizeof(evt));
+		evt.type = GF_EVENT_TIMESHIFT_UPDATE;
+		gf_term_send_event(st->stream->odm->term, &evt);
 	}
 }
 
@@ -88,6 +95,10 @@ void InitMediaSensor(GF_Scene *scene, GF_Node *node)
 {
 	MediaSensorStack *st;
 	GF_SAFEALLOC(st, MediaSensorStack);
+	if (!st) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[Terminal] Failed to allocate media sensor stack\n"));
+		return;
+	}
 
 	st->parent = scene;
 	st->sensor = (M_MediaSensor *)node;

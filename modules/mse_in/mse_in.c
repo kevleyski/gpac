@@ -27,6 +27,8 @@
 #include <gpac/internal/terminal_dev.h>
 #include <gpac/html5_mse.h>
 
+#ifndef GPAC_DISABLE_MSE
+
 typedef struct __mse_module
 {
 	GF_HTML_MediaSource *mediasource;
@@ -315,11 +317,15 @@ static Bool MSE_CanHandleURLInService(GF_InputService *plug, const char *url)
 	}
 }
 
+#endif //GPAC_DISABLE_MSE
+
 GPAC_MODULE_EXPORT
 const u32 *QueryInterfaces()
 {
 	static u32 si [] = {
+#ifndef GPAC_DISABLE_MSE
 		GF_NET_CLIENT_INTERFACE,
+#endif
 		0
 	};
 	return si;
@@ -328,12 +334,23 @@ const u32 *QueryInterfaces()
 GPAC_MODULE_EXPORT
 GF_BaseInterface *LoadInterface(u32 InterfaceType)
 {
+#ifdef GPAC_DISABLE_MSE
+	return NULL;
+#else
 	GF_MSE_In *msein;
 	GF_InputService *plug;
 	if (InterfaceType != GF_NET_CLIENT_INTERFACE) return NULL;
 
 	GF_SAFEALLOC(plug, GF_InputService);
+	if (!plug) return NULL;
 	GF_REGISTER_MODULE_INTERFACE(plug, GF_NET_CLIENT_INTERFACE, "GPAC MSE Loader", "gpac distribution")
+
+	GF_SAFEALLOC(msein, GF_MSE_In);
+	if (!msein) {
+		gf_free(plug);
+		return NULL;
+	}
+
 	plug->RegisterMimeTypes = MSE_RegisterMimeTypes;
 	plug->CanHandleURL = MSE_CanHandleURL;
 	plug->ConnectService = MSE_ConnectService;
@@ -345,14 +362,17 @@ GF_BaseInterface *LoadInterface(u32 InterfaceType)
 	plug->CanHandleURLInService = MSE_CanHandleURLInService;
 	plug->ChannelGetSLP = MSE_ChannelGetSLP;
 	plug->ChannelReleaseSLP = MSE_ChannelReleaseSLP;
-	GF_SAFEALLOC(msein, GF_MSE_In);
+
 	plug->priv = msein;
 	msein->plug = plug;
 	return (GF_BaseInterface *)plug;
+#endif
 }
+
 GPAC_MODULE_EXPORT
 void ShutdownInterface(GF_BaseInterface *bi)
 {
+#ifndef GPAC_DISABLE_MSE
 	GF_MSE_In *msein;
 
 	if (bi->InterfaceType!=GF_NET_CLIENT_INTERFACE) return;
@@ -361,6 +381,7 @@ void ShutdownInterface(GF_BaseInterface *bi)
 	assert(msein);
 	gf_free(msein);
 	gf_free(bi);
+#endif
 }
 
 GPAC_MODULE_STATIC_DECLARATION( mse_in )

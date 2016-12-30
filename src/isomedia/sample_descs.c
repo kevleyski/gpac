@@ -595,8 +595,8 @@ GF_Err LSR_UpdateESD(GF_LASeRSampleEntryBox *lsr, GF_ESD *esd)
 
 /* MetadataSampleEntry */
 GF_EXPORT
-GF_Err gf_isom_get_xml_metadata_description(GF_ISOFile *file, u32 track, u32 sampleDescription, 
-											const char **_namespace, const char **schema_loc, const char **content_encoding)
+GF_Err gf_isom_get_xml_metadata_description(GF_ISOFile *file, u32 track, u32 sampleDescription,
+        const char **_namespace, const char **schema_loc, const char **content_encoding)
 {
 	GF_TrackBox *trak;
 	GF_MetaDataSampleEntryBox *ptr;
@@ -616,9 +616,9 @@ GF_Err gf_isom_get_xml_metadata_description(GF_ISOFile *file, u32 track, u32 sam
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
-GF_Err gf_isom_new_xml_metadata_description(GF_ISOFile *movie, u32 trackNumber, 
-										const char *_namespace, const char *schema_loc, const char *content_encoding, 
-										u32 *outDescriptionIndex)
+GF_Err gf_isom_new_xml_metadata_description(GF_ISOFile *movie, u32 trackNumber,
+        const char *_namespace, const char *schema_loc, const char *content_encoding,
+        u32 *outDescriptionIndex)
 {
 	GF_TrackBox *trak;
 	GF_Err e;
@@ -666,9 +666,9 @@ GF_Err gf_isom_new_xml_metadata_description(GF_ISOFile *movie, u32 trackNumber,
 	return e;
 }
 
-GF_Err gf_isom_update_xml_metadata_description(GF_ISOFile *movie, u32 trackNumber, 
-									   const char *schema_loc, const char *encoding, 
-									   u32 DescriptionIndex)
+GF_Err gf_isom_update_xml_metadata_description(GF_ISOFile *movie, u32 trackNumber,
+        const char *schema_loc, const char *encoding,
+        u32 DescriptionIndex)
 {
 	/* TODO */
 	return GF_NOT_SUPPORTED;
@@ -678,38 +678,41 @@ GF_Err gf_isom_update_xml_metadata_description(GF_ISOFile *movie, u32 trackNumbe
 
 /* XMLSubtitleSampleEntry */
 GF_EXPORT
-GF_Err gf_isom_xml_subtitle_get_description(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex, 
-											const char **xmlnamespace, const char **xml_schema_loc, const char **mimes)
+GF_Err gf_isom_xml_subtitle_get_description(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex,
+        const char **xmlnamespace, const char **xml_schema_loc, const char **mimes)
 {
 	GF_TrackBox *trak;
 	GF_MetaDataSampleEntryBox *entry;
-	*xmlnamespace = NULL;
-	*xml_schema_loc = NULL;
-	*mimes = NULL;
+	if (xmlnamespace) *xmlnamespace = NULL;
+	if (xml_schema_loc) *xml_schema_loc = NULL;
+	if (mimes) *mimes = NULL;
 	trak = gf_isom_get_track_from_file(the_file, trackNumber);
 	if (!trak || !StreamDescriptionIndex) return GF_BAD_PARAM;
 
 	entry = (GF_MetaDataSampleEntryBox *)gf_list_get(trak->Media->information->sampleTable->SampleDescription->other_boxes, StreamDescriptionIndex-1);
-	if (!entry || 
-		(entry->type!=GF_ISOM_BOX_TYPE_STPP)) {
-			return GF_BAD_PARAM;
+	if (!entry) return GF_BAD_PARAM;
+ 
+	if ((entry->type!=GF_ISOM_BOX_TYPE_STPP) && (entry->type!=GF_ISOM_BOX_TYPE_METX)) {
+		return GF_BAD_PARAM;
 	}
 
 	if (entry->mime_type) {
-		*mimes = entry->mime_type;
+		if (mimes) *mimes = entry->mime_type;
 	}
 	if (entry->xml_schema_loc) {
-		*xml_schema_loc = entry->xml_schema_loc;
+		if (xml_schema_loc) *xml_schema_loc = entry->xml_schema_loc;
 	}
-	*xmlnamespace = entry->xml_namespace;
+	if (xmlnamespace)
+		*xmlnamespace = entry->xml_namespace;
 	return GF_OK;
 }
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
+GF_EXPORT
 GF_Err gf_isom_new_xml_subtitle_description(GF_ISOFile  *movie, u32 trackNumber,
-											const char *xmlnamespace, const char *xml_schema_loc, const char *mimes,
-											u32 *outDescriptionIndex)
+        const char *xmlnamespace, const char *xml_schema_loc, const char *mimes,
+        u32 *outDescriptionIndex)
 {
 	GF_TrackBox                 *trak;
 	GF_Err                      e;
@@ -760,7 +763,7 @@ GF_Err gf_isom_new_xml_subtitle_description(GF_ISOFile  *movie, u32 trackNumber,
 }
 
 GF_Err gf_isom_update_xml_subtitle_description(GF_ISOFile *movie, u32 trackNumber,
-											   u32 descriptionIndex, GF_GenericSubtitleSampleDescriptor *desc)
+        u32 descriptionIndex, GF_GenericSubtitleSampleDescriptor *desc)
 {
 	GF_TrackBox *trak;
 	GF_Err      e;
@@ -790,41 +793,41 @@ GF_Err gf_isom_update_xml_subtitle_description(GF_ISOFile *movie, u32 trackNumbe
 
 /* SimpleTextSampleEntry: also used for MetadataTextSampleEntry and SubtitleTextSampleEntry */
 GF_EXPORT
-GF_Err gf_isom_stxt_get_description(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex, 
-									const char **mime, const char **encoding, const char **config)
+GF_Err gf_isom_stxt_get_description(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex,
+                                    const char **mime, const char **encoding, const char **config)
 {
 	GF_TrackBox *trak;
 	GF_MetaDataSampleEntryBox *entry;
-	*mime = NULL;
-	*config = NULL;
-	*encoding = NULL;
+	if (mime) *mime = NULL;
+	if (config) *config = NULL;
+	if (encoding) *encoding = NULL;
 	trak = gf_isom_get_track_from_file(the_file, trackNumber);
 	if (!trak || !StreamDescriptionIndex) return GF_BAD_PARAM;
 
 	entry = (GF_MetaDataSampleEntryBox *)gf_list_get(trak->Media->information->sampleTable->SampleDescription->other_boxes, StreamDescriptionIndex-1);
-	if (!entry || 
-		((entry->type!=GF_ISOM_BOX_TYPE_STXT) &&
-		(entry->type!=GF_ISOM_BOX_TYPE_METT) &&
-		(entry->type!=GF_ISOM_BOX_TYPE_SBTT))) {
-			return GF_BAD_PARAM;
+	if (!entry ||
+	        ((entry->type!=GF_ISOM_BOX_TYPE_STXT) &&
+	         (entry->type!=GF_ISOM_BOX_TYPE_METT) &&
+	         (entry->type!=GF_ISOM_BOX_TYPE_SBTT))) {
+		return GF_BAD_PARAM;
 	}
 
 	if (entry->config) {
-		*config = entry->config->config;
+		if (config) *config = entry->config->config;
 	}
 	if (entry->mime_type) {
-		*mime = entry->mime_type;
+		if (mime) *mime = entry->mime_type;
 	}
 	if (entry->content_encoding) {
-		*encoding = entry->content_encoding;
+		if (encoding) *encoding = entry->content_encoding;
 	}
 	return GF_OK;
 }
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
-GF_Err gf_isom_new_stxt_description(GF_ISOFile *movie, u32 trackNumber, u32 type, 
-									const char *mime, const char *encoding, const char * config, 
-									u32 *outDescriptionIndex)
+GF_Err gf_isom_new_stxt_description(GF_ISOFile *movie, u32 trackNumber, u32 type,
+                                    const char *mime, const char *encoding, const char * config,
+                                    u32 *outDescriptionIndex)
 {
 	GF_TrackBox *trak;
 	GF_Err e;
@@ -889,9 +892,9 @@ GF_Err gf_isom_new_stxt_description(GF_ISOFile *movie, u32 trackNumber, u32 type
 }
 
 
-GF_Err gf_isom_update_stxt_description(GF_ISOFile *movie, u32 trackNumber, 
-									   const char *encoding, const char *config, 
-									   u32 DescriptionIndex)
+GF_Err gf_isom_update_stxt_description(GF_ISOFile *movie, u32 trackNumber,
+                                       const char *encoding, const char *config,
+                                       u32 DescriptionIndex)
 {
 	GF_TrackBox *trak;
 	GF_Err e;
@@ -905,10 +908,10 @@ GF_Err gf_isom_update_stxt_description(GF_ISOFile *movie, u32 trackNumber,
 
 	sample_entry = (GF_MetaDataSampleEntryBox *)gf_list_get(trak->Media->information->sampleTable->SampleDescription->other_boxes, DescriptionIndex-1);
 	if (!sample_entry) return GF_BAD_PARAM;
-	if (sample_entry->type != GF_ISOM_BOX_TYPE_METT && 
-		sample_entry->type != GF_ISOM_BOX_TYPE_SBTT &&
-		sample_entry->type != GF_ISOM_BOX_TYPE_STXT) {
-			return GF_BAD_PARAM;
+	if (sample_entry->type != GF_ISOM_BOX_TYPE_METT &&
+	        sample_entry->type != GF_ISOM_BOX_TYPE_SBTT &&
+	        sample_entry->type != GF_ISOM_BOX_TYPE_STXT) {
+		return GF_BAD_PARAM;
 	}
 
 	if (!sample_entry->config)
@@ -931,6 +934,8 @@ GF_Err gf_isom_update_stxt_description(GF_ISOFile *movie, u32 trackNumber,
 	return e;
 }
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
+
+#ifndef GPAC_DISABLE_VTT
 
 GF_WebVTTSampleEntryBox *gf_webvtt_isom_get_description(GF_ISOFile *movie, u32 trackNumber, u32 descriptionIndex)
 {
@@ -960,7 +965,11 @@ GF_WebVTTSampleEntryBox *gf_webvtt_isom_get_description(GF_ISOFile *movie, u32 t
 	return wvtt;
 }
 
+#endif /*GPAC_DISABLE_VTT*/
+
 #ifndef GPAC_DISABLE_ISOM_WRITE
+
+#ifndef GPAC_DISABLE_VTT
 
 GF_Err gf_isom_update_webvtt_description(GF_ISOFile *movie, u32 trackNumber, u32 descriptionIndex, const char *config)
 {
@@ -1041,6 +1050,8 @@ GF_Err gf_isom_new_webvtt_description(GF_ISOFile *movie, u32 trackNumber, GF_Tex
 	return e;
 }
 
+#endif /*GPAC_DISABLE_VTT*/
+
 GF_BitRateBox *gf_isom_sample_entry_get_bitrate(GF_SampleEntryBox *ent, Bool create)
 {
 	u32 i=0;
@@ -1056,7 +1067,7 @@ GF_BitRateBox *gf_isom_sample_entry_get_bitrate(GF_SampleEntryBox *ent, Bool cre
 }
 
 GF_EXPORT
-GF_Err gf_isom_change_update_bitrate(GF_ISOFile *movie, u32 trackNumber, u32 sampleDescriptionIndex, u32 average_bitrate, u32 max_bitrate, u32 decode_buffer_size)
+GF_Err gf_isom_update_bitrate(GF_ISOFile *movie, u32 trackNumber, u32 sampleDescriptionIndex, u32 average_bitrate, u32 max_bitrate, u32 decode_buffer_size)
 {
 	GF_BitRateBox *a;
 	GF_Err e;

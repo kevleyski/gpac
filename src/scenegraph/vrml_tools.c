@@ -569,7 +569,7 @@ void gf_sg_mfbool_del(MFBool par) {
 void gf_sg_mfcolor_del(MFColor par) {
 	gf_free(par.vals);
 }
-void gf_sg_mfcolor_rgba_del(MFColorRGBA par) {
+void gf_sg_mfcolorrgba_del(MFColorRGBA par) {
 	gf_free(par.vals);
 }
 void gf_sg_mfrotation_del(MFRotation par) {
@@ -686,7 +686,7 @@ void gf_sg_vrml_field_pointer_del(void *field, u32 FieldType)
 		gf_sg_mfcolor_del( * ((MFColor *)field));
 		break;
 	case GF_SG_VRML_MFCOLORRGBA:
-		gf_sg_mfcolor_rgba_del( * ((MFColorRGBA *)field));
+		gf_sg_mfcolorrgba_del( * ((MFColorRGBA *)field));
 		break;
 	case GF_SG_VRML_MFROTATION:
 	case GF_SG_VRML_MFVEC4F:
@@ -1544,10 +1544,10 @@ u32 gf_node_get_num_fields_in_mode(GF_Node *Node, u8 IndexMode)
 	assert(Node);
 	if (Node->sgprivate->tag == TAG_ProtoNode) return gf_sg_proto_get_num_fields(Node, IndexMode);
 	else if (Node->sgprivate->tag == TAG_MPEG4_Script)
-             return gf_sg_script_get_num_fields(Node, IndexMode);
+		return gf_sg_script_get_num_fields(Node, IndexMode);
 #ifndef GPAC_DISABLE_X3D
-    else if (Node->sgprivate->tag == TAG_X3D_Script)
-        return gf_sg_script_get_num_fields(Node, IndexMode);
+	else if (Node->sgprivate->tag == TAG_X3D_Script)
+		return gf_sg_script_get_num_fields(Node, IndexMode);
 #endif
 	else if (Node->sgprivate->tag <= GF_NODE_RANGE_LAST_MPEG4) return gf_sg_mpeg4_node_get_field_count(Node, IndexMode);
 #ifndef GPAC_DISABLE_X3D

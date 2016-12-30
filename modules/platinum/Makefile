@@ -32,7 +32,7 @@ endif
 
 SRCS := $(OBJS:.o=.c) 
 
-LIB=gm_platinum.$(DYN_LIB_SUFFIX)
+LIB=gm_platinum$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
 #LDFLAGS+=-export-symbols platinum.def 
 endif
@@ -46,7 +46,7 @@ all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CXX) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L$(LOCAL_LIB) $(LINKLIBS)
+	$(CXX) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L$(LOCAL_LIB) $(LINKLIBS) $(LDFLAGS)
 
 clean: 
 	rm -f $(OBJS) ../../bin/gcc/$(LIB)

@@ -38,6 +38,7 @@
 #define NO_10bit
 #endif
 
+//#define FFMPEG_DIRECT_DISPATCH
 
 /**
  * Allocates data for FFMPEG decoding
@@ -51,7 +52,7 @@ static uint8_t * ffmpeg_realloc_buffer(uint8_t * oldBuffer, u32 size) {
 	u32 allocatedSz = sizeof( char ) * (FF_INPUT_BUFFER_PADDING_SIZE + size);
 	if (oldBuffer)
 		gf_free(oldBuffer);
-	buffer = gf_malloc( allocatedSz );
+	buffer = (uint8_t*)gf_malloc( allocatedSz );
 	if (buffer)
 		memset( buffer, 0, allocatedSz);
 	return buffer;
@@ -64,21 +65,27 @@ static AVCodec *ffmpeg_get_codec(u32 codec_4cc)
 	AVCodec *codec;
 	strcpy(name, gf_4cc_to_str(codec_4cc));
 
+    codec = avcodec_find_decoder(codec_4cc);
+    if (codec) return codec;
+    
 	codec = avcodec_find_decoder_by_name(name);
-	if (!codec) {
-		strupr(name);
-		codec = avcodec_find_decoder_by_name(name);
-		if (!codec) {
-			strlwr(name);
-			codec = avcodec_find_decoder_by_name(name);
-		}
-	}
+    if (codec) return codec;
+    strupr(name);
+    codec = avcodec_find_decoder_by_name(name);
+    if (codec) return codec;
+    strlwr(name);
+    codec = avcodec_find_decoder_by_name(name);
+    if (codec) return codec;
 	/*custom mapings*/
-	if (!codec) {
-		if (!stricmp(name, "s263")) codec = avcodec_find_decoder_by_name("h263");
-		else if (!stricmp(name, "samr") || !stricmp(name, "amr ")) codec = avcodec_find_decoder_by_name("amr_nb");
-		else if (!stricmp(name, "sawb")) codec = avcodec_find_decoder_by_name("amr_wb");
+    if (!stricmp(name, "s263")) codec = avcodec_find_decoder(CODEC_ID_H263);
+	else if (!stricmp(name, "mjp2")) {
+		codec = avcodec_find_decoder_by_name("jpeg2000");
+		if (!codec) codec = avcodec_find_decoder_by_name("libopenjpeg");
 	}
+    else if (!stricmp(name, "samr") || !stricmp(name, "amr ")) codec = avcodec_find_decoder(CODEC_ID_AMR_NB);
+    else if (!stricmp(name, "sawb")) codec = avcodec_find_decoder(CODEC_ID_AMR_WB);
+
+	
 	return codec;
 }
 
@@ -136,7 +143,6 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 	AVCodecContext **ctx;
 	AVCodec **codec;
 	AVFrame **frame;
-	const char *sOpt;
 
 #ifndef GPAC_DISABLE_AV_PARSERS
 	GF_M4VDecSpecInfo dsi;
@@ -153,7 +159,7 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 		u32 i = 0;
 		GF_Descriptor *d = NULL;
 		if (esd->dependsOnESID != ffd->base_ES_ID) return GF_NOT_SUPPORTED;
-		while ((d = gf_list_enum(esd->extensionDescriptors, &i))) {
+		while ((d = (GF_Descriptor*)gf_list_enum(esd->extensionDescriptors, &i))) {
 			if (d->tag == GF_ODF_AUX_VIDEO_DATA) break;
 		}
 		if (!d) return GF_NOT_SUPPORTED;
@@ -204,7 +210,7 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 		}
 
 		*codec = avcodec_find_decoder(codec_id);
-		FFDEC_LoadDSI(ffd, bs, *codec, *ctx, 1);
+		FFDEC_LoadDSI(ffd, bs, *codec, *ctx, GF_TRUE);
 		gf_bs_del(bs);
 	}
 	/*private QT DSI*/
@@ -230,7 +236,8 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 			(*ctx)->height = gf_bs_read_u16(bs);
 		}
 		(*codec) = ffmpeg_get_codec(codec_id);
-		FFDEC_LoadDSI(ffd, bs, *codec, *ctx, 0);
+        codec_id = (*codec)->id;
+		FFDEC_LoadDSI(ffd, bs, *codec, *ctx, GF_FALSE);
 		gf_bs_del(bs);
 	}
 	/*use std MPEG-4 st/oti*/
@@ -261,7 +268,11 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 				break;
 			case GPAC_OTI_IMAGE_JPEG:
 				codec_id = CODEC_ID_MJPEG;
-				ffd->is_image=1;
+				ffd->is_image = GF_TRUE;
+				break;
+			case GPAC_OTI_IMAGE_PNG:
+				codec_id = CODEC_ID_PNG;
+				ffd->is_image = GF_TRUE;
 				break;
 			case 0xFF:
 				codec_id = CODEC_ID_SVQ3;
@@ -281,15 +292,44 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 			case GPAC_OTI_AUDIO_EAC3:
 				codec_id = CODEC_ID_EAC3;
 				break;
+            case GPAC_OTI_AUDIO_AAC_MPEG2_LCP:
+            case GPAC_OTI_AUDIO_AAC_MPEG2_MP:
+            case GPAC_OTI_AUDIO_AAC_MPEG2_SSRP:
+            case GPAC_OTI_AUDIO_AAC_MPEG4:
+                codec_id = CODEC_ID_AAC;
+                break;
 			}
 		}
 		else if ((ffd->st==GF_STREAM_ND_SUBPIC) && (ffd->oti==0xe0)) {
 			codec_id = CODEC_ID_DVD_SUBTITLE;
 		}
 		*codec = avcodec_find_decoder(codec_id);
+
+        if (*codec && (codec_id == CODEC_ID_AAC)) {
+            bs = gf_bs_new(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, GF_BITSTREAM_READ);
+            FFDEC_LoadDSI(ffd, bs, *codec, *ctx, GF_FALSE);
+            gf_bs_del(bs);
+        }
+
 	}
 	/*should never happen*/
 	if (! (*codec)) return GF_OUT_OF_MEM;
+	
+	/*not sure this is the right way to do so, no doc in ffmpeg on this topic */
+#if 0
+	/*check HW accel*/
+	avcodec_get_context_defaults3(*ctx, *codec);
+	if (*codec) {
+		AVHWAccel *hwaccel=NULL;
+		while ((hwaccel = av_hwaccel_next(hwaccel))){
+			if (hwaccel->id == (*codec)->id) {
+				(*ctx)->hwaccel_context = hwaccel;
+				(*ctx)->pix_fmt = hwaccel->pix_fmt;
+				break;
+			}
+		}
+	}
+#endif
 
 	/*setup MPEG-4 video streams*/
 	if (ffd->st==GF_STREAM_VISUAL) {
@@ -308,12 +348,12 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 					if (dsi.height%2) dsi.height++;
 					(*ctx)->width = dsi.width;
 					(*ctx)->height = dsi.height;
-					if (!dsi.width && !dsi.height) ffd->check_short_header = 1;
+					if (!dsi.width && !dsi.height) ffd->check_short_header = GF_TRUE;
 					ffd->previous_par = (dsi.par_num<<16) | dsi.par_den;
-					ffd->no_par_update = 1;
+					ffd->no_par_update = GF_TRUE;
 #endif
 				} else if (ffd->oti==GPAC_OTI_VIDEO_AVC) {
-					ffd->check_h264_isma = 1;
+					ffd->check_h264_isma = GF_TRUE;
 				}
 
 				/*setup dsi for FFMPEG context BEFORE attaching decoder (otherwise not proper init)*/
@@ -338,6 +378,7 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 	if (ffd->oti == GPAC_OTI_VIDEO_HEVC) {
 		GF_SystemRTInfo rti;
 		u32 nb_threads, detected_nb_threads = 1;
+		const char *sOpt;
 		sOpt = gf_modules_get_option((GF_BaseInterface *)plug, "OpenHEVC", "ThreadingType");
 		if (sOpt && !strcmp(sOpt, "wpp")) av_opt_set(*ctx, "thread_type", "slice", 0);
 		else if (sOpt && !strcmp(sOpt, "frame+wpp")) av_opt_set(*ctx, "thread_type", "frameslice", 0);
@@ -358,9 +399,9 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 			nb_threads = atoi(sOpt);
 		}
 		if (nb_threads > detected_nb_threads) {
-			GF_LOG(GF_LOG_CODEC, GF_LOG_WARNING, ("[HEVC@ffmpeg] Initializing with %d threads but only %d available cores detected on the system\n", nb_threads, rti.nb_cores));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[HEVC@ffmpeg] Initializing with %d threads but only %d available cores detected on the system\n", nb_threads, rti.nb_cores));
 		} else {
-			GF_LOG(GF_LOG_CODEC, GF_LOG_INFO, ("[HEVC@ffmpeg] Initializing with %d threads\n", nb_threads));
+			GF_LOG(GF_LOG_INFO, GF_LOG_CODEC, ("[HEVC@ffmpeg] Initializing with %d threads\n", nb_threads));
 		}
 		fprintf(stderr, "[HEVC@ffmpeg] Initializing with %d threads\n", nb_threads);
 		av_opt_set_int(*ctx, "threads", nb_threads, 0);
@@ -378,7 +419,7 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 	if (codec_id == CODEC_ID_RAWVIDEO) {
 		(*ctx)->codec_id = CODEC_ID_RAWVIDEO;
 		(*ctx)->pix_fmt = ffd->raw_pix_fmt;
-		if ((*ctx)->extradata && strstr((char *) (*ctx)->extradata, "BottomUp")) ffd->flipped = 1;
+		if ((*ctx)->extradata && strstr((char *) (*ctx)->extradata, "BottomUp")) ffd->flipped = GF_TRUE;
 	} else {
 #ifdef USE_AVCTX3
 		if (avcodec_open2((*ctx), (*codec), NULL )<0) return GF_NON_COMPLIANT_BITSTREAM;
@@ -386,6 +427,7 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 		if (avcodec_open((*ctx), (*codec) )<0) return GF_NON_COMPLIANT_BITSTREAM;
 #endif
 	}
+	
 	/*setup audio streams*/
 	if (ffd->st==GF_STREAM_AUDIO) {
 		if ((*codec)->id == CODEC_ID_MP2) {
@@ -414,8 +456,13 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 #if (LIBAVCODEC_VERSION_INT > AV_VERSION_INT(51, 20, 0))
 		case CODEC_ID_GIF:
 #endif
+		case CODEC_ID_PNG:
 		case CODEC_ID_RAWVIDEO:
-			ffd->pix_fmt = GF_PIXEL_RGB_24;
+			if ((*ctx)->pix_fmt==PIX_FMT_YUV420P) {
+				ffd->pix_fmt = GF_PIXEL_YV12;
+			} else {
+				ffd->pix_fmt = GF_PIXEL_RGB_24;
+			}
 			break;
 
 		case CODEC_ID_DVD_SUBTITLE:
@@ -457,17 +504,6 @@ static GF_Err FFDEC_AttachStream(GF_BaseDecoder *plug, GF_ESD *esd)
 		} else {
 			ffd->out_size = (*ctx)->width * (*ctx)->height * 3;
 		}
-	}
-
-
-	sOpt = gf_modules_get_option((GF_BaseInterface *)plug, "Systems", "Output8bit");
-	if (!sOpt) gf_modules_set_option((GF_BaseInterface *)plug, "Systems", "Output8bit", (ffd->display_bpp>8) ? "no" : "yes");
-	if (sOpt && !strcmp(sOpt, "yes")) ffd->output_as_8bit = 1;
-
-	if (ffd->output_as_8bit && (ffd->stride > (u32) (*ctx)->width)) {
-		ffd->stride /=2;
-		ffd->out_size /= 2;
-		ffd->conv_to_8bit = 1;
 	}
 
 	return GF_OK;
@@ -512,6 +548,12 @@ static GF_Err FFDEC_DetachStream(GF_BaseDecoder *plug, u16 ES_ID)
 	if (ffd->audio_frame) {
 		av_free(ffd->audio_frame);
 	}
+	if (ffd->base_frame) {
+		av_free(ffd->base_frame);
+	}
+	if (ffd->depth_frame) {
+		av_free(ffd->depth_frame);
+	}
 #endif
 
 #ifdef FFMPEG_SWSCALE
@@ -520,10 +562,7 @@ static GF_Err FFDEC_DetachStream(GF_BaseDecoder *plug, u16 ES_ID)
 		*sws = NULL;
 	}
 #endif
-	if (ffd->conv_buffer) {
-		gf_free(ffd->conv_buffer);
-		ffd->conv_buffer = NULL;
-	}
+	
 	return GF_OK;
 }
 
@@ -543,8 +582,14 @@ static GF_Err FFDEC_GetCapabilities(GF_BaseDecoder *plug, GF_CodecCapability *ca
 	case GF_CODEC_REORDER:
 		capability->cap.valueInt = 1;
 		return GF_OK;
-	case GF_CODEC_DIRECT_OUTPUT:
+	case GF_CODEC_RAW_MEMORY:
 		capability->cap.valueBool = GF_TRUE;
+		return GF_OK;
+	case GF_CODEC_FRAME_OUTPUT:
+#if defined(USE_AVCTX3) && defined(FFMPEG_DIRECT_DISPATCH)
+		//deactivated by default until we have more tests (stride, color formats)
+		capability->cap.valueBool = GF_FALSE;
+#endif
 		return GF_OK;
 	case GF_CODEC_WANTS_THREAD:
 		capability->cap.valueBool= GF_TRUE;
@@ -590,8 +635,8 @@ static GF_Err FFDEC_GetCapabilities(GF_BaseDecoder *plug, GF_CodecCapability *ca
 	case GF_CODEC_STRIDE:
 		if (ffd->out_pix_fmt==GF_PIXEL_RGB_24)
 			capability->cap.valueInt = ffd->stride*3;
-		else if (ffd->conv_buffer)
-			capability->cap.valueInt = ffd->base_ctx->width;
+		else if (ffd->out_pix_fmt==GF_PIXEL_RGBA)
+			capability->cap.valueInt = ffd->stride*4;
 		else
 			capability->cap.valueInt = ffd->stride;
 		break;
@@ -603,7 +648,6 @@ static GF_Err FFDEC_GetCapabilities(GF_BaseDecoder *plug, GF_CodecCapability *ca
 		break;
 	case GF_CODEC_PIXEL_FORMAT:
 		if (ffd->base_ctx->width) capability->cap.valueInt = ffd->out_pix_fmt;
-		if (ffd->conv_buffer) capability->cap.valueInt = GF_PIXEL_YV12;
 		break;
 	/*ffmpeg performs frame reordering internally*/
 	case GF_CODEC_REORDER:
@@ -637,9 +681,6 @@ static GF_Err FFDEC_SetCapabilities(GF_BaseDecoder *plug, GF_CodecCapability cap
 	assert(plug);
 	assert( ffd );
 	switch (capability.CapCode) {
-	case GF_CODEC_DISPLAY_BPP:
-		ffd->display_bpp = capability.cap.valueInt;
-		return GF_OK;
 	case GF_CODEC_WAIT_RAP:
 		ffd->frame_start = 0;
 		if (ffd->st==GF_STREAM_VISUAL) {
@@ -647,16 +688,262 @@ static GF_Err FFDEC_SetCapabilities(GF_BaseDecoder *plug, GF_CodecCapability cap
 			if (ffd->depth_ctx && ffd->depth_ctx->codec) avcodec_flush_buffers(ffd->depth_ctx);
 		}
 		return GF_OK;
-	case GF_CODEC_DIRECT_OUTPUT:
-		ffd->direct_output = GF_TRUE;
+	case GF_CODEC_RAW_MEMORY:
+		ffd->direct_output_mode = capability.cap.valueBool ? 1 : 0;
+		return GF_OK;
+	case GF_CODEC_FRAME_OUTPUT:
+		ffd->direct_output_mode = capability.cap.valueInt ? 2 : 0;
 		return GF_OK;
 	default:
 		/*return unsupported to avoid confusion by the player (like color space changing ...) */
 		return GF_NOT_SUPPORTED;
 	}
 }
+static GF_Err FFDEC_GetOutputPixelFromat (u32 pix_fmt, u32 * out_pix_fmt, FFDec *ffd)
+{
 
-static GF_Err FFDEC_ProcessData(GF_MediaDecoder *plug,
+	if (!out_pix_fmt || !ffd) return GF_BAD_PARAM;
+	
+	switch (pix_fmt) {
+		case PIX_FMT_YUV420P:
+			*out_pix_fmt = GF_PIXEL_YV12;
+			break;
+		case PIX_FMT_YUV420P10LE:
+			*out_pix_fmt = GF_PIXEL_YV12_10;
+			break;
+		case PIX_FMT_YUV422P:
+			*out_pix_fmt = GF_PIXEL_YUV422;
+			break;
+		case PIX_FMT_YUV422P10LE:
+			*out_pix_fmt = GF_PIXEL_YUV422_10;
+			break;
+		case PIX_FMT_YUV444P:
+			*out_pix_fmt = GF_PIXEL_YUV444;
+			break;
+		case PIX_FMT_YUV444P10LE:
+			*out_pix_fmt = GF_PIXEL_YUV444_10;
+			break;
+		case PIX_FMT_RGBA:
+			*out_pix_fmt = GF_PIXEL_RGBA;
+			break;
+		case PIX_FMT_RGB24:
+			*out_pix_fmt = GF_PIXEL_RGB_24;
+			break;
+		case PIX_FMT_BGR24:
+			*out_pix_fmt = GF_PIXEL_BGR_24;
+			break;
+			
+		default:
+			return GF_NOT_SUPPORTED;
+	
+		}
+		return GF_OK;
+		
+}
+
+
+static GF_Err FFDEC_ProcessAudio(FFDec *ffd,
+                                char *inBuffer, u32 inBufferLength,
+                                u16 ES_ID, u32 *CTS,
+                                char *outBuffer, u32 *outBufferLength,
+                                u8 PaddingBits, u32 mmlevel)
+{
+
+#ifdef USE_AVCODEC2
+	AVPacket pkt;
+#endif
+	s32 gotpic;
+	AVCodecContext *ctx = ffd->base_ctx;
+	s32 len;
+	u32 buf_size = (*outBufferLength);
+
+#ifdef USE_AVCODEC2
+	av_init_packet(&pkt);
+	pkt.data = (uint8_t *)inBuffer;
+	pkt.size = inBufferLength;
+#endif
+	
+	(*outBufferLength) = 0;
+
+	/*seeking don't decode*/
+	if (!inBuffer || (mmlevel == GF_CODEC_LEVEL_SEEK)) {
+		*outBufferLength = 0;
+		ffd->frame_start = 0;
+		return GF_OK;
+	}
+	if (ffd->frame_start>inBufferLength) ffd->frame_start = 0;
+	//seek to last byte consumed by the previous decode4()
+	else if (ffd->frame_start) {
+		pkt.data += ffd->frame_start;
+		pkt.size -= ffd->frame_start;
+	}
+redecode:
+
+#if defined(USE_AVCTX3)
+	len = avcodec_decode_audio4(ctx, ffd->audio_frame, &gotpic, &pkt);
+	if (gotpic) {
+		//int inputDataSize = av_samples_get_buffer_size(NULL, ctx->channels, ffd->audio_frame->nb_samples, ctx->sample_fmt, 1);
+		gotpic = ffd->audio_frame->nb_samples * 2 * ctx->channels;
+	}
+#elif defined(USE_AVCODEC2)
+	gotpic = 192000;
+	len = avcodec_decode_audio3(ctx, (short *)ffd->audio_buf, &gotpic, &pkt);
+#else
+	gotpic = AVCODEC_MAX_AUDIO_FRAME_SIZE;
+	len = avcodec_decode_audio2(ctx, (short *)ffd->audio_buf, &gotpic, inBuffer + ffd->frame_start, inBufferLength - ffd->frame_start);
+#endif
+	if (len<0) {
+		ffd->frame_start = 0;
+		return GF_NON_COMPLIANT_BITSTREAM;
+	}
+	if (gotpic<0) {
+		ffd->frame_start = 0;
+		return GF_OK;
+	}
+
+	/*first config*/
+	if (!ffd->out_size) {
+		u32 bpp = 2;
+		
+		if (ctx->channels * ctx->frame_size * bpp < gotpic) ctx->frame_size = gotpic / (bpp * ctx->channels);
+		ffd->out_size = ctx->channels * ctx->frame_size * bpp;
+	}
+	if (ffd->out_size < (u32) gotpic) {
+		/*looks like relying on frame_size is not a good idea for all codecs, so we use gotpic*/
+		(*outBufferLength) = ffd->out_size = gotpic;
+		return GF_BUFFER_TOO_SMALL;
+	}
+	if (ffd->out_size > buf_size) {
+		/*don't use too small output chunks otherwise we'll never have enough when mixing - we could
+			also request more slots in the composition memory but let's not waste mem*/
+		if (ffd->out_size < (u32) 576*ctx->channels) ffd->out_size=ctx->channels*576;
+		(*outBufferLength) = ffd->out_size;
+		return GF_BUFFER_TOO_SMALL;
+	}
+
+#if defined(USE_AVCTX3)
+	if (ffd->audio_frame->format==AV_SAMPLE_FMT_FLTP) {
+		s32 i, j;
+		s16 *output = (s16 *) outBuffer;
+		for (j=0; j<ctx->channels; j++) {
+			Float* inputChannel = (Float*)ffd->audio_frame->extended_data[j];
+			for (i=0 ; i<ffd->audio_frame->nb_samples ; i++) {
+				Float sample = inputChannel[i];
+				if (sample<-1.0f) sample=-1.0f;
+				else if (sample>1.0f) sample=1.0f;
+
+				output[i*ctx->channels + j] = (int16_t) (sample * GF_SHORT_MAX );
+			}
+		}
+	} else if (ffd->audio_frame->format==AV_SAMPLE_FMT_S16P) {
+		s32 i, j;
+		s16 *output = (s16 *) outBuffer;
+		for (j=0; j<ctx->channels; j++) {
+			s16* inputChannel = (s16*)ffd->audio_frame->extended_data[j];
+			for (i=0 ; i<ffd->audio_frame->nb_samples ; i++) {
+				Float sample = inputChannel[i];
+				output[i*ctx->channels + j] = (int16_t) (sample );
+			}
+		}
+	} else if (ffd->audio_frame->format==AV_SAMPLE_FMT_U8) {
+		u32 i, size = ffd->audio_frame->nb_samples * ctx->channels;
+		s16 *output = (s16 *) outBuffer;
+		s8 *input = (s8 *) ffd->audio_frame->data[0];
+		for (i=0; i<size; i++) {
+			output [i] = input[i] * 128;
+		}
+	} else if (ffd->audio_frame->format==AV_SAMPLE_FMT_S32) {
+		u32 i, shift, size = ffd->audio_frame->nb_samples * ctx->channels;
+		s16 *output = (s16 *) outBuffer;
+		s32 *input = (s32*) ffd->audio_frame->data[0];
+		shift = 1<<31;
+		for (i=0; i<size; i++) {
+			output [i] = input[i] * shift;
+		}
+	} else if (ffd->audio_frame->format==AV_SAMPLE_FMT_FLT) {
+		u32 i, size = ffd->audio_frame->nb_samples * ctx->channels;
+		s16 *output = (s16 *) outBuffer;
+		Float *input = (Float *) ffd->audio_frame->data[0];
+		for (i=0; i<size; i++) {
+			Float sample = input[i];
+			if (sample<-1.0f) sample=-1.0f;
+			else if (sample>1.0f) sample=1.0f;
+			output [i] = (int16_t) (sample * GF_SHORT_MAX);
+		}
+	} else if (ffd->audio_frame->format==AV_SAMPLE_FMT_S16) {
+		memcpy(outBuffer, ffd->audio_frame->data[0], sizeof(char) * ffd->audio_frame->nb_samples * ctx->channels*2);
+	} else if (ffd->audio_frame->nb_samples) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[FFMPEG Decoder] Raw Audio format %d not supported\n", ffd->audio_frame->format ));
+	}
+#else
+	/*we're sure to have at least gotpic bytes available in output*/
+	memcpy(outBuffer, ffd->audio_buf, sizeof(char) * gotpic);
+#endif
+
+	(*outBufferLength) += gotpic;
+	outBuffer += gotpic;
+
+#if defined(USE_AVCTX3)
+	ffd->audio_frame->nb_samples = 0;
+#endif
+
+	ffd->frame_start += len;
+	if (inBufferLength <= ffd->frame_start) {
+		ffd->frame_start = 0;
+		return GF_OK;
+	}
+	/*still space go on*/
+	if ((*outBufferLength)+ctx->frame_size<ffd->out_size) goto redecode;
+
+	/*more frames in the current sample*/
+	return GF_PACKED_FRAMES;
+}
+
+//TODO check why we need this one ...
+static GF_Err FFDEC_ProcessRawVideo(FFDec *ffd,
+                                char *inBuffer, u32 inBufferLength,
+                                u16 ES_ID, u32 *CTS,
+                                char *outBuffer, u32 *outBufferLength,
+                                u8 PaddingBits, u32 mmlevel)
+{
+	AVCodecContext *ctx = ffd->base_ctx;
+
+	if (*outBufferLength != ffd->out_size) {
+		*outBufferLength = ffd->out_size;
+		return GF_BUFFER_TOO_SMALL;
+	}
+	if (inBufferLength) {
+		*outBufferLength = ffd->out_size;
+//		assert(inBufferLength==ffd->out_size);
+
+		if (ffd->raw_pix_fmt==PIX_FMT_BGR24) {
+			s32 i, j;
+			for (j=0; j<ctx->height; j++) {
+				u8 *src = (u8 *) inBuffer + j*3*ctx->width;
+				u8 *dst = (u8 *)outBuffer + j*3*ctx->width;
+				if (ffd->flipped) {
+					dst = (u8 *)outBuffer + (ctx->height-j-1) * 3*ctx->width;
+				}
+				for (i=0; i<ctx->width; i++) {
+					dst[0] = src[2];
+					dst[1] = src[1];
+					dst[2] = src[2];
+					src += 3;
+					dst += 3;
+				}
+			}
+		} else {
+			memcpy(outBuffer, inBuffer, ffd->out_size);
+		}
+	} else {
+		*outBufferLength = 0;
+	}
+	return GF_OK;
+}
+
+
+
+static GF_Err FFDEC_ProcessVideo(FFDec *ffd,
                                 char *inBuffer, u32 inBufferLength,
                                 u16 ES_ID, u32 *CTS,
                                 char *outBuffer, u32 *outBufferLength,
@@ -666,18 +953,14 @@ static GF_Err FFDEC_ProcessData(GF_MediaDecoder *plug,
 	AVPacket pkt;
 #endif
 	AVPicture pict;
-	u32 pix_out;
-	s32 w, h, gotpic, stride;
-	u32 outsize;
+	u32 pix_out=0;
+	s32 w, h, gotpic, stride, ret;
+	u32 outsize=0, out_pix_fmt;
 	AVCodecContext *ctx;
 	AVCodec **codec;
 	AVFrame *frame;
 #ifdef FFMPEG_SWSCALE
-	struct SwsContext **cached_sws;
-#endif
-	FFDec *ffd = plug->privateStack;
-#ifdef FFMPEG_SWSCALE
-	cached_sws = &(ffd->base_sws);
+	struct SwsContext **cached_sws = &(ffd->base_sws);
 #endif
 
 	if (!ES_ID || (ffd->base_ES_ID==ES_ID)) {
@@ -718,164 +1001,9 @@ static GF_Err FFDEC_ProcessData(GF_MediaDecoder *plug,
 	av_init_packet(&pkt);
 	pkt.data = (uint8_t *)inBuffer;
 	pkt.size = inBufferLength;
+	pkt.dts=0;
+	pkt.pts = *CTS;
 #endif
-	/*audio stream*/
-	if (ffd->st==GF_STREAM_AUDIO) {
-		s32 len;
-		u32 buf_size = (*outBufferLength);
-
-		(*outBufferLength) = 0;
-
-		/*seeking don't decode*/
-		if (!inBuffer || (mmlevel == GF_CODEC_LEVEL_SEEK)) {
-			*outBufferLength = 0;
-			ffd->frame_start = 0;
-			return GF_OK;
-		}
-		if (ffd->frame_start>inBufferLength) ffd->frame_start = 0;
-		//seek to last byte consumed by the previous decode4()
-		else if (ffd->frame_start) {
-			pkt.data += ffd->frame_start;
-			pkt.size -= ffd->frame_start;
-		}
-redecode:
-
-#if defined(USE_AVCTX3)
-		len = avcodec_decode_audio4(ctx, ffd->audio_frame, &gotpic, &pkt);
-		if (gotpic) {
-			//int inputDataSize = av_samples_get_buffer_size(NULL, ctx->channels, ffd->audio_frame->nb_samples, ctx->sample_fmt, 1);
-			gotpic = ffd->audio_frame->nb_samples * 2 * ctx->channels;
-
-		}
-#elif defined(USE_AVCODEC2)
-		gotpic = 192000;
-		len = avcodec_decode_audio3(ctx, (short *)ffd->audio_buf, &gotpic, &pkt);
-#else
-		gotpic = AVCODEC_MAX_AUDIO_FRAME_SIZE;
-		len = avcodec_decode_audio2(ctx, (short *)ffd->audio_buf, &gotpic, inBuffer + ffd->frame_start, inBufferLength - ffd->frame_start);
-#endif
-		if (len<0) {
-			ffd->frame_start = 0;
-			return GF_NON_COMPLIANT_BITSTREAM;
-		}
-		if (gotpic<0) {
-			ffd->frame_start = 0;
-			return GF_OK;
-		}
-
-		/*first config*/
-		if (!ffd->out_size) {
-			u32 bpp = 2;
-
-			if (ctx->channels * ctx->frame_size * bpp < gotpic) ctx->frame_size = gotpic / (bpp * ctx->channels);
-
-			ffd->out_size = ctx->channels * ctx->frame_size * bpp;
-		}
-		if (ffd->out_size < (u32) gotpic) {
-			/*looks like relying on frame_size is not a good idea for all codecs, so we use gotpic*/
-			(*outBufferLength) = ffd->out_size = gotpic;
-			return GF_BUFFER_TOO_SMALL;
-		}
-		if (ffd->out_size > buf_size) {
-			/*don't use too small output chunks otherwise we'll never have enough when mixing - we could
-			also request more slots in the composition memory but let's not waste mem*/
-			if (ffd->out_size < (u32) 576*ctx->channels) ffd->out_size=ctx->channels*576;
-			(*outBufferLength) = ffd->out_size;
-			return GF_BUFFER_TOO_SMALL;
-		}
-
-#if defined(USE_AVCTX3)
-		if (ffd->audio_frame->format==AV_SAMPLE_FMT_FLTP) {
-			s32 i, j;
-			s16 *output = (s16 *) outBuffer;
-			for (j=0; j<ctx->channels; j++) {
-				Float* inputChannel = (Float*)ffd->audio_frame->extended_data[j];
-				for (i=0 ; i<ffd->audio_frame->nb_samples ; i++) {
-					Float sample = inputChannel[i];
-					if (sample<-1.0f) sample=-1.0f;
-					else if (sample>1.0f) sample=1.0f;
-
-					output[i*ctx->channels + j] = (int16_t) (sample * GF_SHORT_MAX );
-				}
-			}
-		} else if (ffd->audio_frame->format==AV_SAMPLE_FMT_U8) {
-			u32 i, size = ffd->audio_frame->nb_samples * ctx->channels;
-			s16 *output = (s16 *) outBuffer;
-			s8 *input = (s8 *) ffd->audio_frame->data;
-			for (i=0; i<size; i++) {
-				output [i] = input[i] * 128;
-			}
-		} else if (ffd->audio_frame->format==AV_SAMPLE_FMT_S32) {
-			u32 i, shift, size = ffd->audio_frame->nb_samples * ctx->channels;
-			s16 *output = (s16 *) outBuffer;
-			s32 *input = (s32*) ffd->audio_frame->data;
-			shift = 1<<31;
-			for (i=0; i<size; i++) {
-				output [i] = input[i] * shift;
-			}
-		} else if (ffd->audio_frame->format==AV_SAMPLE_FMT_S16) {
-			memcpy(outBuffer, ffd->audio_frame->data, sizeof(char) * ffd->audio_frame->nb_samples * ctx->channels*2);
-		} else {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[FFMPEG Decoder] Raw Audio format %d not supoorted\n", ffd->audio_frame->format ));
-		}
-#else
-		/*we're sure to have at least gotpic bytes available in output*/
-		memcpy(outBuffer, ffd->audio_buf, sizeof(char) * gotpic);
-#endif
-
-		(*outBufferLength) += gotpic;
-		outBuffer += gotpic;
-
-#if defined(USE_AVCTX3)
-		ffd->audio_frame->nb_samples = 0;
-#endif
-
-		ffd->frame_start += len;
-		if (inBufferLength <= ffd->frame_start) {
-			ffd->frame_start = 0;
-			return GF_OK;
-		}
-		/*still space go on*/
-		if ((*outBufferLength)+ctx->frame_size<ffd->out_size) goto redecode;
-
-		/*more frames in the current sample*/
-		return GF_PACKED_FRAMES;
-	}
-
-
-	if ( ctx->codec_id == CODEC_ID_RAWVIDEO) {
-		if (*outBufferLength != ffd->out_size) {
-			*outBufferLength = ffd->out_size;
-			return GF_BUFFER_TOO_SMALL;
-		}
-		if (inBufferLength) {
-			*outBufferLength = ffd->out_size;
-			assert(inBufferLength==ffd->out_size);
-
-			if (ffd->raw_pix_fmt==PIX_FMT_BGR24) {
-				s32 i, j;
-				for (j=0; j<ctx->height; j++) {
-					u8 *src = (u8 *) inBuffer + j*3*ctx->width;
-					u8 *dst = (u8 *)outBuffer + j*3*ctx->width;
-					if (ffd->flipped) {
-						dst = (u8 *)outBuffer + (ctx->height-j-1) * 3*ctx->width;
-					}
-					for (i=0; i<ctx->width; i++) {
-						dst[0] = src[2];
-						dst[1] = src[1];
-						dst[2] = src[2];
-						src += 3;
-						dst += 3;
-					}
-				}
-			} else {
-				memcpy(outBuffer, inBuffer, ffd->out_size);
-			}
-		} else {
-			*outBufferLength = 0;
-		}
-		return GF_OK;
-	}
 
 	*outBufferLength = 0;
 	/*visual stream*/
@@ -884,7 +1012,7 @@ redecode:
 
 	/*we have a valid frame not yet dispatched*/
 	if (ffd->had_pic) {
-		ffd->had_pic = 0;
+		ffd->had_pic = GF_FALSE;
 		gotpic = 1;
 	} else {
 		if (ffd->check_h264_isma) {
@@ -983,45 +1111,78 @@ redecode:
 
 	/*we have a picture and need resize, do it*/
 	if (gotpic && ffd->needs_output_resize) {
-		ffd->needs_output_resize=0;
-		ffd->had_pic = 1;
+		ffd->needs_output_resize = GF_FALSE;
+		ffd->had_pic = GF_TRUE;
 		*outBufferLength = ffd->out_size;
-		return GF_BUFFER_TOO_SMALL;
+		if (ffd->direct_output_mode) {
+			ffd->frame_size_changed = GF_TRUE;
+		} else {
+			return GF_BUFFER_TOO_SMALL;
+		}
 	}
 
 	stride = frame->linesize[0];
-#ifndef NO_10bit
-	if ((ctx->pix_fmt == PIX_FMT_YUV420P10LE) && ffd->output_as_8bit && (frame->linesize[0] >= 2*w) )  {
-		ffd->conv_to_8bit = 1;
-		stride=w;
+	
+	ret = FFDEC_GetOutputPixelFromat(ctx->pix_fmt, &out_pix_fmt, ffd);
+	if ( ret < 0)
+	{
+		return ret;
 	}
-#endif
-
+	
 	/*recompute outsize in case on-the-fly change*/
 	if ((w != ctx->width) || (h != ctx->height)
-	        || (ffd->direct_output && (stride != ffd->stride))
-	        || ((ffd->out_pix_fmt==GF_PIXEL_YV12) && (ctx->pix_fmt != PIX_FMT_YUV420P) && !ffd->output_as_8bit )
-	        //need to realloc the conversion buffer
-	        || (ffd->conv_to_8bit && !ffd->conv_buffer && ffd->direct_output)
+		|| (ffd->direct_output_mode && (stride != ffd->stride))
+		|| (ffd->out_pix_fmt != out_pix_fmt)
+		//need to realloc the conversion buffer
+		
 	   ) {
 
-		ffd->stride = (!ffd->conv_to_8bit && ffd->direct_output) ? frame->linesize[0] : ctx->width;
-		if (ffd->out_pix_fmt == GF_PIXEL_RGB_24) {
+		ffd->stride = (ffd->direct_output_mode) ? frame->linesize[0] : ctx->width;
+		if (ctx->pix_fmt  == PIX_FMT_RGBA) {
+			ffd->out_pix_fmt = ffd->pix_fmt = GF_PIXEL_RGBA;
+			outsize = ctx->width * ctx->height * 4;
+		}
+		else if (ffd->out_pix_fmt == GF_PIXEL_RGB_24) {
 			outsize = ctx->width * ctx->height * 3;
+		}
+		else if (ctx->pix_fmt == PIX_FMT_YUV420P)
+		{
+			outsize = ffd->stride * ctx->height * 3 /2 ;
+			ffd->out_pix_fmt = GF_PIXEL_YV12;
+			
+		}
+		
+		else if (ctx->pix_fmt == PIX_FMT_YUV422P)
+		{
+			outsize = ffd->stride * ctx->height * 2 ;
+			ffd->out_pix_fmt = GF_PIXEL_YUV422;
+		
+		}
+		else if (ctx->pix_fmt == PIX_FMT_YUV444P)
+		{
+			outsize = ffd->stride * ctx->height * 3 ;
+			ffd->out_pix_fmt = GF_PIXEL_YUV444;
 		}
 #ifndef NO_10bit
 		//this YUV format is handled natively in GPAC
-		else if ((ctx->pix_fmt == PIX_FMT_YUV420P10LE) && !ffd->output_as_8bit) {
-			ffd->stride = ffd->direct_output ? frame->linesize[0] : ctx->width*2;
-			outsize = ffd->stride * ctx->height * 3 / 2;
+		else if (ctx->pix_fmt == PIX_FMT_YUV420P10LE) {
+			ffd->stride = ffd->direct_output_mode ? frame->linesize[0] : ctx->width * 2;
 			ffd->out_pix_fmt = GF_PIXEL_YV12_10;
+			outsize = 3*ffd->stride * ctx->height / 2;
+		}
+		else if (ctx->pix_fmt == PIX_FMT_YUV422P10LE) {
+			ffd->stride = ffd->direct_output_mode ? frame->linesize[0] : ctx->width * 2;
+			ffd->out_pix_fmt = GF_PIXEL_YUV422_10;
+			outsize = ffd->stride * ctx->height * 2;
+		}
+		else if (ctx->pix_fmt == PIX_FMT_YUV444P10LE) {
+				ffd->stride = ffd->direct_output_mode ? frame->linesize[0] : ctx->width * 2;
+				ffd->out_pix_fmt = GF_PIXEL_YUV444_10;
+				 outsize = ffd->stride * ctx->height * 3;
 		}
 #endif
-		//the rest will be YUV
-		else {
-			outsize = ffd->stride * ctx->height * 3 / 2;
-			ffd->out_pix_fmt = GF_PIXEL_YV12;
-		}
+		
+		
 
 		if (ffd->depth_codec) {
 			outsize = 5 * ctx->width * ctx->height / 2;
@@ -1036,7 +1197,7 @@ redecode:
 		/*we didn't get any picture: wait for a picture before resizing output buffer, otherwise we will have no
 		video in the output buffer*/
 		if (!gotpic) {
-			ffd->needs_output_resize = 1;
+			ffd->needs_output_resize = GF_TRUE;
 			return GF_OK;
 		}
 		*outBufferLength = ffd->out_size;
@@ -1050,13 +1211,14 @@ redecode:
 			*cached_sws = NULL;
 		}
 #endif
-		ffd->had_pic = 1;
+		ffd->had_pic = GF_TRUE;
 
-		if (ffd->conv_to_8bit && ffd->direct_output) {
-			ffd->conv_buffer = gf_realloc(ffd->conv_buffer, sizeof(char)*ffd->out_size);
+		if (ffd->direct_output_mode) {
+			ffd->frame_size_changed = GF_TRUE;
+			
+		} else {
+			return GF_BUFFER_TOO_SMALL;
 		}
-
-		return GF_BUFFER_TOO_SMALL;
 	}
 	/*check PAR in case on-the-fly change*/
 	if (!ffd->no_par_update && ctx->sample_aspect_ratio.num && ctx->sample_aspect_ratio.den) {
@@ -1065,12 +1227,16 @@ redecode:
 			ffd->previous_par = new_par;
 
 			if (!gotpic) {
-				ffd->needs_output_resize = 1;
+				ffd->needs_output_resize = GF_TRUE;
 				return GF_OK;
 			}
 			*outBufferLength = ffd->out_size;
-			ffd->had_pic = 1;
-			return GF_BUFFER_TOO_SMALL;
+			ffd->had_pic = GF_TRUE;
+			if (ffd->direct_output_mode) {
+				ffd->frame_size_changed = GF_TRUE;
+			} else {
+				return GF_BUFFER_TOO_SMALL;
+			}
 		}
 	}
 
@@ -1086,25 +1252,10 @@ redecode:
 	}
 #endif
 
-	if (ffd->direct_output && !ffd->conv_to_8bit) {
+	if (ffd->direct_output_mode) {
 		*outBufferLength = ffd->out_size;
 		return GF_OK;
 	}
-
-	if (ffd->conv_to_8bit) {
-		GF_VideoSurface dst;
-		memset(&dst, 0, sizeof(GF_VideoSurface));
-		dst.width = ctx->width;
-		dst.height = ctx->height;
-		dst.pitch_y = ctx->width;
-		dst.video_buffer = ffd->direct_output ? ffd->conv_buffer : outBuffer;
-		dst.pixel_format = GF_PIXEL_YV12;
-
-		gf_color_write_yv12_10_to_yuv(&dst, (u8 *) frame->data[0], frame->data[1], frame->data[2], frame->linesize[0], ctx->width, ctx->height, NULL, 0);
-		*outBufferLength = ffd->out_size;
-		return GF_OK;
-	}
-
 
 	if (ES_ID == ffd->depth_ES_ID) {
 		s32 i;
@@ -1124,6 +1275,8 @@ redecode:
 #if defined(_WIN32_WCE) || defined(__SYMBIAN32__)
 	if (ffd->pix_fmt==GF_PIXEL_RGB_24) {
 		memcpy(outBuffer, frame->data[0], sizeof(char)*3*ctx->width);
+	} else if (ffd->pix_fmt==GF_PIXEL_RGBA) {
+		memcpy(outBuffer, frame->data[0], sizeof(char)*4*ctx->width);
 	} else {
 		s32 i;
 		char *pYO, *pUO, *pVO;
@@ -1158,25 +1311,68 @@ redecode:
 		pict.data[0] =  (uint8_t *)outBuffer;
 		pict.linesize[0] = 3*ctx->width;
 		pix_out = PIX_FMT_RGB24;
-	} else {
+	} else if (ffd->out_pix_fmt==GF_PIXEL_RGBA) {
+		pict.data[0] =  (uint8_t *)outBuffer;
+		pict.linesize[0] = 4*ctx->width;
+		pix_out = PIX_FMT_RGBA;
+	} else { 
+		if (ffd->out_pix_fmt == GF_PIXEL_YV12) {
 		pict.data[0] =  (uint8_t *)outBuffer;
 		pict.data[1] =  (uint8_t *)outBuffer + ffd->stride * ctx->height;
 		pict.data[2] =  (uint8_t *)outBuffer + 5 * ffd->stride * ctx->height / 4;
 		pict.linesize[0] = ffd->stride;
 		pict.linesize[1] = pict.linesize[2] = ffd->stride/2;
 		pix_out = PIX_FMT_YUV420P;
+		} else if (ffd->out_pix_fmt == GF_PIXEL_YUV422) {
+		pict.data[0] =  (uint8_t *)outBuffer;
+		pict.data[1] =  (uint8_t *)outBuffer + ffd->stride * ctx->height;
+		pict.data[2] =  (uint8_t *)outBuffer + 3*ffd->stride * ctx->height/2;
+		pict.linesize[0] = ffd->stride;
+		pict.linesize[1] = pict.linesize[2] = ffd->stride/2;
+		pix_out = PIX_FMT_YUV422P;
+	    } else if (ffd->out_pix_fmt == GF_PIXEL_YUV444) {
+		pict.data[0] =  (uint8_t *)outBuffer;
+		pict.data[1] =  (uint8_t *)outBuffer + ffd->stride * ctx->height;
+		pict.data[2] =  (uint8_t *)outBuffer + 2*ffd->stride * ctx->height;
+		pict.linesize[0] = pict.linesize[1] = pict.linesize[2] = ffd->stride;
+		pix_out = PIX_FMT_YUV444P;
+	    }
 #ifndef NO_10bit
 		//this YUV format is handled natively in GPAC
 		if (ctx->pix_fmt==PIX_FMT_YUV420P10LE) {
+			pict.data[0] =  (uint8_t *)outBuffer;
+			pict.data[1] =  (uint8_t *)outBuffer + ffd->stride * ctx->height;
+			pict.data[2] =  (uint8_t *)outBuffer + 5 * ffd->stride * ctx->height / 4;
+			pict.linesize[0] = ffd->stride;
+			pict.linesize[1] = pict.linesize[2] = ffd->stride/2;
 			pix_out = PIX_FMT_YUV420P10LE;
+		} else if (ctx->pix_fmt==PIX_FMT_YUV422P10LE) {
+			pict.data[0] =  (uint8_t *)outBuffer;
+			pict.data[1] =  (uint8_t *)outBuffer + ffd->stride * ctx->height;
+			pict.data[2] =  (uint8_t *)outBuffer + 3*ffd->stride * ctx->height/2;
+			pict.linesize[0] = ffd->stride;
+			pict.linesize[1] = pict.linesize[2] = ffd->stride/2;
+			pix_out = PIX_FMT_YUV422P10LE;
+		} else if (ctx->pix_fmt==PIX_FMT_YUV444P10LE) {
+			pict.data[0] =  (uint8_t *)outBuffer;
+			pict.data[1] =  (uint8_t *)outBuffer + ffd->stride * ctx->height;
+			pict.data[2] =  (uint8_t *)outBuffer + 2*ffd->stride * ctx->height;
+			pict.linesize[0] = pict.linesize[1] = pict.linesize[2] = ffd->stride;
+			pix_out = PIX_FMT_YUV444P10LE;
 		}
 #endif
+
+#if (LIBAVCODEC_VERSION_MAJOR<56)
 		if (!mmlevel && frame->interlaced_frame) {
 			avpicture_deinterlace((AVPicture *) frame, (AVPicture *) frame, ctx->pix_fmt, ctx->width, ctx->height);
 		}
+#endif
+
 	}
 	pict.data[3] = 0;
 	pict.linesize[3] = 0;
+	*CTS = (u32) frame->pkt_pts;
+
 #ifndef FFMPEG_SWSCALE
 	img_convert(&pict, pix_out, (AVPicture *) frame, ctx->pix_fmt, ctx->width, ctx->height);
 #else
@@ -1186,11 +1382,11 @@ redecode:
 	                                   SWS_BICUBIC, NULL, NULL, NULL);
 	if ((*cached_sws)) {
 #if LIBSWSCALE_VERSION_INT < AV_VERSION_INT(0, 9, 0)
-		int sz = sws_scale((*cached_sws), frame->data, frame->linesize, 0, ctx->height, pict.data, pict.linesize);
+		sws_scale((*cached_sws), frame->data, frame->linesize, 0, ctx->height, pict.data, pict.linesize);
 #else
-		int sz = sws_scale((*cached_sws), (const uint8_t * const*)frame->data, frame->linesize, 0, ctx->height, pict.data, pict.linesize);
+		sws_scale((*cached_sws), (const uint8_t * const*)frame->data, frame->linesize, 0, ctx->height, pict.data, pict.linesize);
 #endif
-		assert( sz > 0 );
+
 	}
 #endif
 
@@ -1200,19 +1396,33 @@ redecode:
 	return GF_OK;
 }
 
+
+
+static GF_Err FFDEC_ProcessData(GF_MediaDecoder *plug,
+                                char *inBuffer, u32 inBufferLength,
+                                u16 ES_ID, u32 *CTS,
+                                char *outBuffer, u32 *outBufferLength,
+                                u8 PaddingBits, u32 mmlevel)
+{
+	FFDec *ffd = (FFDec*)plug->privateStack;
+
+	if (ffd->st==GF_STREAM_AUDIO) {
+		return FFDEC_ProcessAudio(ffd, inBuffer, inBufferLength, ES_ID, CTS, outBuffer, outBufferLength, PaddingBits, mmlevel);
+	} else if ( ffd->base_ctx->codec_id == CODEC_ID_RAWVIDEO) {
+		return FFDEC_ProcessRawVideo(ffd, inBuffer, inBufferLength, ES_ID, CTS, outBuffer, outBufferLength, PaddingBits, mmlevel);
+	} else {
+		return FFDEC_ProcessVideo(ffd, inBuffer, inBufferLength, ES_ID, CTS, outBuffer, outBufferLength, PaddingBits, mmlevel);
+	}
+}
+
+
 static GF_Err FFDEC_GetOutputBuffer(GF_MediaDecoder *ifcg, u16 ES_ID, u8 **pY_or_RGB, u8 **pU, u8 **pV)
 {
-	FFDec *ffd = ifcg->privateStack;
+	FFDec *ffd = (FFDec*)ifcg->privateStack;
 	AVFrame *frame;
 
-
-	if (ffd->conv_buffer) {
-		*pY_or_RGB = (u8 *) ffd->conv_buffer;
-		*pU = (u8 *) ffd->conv_buffer + ffd->stride * ffd->base_ctx->height;
-		*pV = (u8 *) ffd->conv_buffer + 5*ffd->stride * ffd->base_ctx->height/4;
-		return GF_OK;
-	}
-
+	if (ffd->direct_output_mode != 1) return GF_BAD_PARAM;
+	
 	if (ES_ID && (ffd->depth_ES_ID==ES_ID)) {
 		frame = ffd->depth_frame;
 		*pY_or_RGB = frame->data[0];
@@ -1225,12 +1435,88 @@ static GF_Err FFDEC_GetOutputBuffer(GF_MediaDecoder *ifcg, u16 ES_ID, u8 **pY_or
 	return GF_OK;
 }
 
+#if defined(USE_AVCTX3) && defined(FFMPEG_DIRECT_DISPATCH)
+
+typedef struct
+{
+	FFDec *ctx;
+	AVFrame *frame;
+} FF_Frame;
+
+void FFFrame_Release(GF_MediaDecoderFrame *frame)
+{
+	FF_Frame *ff_frame = (FF_Frame *)frame->user_data;
+
+	av_frame_free(&ff_frame->frame);
+}
+
+GF_Err FFFrame_GetPlane(GF_MediaDecoderFrame *frame, u32 plane_idx, const char **outPlane, u32 *outStride)
+{
+	FF_Frame *ff_frame = (FF_Frame *)frame->user_data;
+	switch (ff_frame->ctx->out_pix_fmt) {
+	case GF_PIXEL_YV12:
+	case GF_PIXEL_YV12_10:
+	case GF_PIXEL_YUV422:
+	case GF_PIXEL_YUV422_10:
+	case GF_PIXEL_YUV444:
+	case GF_PIXEL_YUV444_10:
+		if (plane_idx>2) return GF_BAD_PARAM;
+		*outPlane = (const char *) ff_frame->frame->data[plane_idx];
+		*outStride = ff_frame->frame->linesize[plane_idx];
+		break;
+	case GF_PIXEL_RGBA:
+	case GF_PIXEL_RGB_24:
+	case GF_PIXEL_BGR_24:
+		if (plane_idx>0) return GF_BAD_PARAM;
+		*outPlane = (const char *) ff_frame->frame->data[plane_idx];
+		*outStride = ff_frame->frame->linesize[plane_idx];
+		break;
+	default:
+		return GF_NOT_SUPPORTED;
+	}
+	return GF_OK;
+}
+
+static GF_Err FFDEC_GetOutputFrame(GF_MediaDecoder *ifcg, u16 ES_ID, GF_MediaDecoderFrame **frame, Bool *needs_resize)
+{
+	GF_MediaDecoderFrame *a_frame;
+	FF_Frame *ff_frame;
+	FFDec *ffd = (FFDec*)ifcg->privateStack;
+
+	*needs_resize = GF_FALSE;
+	
+	if (!ffd->base_frame) return GF_BAD_PARAM;
+	
+	GF_SAFEALLOC(a_frame, GF_MediaDecoderFrame);
+	if (!a_frame) return GF_OUT_OF_MEM;
+	GF_SAFEALLOC(ff_frame, FF_Frame);
+	if (!ff_frame) {
+		gf_free(a_frame);
+		return GF_OUT_OF_MEM;
+	}
+	a_frame->user_data = ff_frame;
+	ff_frame->ctx = ffd;
+	ff_frame->frame = av_frame_clone(ffd->base_frame);
+
+	a_frame->Release = FFFrame_Release;
+	a_frame->GetPlane = FFFrame_GetPlane;
+	
+	*frame = a_frame;
+	if (ffd->frame_size_changed) {
+		ffd->frame_size_changed = GF_FALSE;
+		*needs_resize = GF_TRUE;
+	}
+
+	return GF_OK;
+}
+#endif //USE_AVCTX3
+
 static u32 FFDEC_CanHandleStream(GF_BaseDecoder *plug, u32 StreamType, GF_ESD *esd, u8 PL)
 {
 	GF_BitStream *bs;
 	u32 codec_id;
 	Bool check_4cc;
-	FFDec *ffd = plug->privateStack;
+	FFDec *ffd = (FFDec*)plug->privateStack;
 
 	/*media type query*/
 	if (!esd) {
@@ -1243,8 +1529,8 @@ static u32 FFDEC_CanHandleStream(GF_BaseDecoder *plug, u32 StreamType, GF_ESD *e
 	ffd->st = StreamType;
 
 	codec_id = 0;
-	check_4cc = 0;
-
+	check_4cc = GF_FALSE;
+	
 	/*private from FFMPEG input*/
 	if (ffd->oti == GPAC_OTI_MEDIA_FFMPEG) {
 		bs = gf_bs_new(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, GF_BITSTREAM_READ);
@@ -1255,8 +1541,15 @@ static u32 FFDEC_CanHandleStream(GF_BaseDecoder *plug, u32 StreamType, GF_ESD *e
 	else if (ffd->oti == GPAC_OTI_MEDIA_GENERIC) {
 		bs = gf_bs_new(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength, GF_BITSTREAM_READ);
 		codec_id = gf_bs_read_u32(bs);
-		check_4cc = 1;
+		check_4cc = GF_TRUE;
 		gf_bs_del(bs);
+        
+        if (codec_id == GF_4CC('s','a','m','r')) {
+            codec_id = CODEC_ID_AMR_NB;
+        }
+        else if (codec_id == GF_4CC('s','a','w','b')) {
+            codec_id = CODEC_ID_AMR_WB;
+        }
 	}
 	else if (StreamType==GF_STREAM_AUDIO) {
 		/*std MPEG-2 audio*/
@@ -1271,6 +1564,14 @@ static u32 FFDEC_CanHandleStream(GF_BaseDecoder *plug, u32 StreamType, GF_ESD *e
 		case GPAC_OTI_AUDIO_EAC3:
 			codec_id = CODEC_ID_EAC3;
 			break;
+        case GPAC_OTI_AUDIO_AAC_MPEG2_LCP:
+        case GPAC_OTI_AUDIO_AAC_MPEG2_MP:
+        case GPAC_OTI_AUDIO_AAC_MPEG2_SSRP:
+        case GPAC_OTI_AUDIO_AAC_MPEG4:
+            codec_id = CODEC_ID_AAC;
+            if (avcodec_find_decoder(codec_id) != NULL)
+                return GF_CODEC_MAYBE_SUPPORTED;
+            break;
 		}
 	}
 
@@ -1280,29 +1581,29 @@ static u32 FFDEC_CanHandleStream(GF_BaseDecoder *plug, u32 StreamType, GF_ESD *e
 		/*fixme - we should use some priority rather than declare ffmpeg can't handle svc*/
 		if (esd->decoderConfig->objectTypeIndication == GPAC_OTI_VIDEO_AVC) {
 			if (esd->decoderConfig->decoderSpecificInfo && esd->decoderConfig->decoderSpecificInfo->data) {
-				Bool is_svc = 0;
+				Bool is_svc = GF_FALSE;
 				u32 i, count;
 				GF_AVCConfig *cfg = gf_odf_avc_cfg_read(esd->decoderConfig->decoderSpecificInfo->data, esd->decoderConfig->decoderSpecificInfo->dataLength);
 				if (!cfg) return GF_CODEC_SUPPORTED;
 
-				if (esd->has_ref_base)
-					is_svc = 1;
+				if (esd->has_scalable_layers)
+					is_svc = GF_TRUE;
 
 				/*decode all NALUs*/
 				count = gf_list_count(cfg->sequenceParameterSets);
 				for (i=0; i<count; i++) {
-					GF_AVCConfigSlot *slc = gf_list_get(cfg->sequenceParameterSets, i);
+					GF_AVCConfigSlot *slc = (GF_AVCConfigSlot*)gf_list_get(cfg->sequenceParameterSets, i);
 					u8 nal_type = slc->data[0] & 0x1F;
 
 					if (nal_type==GF_AVC_NALU_SVC_SUBSEQ_PARAM) {
-						is_svc = 1;
+						is_svc = GF_TRUE;
 						break;
 					}
 				}
 				gf_odf_avc_cfg_del(cfg);
 				return (is_svc || esd->decoderConfig->rvc_config || esd->decoderConfig->predefined_rvc_config) ? GF_CODEC_MAYBE_SUPPORTED : GF_CODEC_SUPPORTED;
 			}
-			if (esd->decoderConfig->rvc_config || esd->decoderConfig->predefined_rvc_config || esd->has_ref_base) return GF_CODEC_MAYBE_SUPPORTED;
+			if (esd->decoderConfig->rvc_config || esd->decoderConfig->predefined_rvc_config || esd->has_scalable_layers) return GF_CODEC_MAYBE_SUPPORTED;
 			return GF_CODEC_SUPPORTED;
 		}
 
@@ -1340,6 +1641,11 @@ static u32 FFDEC_CanHandleStream(GF_BaseDecoder *plug, u32 StreamType, GF_ESD *e
 				return GF_CODEC_MAYBE_SUPPORTED;
 
 			return GF_CODEC_NOT_SUPPORTED;
+		case GPAC_OTI_IMAGE_PNG:
+			if (avcodec_find_decoder(CODEC_ID_PNG) != NULL)
+				return GF_CODEC_MAYBE_SUPPORTED;
+			return GF_CODEC_NOT_SUPPORTED;
+
 		default:
 			return GF_CODEC_NOT_SUPPORTED;
 		}
@@ -1375,7 +1681,7 @@ static const char *FFDEC_GetCodecName(GF_BaseDecoder *dec)
 	FFDec *ffd;
 	if (!dec)
 		return NULL;
-	ffd = dec->privateStack;
+	ffd = (FFDec*)dec->privateStack;
 	if (ffd && ffd->base_codec) {
 		sprintf(ffd->szCodec, "FFMPEG %s - version %s", ffd->base_codec->name ? ffd->base_codec->name : "unknown", LIBAVCODEC_IDENT);
 		return ffd->szCodec;
@@ -1389,6 +1695,15 @@ void *FFDEC_Load()
 	GF_MediaDecoder *ptr;
 	FFDec *priv;
 
+	GF_SAFEALLOC(ptr , GF_MediaDecoder);
+	if (!ptr) return NULL;
+	GF_SAFEALLOC(priv , FFDec);
+	if (!priv) {
+		gf_free(ptr);
+		return NULL;
+	}
+	ptr->privateStack = priv;
+
 	/* Note for valgrind : those two functions cause a leak in valgrind */
 	GF_LOG(GF_LOG_INFO, GF_LOG_CONTAINER, ("[FFMPEG Decoder] Registering all ffmpeg codecs...\n") );
 #ifdef FF_API_AVCODE_INIT /*commit ffmpeg 3211932c513338566b31d990d06957e15a644d13*/
@@ -1396,11 +1711,6 @@ void *FFDEC_Load()
 #endif
 	avcodec_register_all();
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[FFMPEG Decoder] Done registering all ffmpeg codecs.\n") );
-
-
-	GF_SAFEALLOC(ptr , GF_MediaDecoder);
-	GF_SAFEALLOC(priv , FFDec);
-	ptr->privateStack = priv;
 
 	ptr->AttachStream = FFDEC_AttachStream;
 	ptr->DetachStream = FFDEC_DetachStream;
@@ -1410,18 +1720,21 @@ void *FFDEC_Load()
 	ptr->GetName = FFDEC_GetCodecName;
 	ptr->ProcessData = FFDEC_ProcessData;
 	ptr->GetOutputBuffer = FFDEC_GetOutputBuffer;
-
+#if defined(USE_AVCTX3) && defined(FFMPEG_DIRECT_DISPATCH)
+	ptr->GetOutputFrame = FFDEC_GetOutputFrame;
+#endif
+	
 	GF_REGISTER_MODULE_INTERFACE(ptr, GF_MEDIA_DECODER_INTERFACE, "FFMPEG decoder", "gpac distribution");
 	return (GF_BaseInterface *) ptr;
 }
 
 void FFDEC_Delete(void *ifce)
 {
-	GF_BaseDecoder *dec = ifce;
+	GF_BaseDecoder *dec = (GF_BaseDecoder*)ifce;
 	FFDec *ffd;
 	if (!ifce)
 		return;
-	ffd = dec->privateStack;
+	ffd = (FFDec*)dec->privateStack;
 	dec->privateStack = NULL;
 	if (ffd) {
 		if (ffd->base_ctx && ffd->base_ctx->codec) avcodec_close(ffd->base_ctx);

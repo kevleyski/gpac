@@ -308,8 +308,6 @@ static GF_Err gf_seng_encode_dims_au(GF_SceneEngine *seng, u16 ESID, GF_List *co
 
 	if (!data) return GF_BAD_PARAM;
 
-	e = GF_OK;
-
 	if (!seng->dump_path) cache_dir = gf_get_default_cache_directory();
 	else cache_dir = seng->dump_path;
 
@@ -338,7 +336,7 @@ start:
 	}
 
 #ifndef GPAC_DISABLE_SCENE_DUMP
-	dumper = gf_sm_dumper_new(seng->ctx->scene_graph, rad_name, ' ', GF_SM_DUMP_SVG);
+	dumper = gf_sm_dumper_new(seng->ctx->scene_graph, rad_name, GF_FALSE, ' ', GF_SM_DUMP_SVG);
 	if (!dumper) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[SceneEngine] Cannot create SVG dumper for %s.svg\n", rad_name));
 		e = GF_IO_ERR;
@@ -358,7 +356,7 @@ start:
 
 		sprintf(rad_name, "%s%c%s%s", cache_dir, GF_PATH_SEPARATOR, "rap_", dump_name);
 
-		dumper = gf_sm_dumper_new(seng->ctx->scene_graph, rad_name, ' ', GF_SM_DUMP_SVG);
+		dumper = gf_sm_dumper_new(seng->ctx->scene_graph, rad_name, GF_FALSE, ' ', GF_SM_DUMP_SVG);
 		if (!dumper) {
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[SceneEngine] Cannot create SVG dumper for %s.svg\n", rad_name));
 			e = GF_IO_ERR;
@@ -382,14 +380,14 @@ start:
 #endif
 
 	sprintf(file_name, "%s.svg", rad_name);
-	file = gf_f64_open(file_name, "rb");
+	file = gf_fopen(file_name, "rb");
 	if (!file) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[SceneEngine] Cannot open SVG dump file %s\n", file_name));
 		e = GF_IO_ERR;
 		goto exit;
 	}
-	gf_f64_seek(file, 0, SEEK_END);
-	fsize = gf_f64_tell(file);
+	gf_fseek(file, 0, SEEK_END);
+	fsize = gf_ftell(file);
 
 	if (fsize == 0) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[SceneEngine] SVG dump %s is empty\n", file_name));
@@ -398,13 +396,12 @@ start:
 
 	/* First, read the dump in a buffer */
 	buffer = gf_malloc((size_t)fsize * sizeof(char));
-	gf_f64_seek(file, 0, SEEK_SET);
+	gf_fseek(file, 0, SEEK_SET);
 	fsize = fread(buffer, sizeof(char), (size_t)fsize, file);
-	fclose(file);
+	gf_fclose(file);
 	file = NULL;
 
 	/* Then, set DIMS unit header - TODO: notify redundant units*/
-	dims_header = 0;
 	if (commands && gf_list_count(commands)) {
 		dims_header = GF_DIMS_UNIT_P; /* streamer->all_non_rap_critical ? 0 : GF_DIMS_UNIT_P;*/
 	} else {
@@ -457,7 +454,7 @@ start:
 exit:
 	if (!seng->dump_path) gf_free(cache_dir);
 	if (buffer) gf_free(buffer);
-	if (file) fclose(file);
+	if (file) gf_fclose(file);
 	return e;
 }
 
@@ -629,7 +626,7 @@ GF_Err gf_seng_save_context(GF_SceneEngine *seng, char *ctxFileName)
 		return GF_NOT_SUPPORTED;
 #endif
 	} else {
-		e = gf_sm_dump(seng->ctx, ctxFileName ? szF : NULL, d_mode);
+		e = gf_sm_dump(seng->ctx, ctxFileName ? szF : NULL, GF_FALSE, d_mode);
 	}
 	return e;
 #endif
@@ -720,7 +717,11 @@ GF_Err gf_seng_encode_from_commands(GF_SceneEngine *seng, u16 ESID, Bool disable
 		GF_Command *com = gf_list_get(commands, 0);
 		gf_list_rem(commands, 0);
 		switch (com->tag) {
+#ifndef GPAC_DISABLE_VRML
 		case GF_SG_SCENE_REPLACE:
+			new_au->flags |= GF_SM_AU_RAP;
+			break;
+#endif
 		case GF_SG_LSR_NEW_SCENE:
 			new_au->flags |= GF_SM_AU_RAP;
 			break;

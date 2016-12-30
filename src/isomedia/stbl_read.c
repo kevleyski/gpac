@@ -28,7 +28,7 @@
 #ifndef GPAC_DISABLE_ISOM
 
 //Get the sample number
-GF_Err findEntryForTime(GF_SampleTableBox *stbl, u64 DTS, u8 useCTS, u32 *sampleNumber, u32 *prevSampleNumber)
+GF_Err stbl_findEntryForTime(GF_SampleTableBox *stbl, u64 DTS, u8 useCTS, u32 *sampleNumber, u32 *prevSampleNumber)
 {
 	u32 i, j, curSampNum, count;
 	s32 CTSOffset;
@@ -37,8 +37,9 @@ GF_Err findEntryForTime(GF_SampleTableBox *stbl, u64 DTS, u8 useCTS, u32 *sample
 	(*sampleNumber) = 0;
 	(*prevSampleNumber) = 0;
 
-	if (!stbl->CompositionOffset) useCTS = 0;
-	/*FIXME: CTS is ALWAYS disabled for now to make sure samples are fetched in
+	if (!stbl->TimeToSample) return GF_ISOM_INVALID_FILE;
+	/*if (!stbl->CompositionOffset) useCTS = 0;
+	FIXME: CTS is ALWAYS disabled for now to make sure samples are fetched in
 	decoding order. */
 	useCTS = 0;
 
@@ -68,7 +69,7 @@ GF_Err findEntryForTime(GF_SampleTableBox *stbl, u64 DTS, u8 useCTS, u32 *sample
 				curDTS -= ent->sampleDelta * ent->sampleCount;
 				i --;
 			} else if (!i) {
-				//begining of the table, no choice
+				//beginning of the table, no choice
 				curDTS = stbl->TimeToSample->r_CurrentDTS = 0;
 				curSampNum = stbl->TimeToSample->r_FirstSampleInEntry = 1;
 				stbl->TimeToSample->r_currentEntryIndex = 0;
@@ -212,7 +213,10 @@ GF_Err stbl_GetSampleDTS_and_Duration(GF_TimeToSampleBox *stts, u32 SampleNumber
 //	if (SampleNumber >= stts->r_FirstSampleInEntry + ent->sampleCount) return GF_BAD_PARAM;
 
 	//no ent, this is really weird. Let's assume the DTS is then what is written in the table
-	if (!ent || (i == count)) (*DTS) = stts->r_CurrentDTS;
+	if (!ent || (i == count)) {
+		(*DTS) = stts->r_CurrentDTS;
+		if (duration) *duration = ent ? ent->sampleDelta : 0;
+	}
 	return GF_OK;
 
 found:
@@ -262,6 +266,8 @@ GF_Err stbl_SearchSAPs(GF_SampleTableBox *stbl, u32 SampleNumber, SAPType *IsRAP
 	u32 i, j, count, count2;
 	assert(prevRAP);
 	assert(nextRAP);
+	(*prevRAP) = 0;
+	(*nextRAP) = 0;
 	(*IsRAP) = RAP_NO;
 
 	if (!stbl->sampleGroups || !stbl->sampleGroupsDescription) return GF_OK;
@@ -345,6 +351,7 @@ GF_Err stbl_SearchSAPs(GF_SampleTableBox *stbl, u32 SampleNumber, SAPType *IsRAP
 			if (first_rap_in_entry > SampleNumber) {
 				break;
 			}
+			first_sample_in_entry += sg->sample_entries[j].sample_count;
 		}
 	}
 	return GF_OK;
@@ -392,7 +399,7 @@ GF_Err stbl_GetSampleInfos(GF_SampleTableBox *stbl, u32 sampleNumber, u64 *offse
 	(*chunkNumber) = (*descIndex) = 0;
 	(*isEdited) = 0;
 	if (!stbl || !sampleNumber) return GF_BAD_PARAM;
-	if (!stbl->ChunkOffset) return GF_ISOM_INVALID_FILE;
+	if (!stbl->ChunkOffset || !stbl->SampleToChunk) return GF_ISOM_INVALID_FILE;
 
 	if (stbl->SampleToChunk->nb_entries == stbl->SampleSize->sampleCount) {
 		ent = &stbl->SampleToChunk->entries[sampleNumber-1];

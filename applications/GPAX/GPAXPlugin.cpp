@@ -295,7 +295,7 @@ BOOL CGPAXPlugin::PreTranslateMessage(MSG* pMsg)
 
 #define GPAC_REG_KEY	HKEY_CURRENT_USER
 
-static void gpax_do_log(void *cbk, u32 level, u32 tool, const char *fmt, va_list list)
+static void gpax_do_log(void *cbk, GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list list)
 {
 	FILE *logs = (FILE *) cbk;
 	vfprintf(logs, fmt, list);
@@ -311,7 +311,7 @@ LRESULT CGPAXPlugin::OnCreate(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHa
 
 	if (m_hWnd==NULL) return 0;
 
-	gf_sys_init(GF_FALSE);
+	gf_sys_init(GF_MemTrackerNone);
 
 	//Create a structure m_user for initialize the terminal. the parameters to set:
 	//1)config file path
@@ -335,7 +335,7 @@ LRESULT CGPAXPlugin::OnCreate(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHa
 	/*check log file*/
 	str = gf_cfg_get_key(m_user.config, "General", "LogFile");
 	if (str) {
-		m_pLogs = gf_f64_open(str, "wt");
+		m_pLogs = gf_fopen(str, "wt");
 		if (m_pLogs) gf_log_set_callback(m_pLogs, gpax_do_log);
 	}
 
@@ -389,7 +389,7 @@ void CGPAXPlugin::UnloadTerm()
 	if (m_user.modules) gf_modules_del(m_user.modules);
 	if (m_user.config) gf_cfg_del(m_user.config);
 	if (m_pLogs)
-		fclose(m_pLogs);
+		gf_fclose(m_pLogs);
 	m_pLogs = NULL;
 	gf_log_set_callback(NULL, NULL);
 	memset(&m_user, 0, sizeof(m_user));

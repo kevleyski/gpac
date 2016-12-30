@@ -32,25 +32,25 @@
 
 VideoScaledDataNode * dc_video_scaler_node_create(int width, int height, int crop_x, int crop_y, int pix_fmt)
 {
-	VideoScaledDataNode *video_scaled_data_node = gf_malloc(sizeof(VideoDataNode));
+	VideoScaledDataNode *video_scaled_data_node = (VideoScaledDataNode*)gf_malloc(sizeof(VideoDataNode));
 	if (video_scaled_data_node) {
-		video_scaled_data_node->v_frame = FF_ALLOC_FRAME();
+		video_scaled_data_node->vframe = FF_ALLOC_FRAME();
 		if (crop_x || crop_y) {
 			video_scaled_data_node->cropped_frame = FF_ALLOC_FRAME();
 		} else {
 			video_scaled_data_node->cropped_frame = NULL;
 		}
 	}
-	if (!video_scaled_data_node || !video_scaled_data_node->v_frame || ((crop_x || crop_y) && !video_scaled_data_node->cropped_frame)) {
+	if (!video_scaled_data_node || !video_scaled_data_node->vframe || ((crop_x || crop_y) && !video_scaled_data_node->cropped_frame)) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("Cannot allocate VideoNode!\n"));
-		av_frame_free(&video_scaled_data_node->v_frame);
+		av_frame_free(&video_scaled_data_node->vframe);
 		av_frame_free(&video_scaled_data_node->cropped_frame);
 		gf_free(video_scaled_data_node);
 		return NULL;
 	}
 
 	/* Determine required buffer size and allocate buffer */
-	avpicture_alloc((AVPicture*)video_scaled_data_node->v_frame, pix_fmt, width, height);
+	avpicture_alloc((AVPicture*)video_scaled_data_node->vframe, pix_fmt, width, height);
 	if (video_scaled_data_node->cropped_frame) {
 		avpicture_alloc((AVPicture*)video_scaled_data_node->cropped_frame, pix_fmt, width-crop_x, height-crop_y);
 	}
@@ -61,7 +61,7 @@ VideoScaledDataNode * dc_video_scaler_node_create(int width, int height, int cro
 void dc_video_scaler_node_destroy(VideoScaledDataNode *video_scaled_data_node)
 {
 #ifndef GPAC_USE_LIBAV
-	av_frame_free(&video_scaled_data_node->v_frame);
+	av_frame_free(&video_scaled_data_node->vframe);
 #endif
 	gf_free(video_scaled_data_node);
 }
@@ -88,11 +88,15 @@ void dc_video_scaler_list_init(VideoScaledDataList *video_scaled_data_list, GF_L
 		if (!found) {
 			VideoScaledData *video_scaled_data;
 			GF_SAFEALLOC(video_scaled_data, VideoScaledData);
+			if (!video_scaled_data) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Cannot allocate video rescaler\n"));
+				return;
+			}
 			video_scaled_data->out_width  = video_data_conf->width;
 			video_scaled_data->out_height = video_data_conf->height;
 			video_scaled_data->num_consumers = 1;
 
-			video_scaled_data_list->video_scaled_data = gf_realloc(video_scaled_data_list->video_scaled_data, (video_scaled_data_list->size+1)*sizeof(VideoScaledData*));
+			video_scaled_data_list->video_scaled_data = (VideoScaledData**)gf_realloc(video_scaled_data_list->video_scaled_data, (video_scaled_data_list->size+1)*sizeof(VideoScaledData*));
 
 			video_scaled_data_list->video_scaled_data[video_scaled_data_list->size] = video_scaled_data;
 			video_scaled_data_list->size++;
@@ -134,6 +138,7 @@ int dc_video_scaler_data_init(VideoInputData *video_input_data, VideoScaledData 
 		video_scaled_data->circular_buf.list[i].data = dc_video_scaler_node_create(video_scaled_data->out_width, video_scaled_data->out_height, video_input_data->vprop[i].crop_x, video_input_data->vprop[i].crop_y, video_scaled_data->out_pix_fmt);
 	}
 
+	video_scaled_data->vsprop->video_input_data = video_input_data;
 	return 0;
 }
 
@@ -189,8 +194,6 @@ int dc_video_scaler_scale(VideoInputData *video_input_data, VideoScaledData *vid
 	video_scaled_data_node = (VideoScaledDataNode*)dc_producer_produce(&video_scaled_data->producer, &video_scaled_data->circular_buf);
 	index = video_data_node->source_number;
 
-	video_scaled_data->frame_duration = video_input_data->frame_duration;
-
 	//crop if necessary
 	if (video_input_data->vprop[index].crop_x || video_input_data->vprop[index].crop_y) {
 #if 0
@@ -214,13 +217,16 @@ int dc_video_scaler_scale(VideoInputData *video_input_data, VideoScaledData *vid
 	//rescale the cropped frame
 	ret = sws_scale(video_scaled_data->vsprop[index].sws_ctx,
 	                (const uint8_t * const *)src_vframe->data, src_vframe->linesize, 0, src_height,
-	                video_scaled_data_node->v_frame->data, video_scaled_data_node->v_frame->linesize);
+	                video_scaled_data_node->vframe->data, video_scaled_data_node->vframe->linesize);
 
 	if (!ret) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("Video scaler: error while resizing picture.\n"));
 		return -1;
 	}
-	video_scaled_data_node->v_frame->pts = video_data_node->vframe->pts;
+	video_scaled_data_node->vframe->pts = video_data_node->vframe->pts;
+	video_scaled_data_node->frame_ntp = video_data_node->frame_ntp;
+	video_scaled_data_node->frame_utc = video_data_node->frame_utc;
+
 
 	if (video_data_node->nb_raw_frames_ref) {
 		if (video_data_node->nb_raw_frames_ref==1) {

@@ -1,10 +1,5 @@
 #!/bin/sh -e
 
-if [ "$1" != "snow-leopard" -a "$1" != "mavericks" ]; then
-	echo "You must specified target architecture : snow-leopard or mavericks"
-	exit 1
-fi
-
 source_path=.
 
 function rewrite_deps {
@@ -39,7 +34,7 @@ fi
 mkdir -p tmpdmg/Osmo4.app
 rsync -r --exclude=.git $source_path/build/osxdmg/Osmo4.app/ ./tmpdmg/Osmo4.app/
 ln -s /Applications ./tmpdmg/Applications
-cp $source_path/README ./tmpdmg
+cp $source_path/README.md ./tmpdmg
 cp $source_path/COPYING ./tmpdmg
 
 mkdir -p tmpdmg/Osmo4.app/Contents/MacOS/modules
@@ -95,7 +90,7 @@ cur_dir=`pwd`
 cd $source_path
 TAG=$(git describe --tags --abbrev=0 2> /dev/null)
 REVISION=$(echo `git describe --tags --long 2> /dev/null || echo "UNKNOWN"` | sed "s/^$TAG-//")
-BRANCH=$(git rev-parse --abbrev-ref HEAD 2> /dev/null || echo "UNKNOWN")
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2> /dev/null || echo "UNKNOWN")
 rev="$REVISION-$BRANCH"
 cd $cur_dir
 
@@ -104,7 +99,7 @@ if [ "$rev" != "" ]
 then
 	full_version="$full_version-rev$rev"
 else
-	#if no revision can be extracted from SVN, use date
+	#if no revision can be extracted, use date
    	$rev = $(date +%Y%m%d)
 fi
 
@@ -123,8 +118,13 @@ Rez /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Carb
 hdiutil flatten gpac_sla.dmg
 hdiutil internet-enable -yes gpac_sla.dmg
 
-echo "gpac-$full_version-$1.dmg ready"
+pck_name="gpac-$full_version.dmg"
+if [ "$1" = "snow-leopard" ]; then
+pck_name="gpac-$full_version-$1.dmg"
+fi
+
+echo "$pck_name ready"
 chmod o+rx gpac_sla.dmg
 chmod g+rx gpac_sla.dmg
-mv gpac_sla.dmg gpac-$full_version-$1.dmg
+mv gpac_sla.dmg $pck_name
 

@@ -30,6 +30,18 @@
 extern "C" {
 #endif
 
+/*!
+ *	\file <gpac/sync_layer.h>
+ *	\brief MPEG-4 Object Descriptor Framework Sync Layer.
+ */
+	
+/*!
+ *	\ingroup odf_grp
+ *	\brief MPEG-4 Object Descriptor Framework  Sync Layer
+ *
+ *This section documents the MPEG-4 OD  Sync Layer used in GPAC.
+ *	@{
+ */
 
 /*the Sync Layer config descriptor*/
 typedef struct
@@ -102,8 +114,10 @@ typedef struct
 	u32 instantBitrate;
 	u16 degradationPriority;
 
+	/*Everything below this comment is internal to GPAC*/
+
 	/*this is NOT part of standard SL, only used internally: signals duration of access unit if known
-	this is usefull for streams with very random updates, to prevent buffering for instance a subtitle stream
+	this is useful for streams with very random updates, to prevent buffering for instance a subtitle stream
 	which is likely to have no updates during the first minutes... expressed in media timescale*/
 	u32 au_duration;
 	/*ISMACryp extensions*/
@@ -114,6 +128,10 @@ typedef struct
 	char *sai;
 	u8 IV_size;
 	u32 saiz;
+	//for CENC pattern encryption mode
+	u8 crypt_byte_block, skip_byte_block;
+	u8 constant_IV_size;
+	bin128 constant_IV;
 	/*version_number are pushed from m2ts sections to the mpeg4sl layer so as to handle mpeg4 stream dependencies*/
 	u8 m2ts_version_number_plus_one;
 	//0: not mpeg-2 TS PCR, 1: MEPG-2 TS PCR, 2: MPEG-2 TS PCR with discontinuity
@@ -122,6 +140,8 @@ typedef struct
 	s64 timeStampOffset;
 	//ntp at sender/producer side for this packet, 0 otherwise
 	u64 sender_ntp;
+	//set for AUs which should be decodedd but not presented during seek
+	u8 seekFlag;
 } GF_SLHeader;
 
 
@@ -133,6 +153,7 @@ u32 gf_sl_get_header_size(GF_SLConfig* slConfig, GF_SLHeader *Header);
 /*depacketize SL-PDU*/
 void gf_sl_depacketize(GF_SLConfig *slConfig, GF_SLHeader *Header, const char *PDU, u32 PDULength, u32 *HeaderLen);
 
+/*! @} */
 
 #ifdef __cplusplus
 }

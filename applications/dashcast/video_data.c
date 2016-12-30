@@ -53,13 +53,17 @@ int dc_video_input_data_init(VideoInputData *video_input_data, /*int width, int 
 	//video_input_data->height = height;
 	//video_input_data->pix_fmt = pix_fmt;
 
-	video_input_data->vprop = gf_malloc(max_source * sizeof(VideoInputProp));
+	video_input_data->vprop = (VideoInputProp*)gf_malloc(max_source * sizeof(VideoInputProp));
 
 	dc_circular_buffer_create(&video_input_data->circular_buf, video_cb_size, mode, num_consumers);
 
 	for (i=0; i<video_cb_size; i++) {
 		VideoDataNode *video_data_node;
 		GF_SAFEALLOC(video_data_node, VideoDataNode);
+		if (!video_data_node) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("Cannot allocate video input\n"));
+			return -1;
+		}
 		video_input_data->circular_buf.list[i].data = (void *) video_data_node;
 		video_data_node->vframe = FF_ALLOC_FRAME();
 	}
@@ -82,7 +86,7 @@ void dc_video_input_data_destroy(VideoInputData *video_input_data)
 	int i;
 	for (i=0; i<(int) video_input_data->circular_buf.size; i++) {
 		if (video_input_data->circular_buf.list) {
-			VideoDataNode *video_data_node = video_input_data->circular_buf.list[i].data;
+			VideoDataNode *video_data_node = (VideoDataNode*)video_input_data->circular_buf.list[i].data;
 			av_free(video_data_node->vframe);
 			gf_free(video_data_node);
 		}

@@ -148,7 +148,7 @@ void write_bmp(GF_VideoSurface *fb, char *rad_name, u32 img_num)
 		sprintf(str, "%s_%d.bmp", rad_name, img_num);
 	}
 
-	fout = fopen(str, "wb");
+	fout = gf_fopen(str, "wb");
 	if (!fout) return;
 
 	memset(&fh, 0, sizeof(fh));
@@ -184,7 +184,7 @@ void write_bmp(GF_VideoSurface *fb, char *rad_name, u32 img_num)
 		}
 	}
 
-	fclose(fout);
+	gf_fclose(fout);
 }
 
 
@@ -200,10 +200,10 @@ void write_raw(GF_VideoSurface *fb, char *rad_name, u32 img_num)
 		sprintf(str, "%s_%d.raw", rad_name, img_num);
 	}
 
-	fout = fopen(str, "wb");
+	fout = gf_fopen(str, "wb");
 	if (!fout) return;
 	gf_fwrite(fb->video_buffer , fb->height*fb->pitch, 1, fout);
-	fclose(fout);
+	gf_fclose(fout);
 }
 
 void dump_frame(BIFSVID b2v, char *conv_buf, char *out_path, u32 dump_type, avi_t *avi_out, u32 frameNum)
@@ -753,7 +753,7 @@ int main (int argc, char **argv)
 		PrintUsage();
 		return 0;
 	}
-	gf_sys_init();
+	gf_sys_init(GF_MemTrackerNone);
 
 	file = gf_isom_open(inName, GF_ISOM_OPEN_READ, NULL);
 	if (!file) {

@@ -1,6 +1,6 @@
 ;--------------------------------
 ;General
-!define GPAC_VERSION	0.5.2-DEV
+!define GPAC_VERSION 0.6.2-DEV
 !include default.out
 
 !define GPAC_ROOT ..\..\..
@@ -250,7 +250,7 @@ Section "GPAC Core" SecGPAC
   SectionIn RO
   SetOutPath $INSTDIR
 
-  File /oname=ReadMe.txt "${GPAC_ROOT}\README"
+  File /oname=ReadMe.txt "${GPAC_ROOT}\README.md"
   File /oname=License.txt "${GPAC_ROOT}\COPYING"
   File /oname=Changelog.txt "${GPAC_ROOT}\Changelog"
   File "${GPAC_ROOT}\doc\configuration.html"
@@ -296,6 +296,11 @@ Section "GPAC Player" SecOsmo4
   File /r /x .git ${GPAC_ROOT}\gui\icons\*
   SetOutPath $INSTDIR\gui\extensions
   File /r /x .git ${GPAC_ROOT}\gui\extensions\*
+
+  ;copy shaders
+  SetOutPath $INSTDIR\shaders
+  File "${GPAC_ROOT}\shaders\vertex.glsl"
+  File "${GPAC_ROOT}\shaders\fragment.glsl"
 
   SetOutPath $INSTDIR
 SectionEnd
@@ -468,18 +473,6 @@ SectionEnd
 ;  File "..\MobileSession.dll"
 ;SectionEnd
 
-
-;Section "OFFIS Audio compressor" SecOffisComp
-;  SectionIn 1
-;  ;copy GUI
-;  File "..\gm_offis_compressor.dll"
-;  File "..\QtCore4.dll"
-;  File "..\QtGui4.dll"
-;  SetOutPath $INSTDIR\gui\extensions
-;  File /r /x .svn ..\..\..\..\gui\extensions\offis*
-;  SetOutPath $INSTDIR
-;SectionEnd
-
 SubSectionEnd
 
 
@@ -511,7 +504,7 @@ SectionEnd
 Section "GPAC SDK" SecSDK
   SectionIn 1
   SetOutPath $INSTDIR\sdk\include
-  File /r /x CVS ${GPAC_ROOT}\include\*.h
+  File /r ${GPAC_ROOT}\include\*.h
   SetOutPath $INSTDIR\sdk\lib
   File ${GPAC_BIN}\libgpac.lib
   File ${GPAC_EXTRA_LIB}\js.lib
@@ -574,8 +567,8 @@ Section "Add Start Menu Shortcuts"
   SetShellVarContext all
   CreateDirectory "$SMPROGRAMS\GPAC"
   CreateShortCut "$SMPROGRAMS\GPAC\Uninstall.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
-  CreateShortCut "$SMPROGRAMS\GPAC\Osmo4/MP4Client.lnk" "$INSTDIR\MP4Client.exe" "-gui" 
-  CreateShortCut "$SMPROGRAMS\GPAC\Osmo4/MP4Client (with Console).lnk" "$INSTDIR\MP4Client.exe" ""
+  CreateShortCut "$SMPROGRAMS\GPAC\Osmo4.lnk" "$INSTDIR\MP4Client.exe" "" 
+  CreateShortCut "$SMPROGRAMS\GPAC\Osmo4 (with Console).lnk" "$INSTDIR\MP4Client.exe" "-guid"
   !ifndef IS_WIN64
   CreateShortCut "$SMPROGRAMS\GPAC\Osmo4 (Old UI).lnk" "$INSTDIR\Osmo4.exe" ""
   !endif

@@ -45,27 +45,6 @@ extern "C" {
 #endif
 
 
-#ifdef GPAC_HAS_SPIDERMONKEY
-
-/*WIN32 and WinCE config (no configure script)*/
-#if defined(WIN32) || defined(_WIN32_WCE) || defined(__SYMBIAN32__)
-#ifndef XP_PC
-#define XP_PC
-#endif
-#ifndef XP_WIN
-#define XP_WIN
-#endif
-/*WINCE specific config*/
-#if defined(_WIN32_WCE)
-#include <windows.h>
-#define XP_WINCE
-#endif
-#endif
-
-/*other platforms should be setup through configure*/
-
-#endif
-
 
 void gf_node_setup(GF_Node *p, u32 tag);
 
@@ -383,7 +362,7 @@ void gf_sg_mffloat_del(MFFloat par);
 void gf_sg_mfdouble_del(MFDouble par);
 void gf_sg_mfbool_del(MFBool par);
 void gf_sg_mfcolor_del(MFColor par);
-void gf_sg_mfcolor_rgba_del(MFColorRGBA par);
+void gf_sg_mfcolorrgba_del(MFColorRGBA par);
 void gf_sg_mfrotation_del(MFRotation par);
 void gf_sg_mfstring_del(MFString par);
 void gf_sg_mftime_del(MFTime par);
@@ -397,6 +376,7 @@ void gf_sg_sfstring_del(SFString par);
 void gf_sg_mfscript_del(MFScript sc);
 void gf_sg_sfcommand_del(SFCommandBuffer cb);
 void gf_sg_sfurl_del(SFURL url);
+	void gf_sg_mfattrref_del(MFAttrRef par);
 
 Bool gf_sg_vrml_node_init(GF_Node *node);
 Bool gf_sg_vrml_node_changed(GF_Node *node, GF_FieldInfo *field);

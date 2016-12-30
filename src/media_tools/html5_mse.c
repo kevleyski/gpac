@@ -24,7 +24,8 @@
 */
 #include <gpac/setup.h>
 
-#ifdef GPAC_HAS_SPIDERMONKEY
+#ifndef GPAC_DISABLE_MSE
+
 #include <gpac/html5_mse.h>
 #include <gpac/internal/isomedia_dev.h>
 
@@ -32,6 +33,7 @@ GF_HTML_MediaSource *gf_mse_media_source_new()
 {
 	GF_HTML_MediaSource *ms;
 	GF_SAFEALLOC(ms, GF_HTML_MediaSource);
+	if (!ms) return NULL;
 	ms->sourceBuffers.list = gf_list_new();
 	ms->sourceBuffers.parent = ms;
 	ms->sourceBuffers.evt_target = gf_dom_event_target_new(GF_DOM_EVENT_TARGET_MSE_SOURCEBUFFERLIST, &ms->sourceBuffers);
@@ -147,6 +149,7 @@ GF_HTML_SourceBuffer *gf_mse_source_buffer_new(GF_HTML_MediaSource *mediasource)
 	char name[256];
 	GF_HTML_SourceBuffer *source;
 	GF_SAFEALLOC(source, GF_HTML_SourceBuffer);
+	if (!source) return NULL;
 	sprintf(name, "SourceBuffer_Thread_%p", source);
 	source->mediasource = mediasource;
 	source->buffered = gf_html_timeranges_new(1);
@@ -782,12 +785,16 @@ u32 gf_mse_parse_segment(void *par)
 				GF_Err e;
 				track = (GF_HTML_Track *)gf_list_get(sb->tracks, i);
 				GF_SAFEALLOC(packet, GF_MSE_Packet);
+				if (!packet) continue;
+				
 				assert(track->channel);
 				e = sb->parser->ChannelGetSLP(sb->parser, track->channel,
 				                              &packet->data, &packet->size, &packet->sl_header,
 				                              &packet->is_compressed, &packet->status, &packet->is_new_data);
-				assert(e == GF_OK);
-				if (packet->status == GF_OK && packet->is_new_data && packet->size) {
+				if (e!=GF_OK) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("[MSE] Failed to fetch AU from channel\n"));
+				}
+				else if (packet->status == GF_OK && packet->is_new_data && packet->size) {
 					char *data;
 					assert(packet->is_new_data && packet->size);
 					data = (char *)gf_malloc(packet->size);
@@ -826,7 +833,9 @@ void gf_mse_source_buffer_append_arraybuffer(GF_HTML_SourceBuffer *sb, GF_HTML_A
 	buffer->url = (char *)gf_malloc(256);
 	sprintf(buffer->url, "gmem://%d@%p", buffer->length, buffer->data);
 	buffer->reference_count++;
+#ifndef GPAC_DISABLE_ISOM
 	buffer->is_init = (gf_isom_probe_file(buffer->url) == 2 ? GF_TRUE : GF_FALSE);
+#endif
 	GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[MSE] Appending segment %s to SourceBuffer %p\n", buffer->url, sb));
 
 	gf_list_add(sb->input_buffer, buffer);
@@ -1054,4 +1063,4 @@ GF_Err gf_mse_track_buffer_get_next_packet(GF_HTML_Track *track,
 }
 
 
-#endif
+#endif //GPAC_DISABLE_MSE

@@ -34,20 +34,21 @@ GF_Err gf_isom_parse_root_box(GF_Box **outBox, GF_BitStream *bs, u64 *bytesExpec
 {
 	GF_Err ret;
 	u64 start;
-	//first make sure we can at least get the box size and type...
-	//18 = size (int32) + type (int32)
-	if (gf_bs_available(bs) < 8) {
-		*bytesExpected = 8;
-		return GF_ISOM_INCOMPLETE_FILE;
-	}
 	start = gf_bs_get_position(bs);
-	ret = gf_isom_parse_box(outBox, bs);
+	ret = gf_isom_parse_box_ex(outBox, bs, 0, GF_TRUE);
 	if (ret == GF_ISOM_INCOMPLETE_FILE) {
-		*bytesExpected = (*outBox)->size;
-		GF_LOG(progressive_mode ? GF_LOG_DEBUG : GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Incomplete box %s\n", gf_4cc_to_str( (*outBox)->type) ));
+		if (!*outBox) {
+			// We could not even read the box size, we at least need 8 bytes 
+			*bytesExpected = 8;
+			GF_LOG(progressive_mode ? GF_LOG_DEBUG : GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Incomplete box\n"));
+		}
+		else {
+			*bytesExpected = (*outBox)->size;
+			GF_LOG(progressive_mode ? GF_LOG_DEBUG : GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Incomplete box %s\n", gf_4cc_to_str((*outBox)->type)));
+			gf_isom_box_del(*outBox);
+			*outBox = NULL;
+		}
 		gf_bs_seek(bs, start);
-		gf_isom_box_del(*outBox);
-		*outBox = NULL;
 	}
 	return ret;
 }
@@ -57,12 +58,15 @@ u32 gf_isom_solve_uuid_box(char *UUID)
 	u32 i;
 	char strUUID[33], strChar[3];
 	strUUID[0] = 0;
+	strUUID[32] = 0;
 	for (i=0; i<16; i++) {
-		sprintf(strChar, "%02X", (unsigned char) UUID[i]);
+		snprintf(strChar, 3, "%02X", (unsigned char) UUID[i]);
 		strcat(strUUID, strChar);
 	}
 	if (!strnicmp(strUUID, "8974dbce7be74c5184f97148f9882554", 32))
 		return GF_ISOM_BOX_UUID_TENC;
+	if (!strnicmp(strUUID, "A5D40B30E81411DDBA2F0800200C9A66", 32))
+		return GF_ISOM_BOX_UUID_MSSM;
 	if (!strnicmp(strUUID, "D4807EF2CA3946958E5426CB9E46A79F", 32))
 		return GF_ISOM_BOX_UUID_TFRF;
 	if (!strnicmp(strUUID, "6D1D9B0542D544E680E2141DAFF757B2", 32))
@@ -71,20 +75,24 @@ u32 gf_isom_solve_uuid_box(char *UUID)
 		return GF_ISOM_BOX_UUID_PSEC;
 	if (!strnicmp(strUUID, "D08A4F1810F34A82B6C832D8ABA183D3", 32))
 		return GF_ISOM_BOX_UUID_PSSH;
+
 	return 0;
 }
 
 
-GF_Err gf_isom_parse_box_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type)
+GF_Err gf_isom_parse_box_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, Bool is_root_box)
 {
 	u32 type, uuid_type, hdr_size;
 	u64 size, start, end;
 	char uuid[16];
 	GF_Err e;
 	GF_Box *newBox;
-	e = GF_OK;
+
 	if ((bs == NULL) || (outBox == NULL) ) return GF_BAD_PARAM;
 	*outBox = NULL;
+	if (gf_bs_available(bs) < 8) {
+		return GF_ISOM_INCOMPLETE_FILE;
+	}
 
 	start = gf_bs_get_position(bs);
 
@@ -96,31 +104,27 @@ GF_Err gf_isom_parse_box_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type)
 		size = 4;
 		type = GF_ISOM_BOX_TYPE_VOID;
 	} else {
-		/*now here's a bad thing: some files use size 0 for void atoms, some for "till end of file" indictaion..*/
+		type = gf_bs_read_u32(bs);
+		hdr_size += 4;
+		/*no size means till end of file - EXCEPT FOR some old QuickTime boxes...*/
+		if (type == GF_ISOM_BOX_TYPE_TOTL)
+			size = 12;
 		if (!size) {
-			type = gf_bs_peek_bits(bs, 32, 0);
-			if (!isalnum((type>>24)&0xFF) || !isalnum((type>>16)&0xFF) || !isalnum((type>>8)&0xFF) || !isalnum(type&0xFF)) {
-				size = 4;
-				type = GF_ISOM_BOX_TYPE_VOID;
-			} else {
-				goto proceed_box;
-			}
-		} else {
-proceed_box:
-			type = gf_bs_read_u32(bs);
-			hdr_size += 4;
-			/*no size means till end of file - EXCEPT FOR some old QuickTime boxes...*/
-			if (type == GF_ISOM_BOX_TYPE_TOTL)
-				size = 12;
-			if (!size) {
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[iso file] Warning Read Box type %s size 0 reading till the end of file\n", gf_4cc_to_str(type)));
+			if (is_root_box) {
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[iso file] Warning Read Box type %s (0x%08X) size 0 reading till the end of file\n", gf_4cc_to_str(type), type));
 				size = gf_bs_available(bs) + 8;
+			} else {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Read Box type %s (0x%08X) size 0\n", gf_4cc_to_str(type), type));
+				return GF_ISOM_INVALID_FILE;
 			}
 		}
 	}
 	/*handle uuid*/
 	memset(uuid, 0, 16);
 	if (type == GF_ISOM_BOX_TYPE_UUID ) {
+		if (gf_bs_available(bs) < 16) {
+			return GF_ISOM_INCOMPLETE_FILE;
+		}
 		gf_bs_read_data(bs, uuid, 16);
 		hdr_size += 16;
 		uuid_type = gf_isom_solve_uuid_box(uuid);
@@ -128,6 +132,9 @@ proceed_box:
 
 	//handle large box
 	if (size == 1) {
+		if (gf_bs_available(bs) < 8) {
+			return GF_ISOM_INCOMPLETE_FILE;
+		}
 		size = gf_bs_read_u64(bs);
 		hdr_size += 8;
 	}
@@ -138,10 +145,14 @@ proceed_box:
 		return GF_ISOM_INVALID_FILE;
 	}
 
-	if (parent_type && (parent_type==GF_ISOM_BOX_TYPE_TREF)) {
+	if (parent_type && (parent_type == GF_ISOM_BOX_TYPE_TREF)) {
 		newBox = gf_isom_box_new(GF_ISOM_BOX_TYPE_REFT);
 		if (!newBox) return GF_OUT_OF_MEM;
 		((GF_TrackReferenceTypeBox*)newBox)->reference_type = type;
+	} else if (parent_type && (parent_type == GF_ISOM_BOX_TYPE_IREF)) {
+		newBox = gf_isom_box_new(GF_ISOM_BOX_TYPE_REFI);
+		if (!newBox) return GF_OUT_OF_MEM;
+		((GF_ItemReferenceTypeBox*)newBox)->reference_type = type;
 	} else {
 		//OK, create the box based on the type
 		newBox = gf_isom_box_new(uuid_type ? uuid_type : type);
@@ -162,22 +173,25 @@ proceed_box:
 		*outBox = newBox;
 		return GF_ISOM_INCOMPLETE_FILE;
 	}
-	//we need a special reading for these boxes...
-	if ((newBox->type == GF_ISOM_BOX_TYPE_STDP) || (newBox->type == GF_ISOM_BOX_TYPE_SDTP)) {
-		newBox->size = size;
-		*outBox = newBox;
-		return GF_OK;
-	}
 
 	newBox->size = size - hdr_size;
-	e = gf_isom_box_read(newBox, bs);
-	newBox->size = size;
-	end = gf_bs_get_position(bs);
+	if (newBox->size) {
+		e = gf_isom_box_read(newBox, bs);
+		newBox->size = size;
+		end = gf_bs_get_position(bs);
+	}
+	else {
+		//empty box
+		e = GF_OK;
+		end = gf_bs_get_position(bs);
+	}
 
 	if (e && (e != GF_ISOM_INCOMPLETE_FILE)) {
 		gf_isom_box_del(newBox);
 		*outBox = NULL;
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Read Box \"%s\" failed (%s)\n", gf_4cc_to_str(type), gf_error_to_string(e)));
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Read Box \"%s\" failed (%s) - skipping\n", gf_4cc_to_str(type), gf_error_to_string(e)));
+
+		//we don't try to reparse known boxes that have been failing (too dangerous)
 		return e;
 	}
 
@@ -187,7 +201,7 @@ proceed_box:
 		gf_bs_seek(bs, start+size);
 	} else if (end-start < size) {
 		u32 to_skip = (u32) (size-(end-start));
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[iso file] Box \"%s\" has %d extra bytes\n", gf_4cc_to_str(type), to_skip));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[iso file] Box \"%s\" has %u extra bytes\n", gf_4cc_to_str(type), to_skip));
 		gf_bs_skip_bytes(bs, to_skip);
 	}
 	*outBox = newBox;
@@ -197,7 +211,7 @@ proceed_box:
 GF_EXPORT
 GF_Err gf_isom_parse_box(GF_Box **outBox, GF_BitStream *bs)
 {
-	return gf_isom_parse_box_ex(outBox, bs, 0);
+	return gf_isom_parse_box_ex(outBox, bs, 0, GF_FALSE);
 }
 
 GF_Err gf_isom_full_box_read(GF_Box *ptr, GF_BitStream *bs)
@@ -239,17 +253,17 @@ GF_Err gf_isom_read_box_list_ex(GF_Box *parent, GF_BitStream *bs, GF_Err (*add_b
 	GF_Box *a = NULL;
 
 	while (parent->size) {
-		e = gf_isom_parse_box_ex(&a, bs, parent_type);
+		e = gf_isom_parse_box_ex(&a, bs, parent_type, GF_FALSE);
 		if (e) {
 			if (a) gf_isom_box_del(a);
 			return e;
 		}
 		if (parent->size < a->size) {
-			if (a) gf_isom_box_del(a);
-			return GF_OK;
-			//return GF_ISOM_INVALID_FILE;
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Box \"%s\" is larger than container box\n", gf_4cc_to_str(a->type)));
+			parent->size = 0;
+		} else {
+			parent->size -= a->size;
 		}
-		parent->size -= a->size;
 		e = add_box(parent, a);
 		if (e) {
 			gf_isom_box_del(a);
@@ -290,9 +304,11 @@ GF_Err gf_isom_full_box_get_size(GF_Box *ptr)
 GF_EXPORT
 GF_Err gf_isom_box_write_header(GF_Box *ptr, GF_BitStream *bs)
 {
+	u64 start;
 	if (! bs || !ptr) return GF_BAD_PARAM;
 	if (!ptr->size) return GF_ISOM_INVALID_FILE;
 
+	start = gf_bs_get_position(bs);
 	if (ptr->size > 0xFFFFFFFF) {
 		gf_bs_write_u32(bs, 1);
 	} else {
@@ -311,8 +327,17 @@ GF_Err gf_isom_box_write_header(GF_Box *ptr, GF_BitStream *bs)
 		case GF_ISOM_BOX_UUID_PSEC:
 			memcpy(strUUID, "A2394F525A9B4F14A2446C427C648DF4", 32);
 			break;
+		case GF_ISOM_BOX_UUID_MSSM:
+			memcpy(strUUID, "A5D40B30E81411DDBA2F0800200C9A66", 32);
+			break;
 		case GF_ISOM_BOX_UUID_PSSH:
 			memcpy(strUUID, "D08A4F1810F34A82B6C832D8ABA183D3", 32);
+			break;
+		case GF_ISOM_BOX_UUID_TFXD:
+			memcpy(strUUID, "6D1D9B0542D544E680E2141DAFF757B2", 32);
+			break;
+		default:
+			memset(strUUID, 0, 32);
 			break;
 		}
 
@@ -328,6 +353,9 @@ GF_Err gf_isom_box_write_header(GF_Box *ptr, GF_BitStream *bs)
 	}
 	if (ptr->size > 0xFFFFFFFF)
 		gf_bs_write_u64(bs, ptr->size);
+	
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[iso file] Written Box type %s size "LLD" start "LLD"\n", gf_4cc_to_str(ptr->type), LLD_CAST ptr->size, LLD_CAST start));
+
 	return GF_OK;
 }
 
@@ -394,6 +422,8 @@ GF_Box *gf_isom_box_new(u32 boxType)
 	switch (boxType) {
 	case GF_ISOM_BOX_TYPE_REFT:
 		return reftype_New();
+	case GF_ISOM_BOX_TYPE_REFI:
+		return ireftype_New();
 	case GF_ISOM_BOX_TYPE_FREE:
 		return free_New();
 	case GF_ISOM_BOX_TYPE_SKIP:
@@ -497,6 +527,10 @@ GF_Box *gf_isom_box_new(u32 boxType)
 		return tref_New();
 	case GF_ISOM_BOX_TYPE_MDIA:
 		return mdia_New();
+	case GF_ISOM_BOX_TYPE_MFRA:
+		return mfra_New();
+	case GF_ISOM_BOX_TYPE_TFRA:
+		return tfra_New();
 	case GF_ISOM_BOX_TYPE_ELNG:
 		return elng_New();
 
@@ -625,7 +659,7 @@ GF_Box *gf_isom_box_new(u32 boxType)
 		if (a) a->type = boxType;
 		return a;
 	case GF_ISOM_BOX_TYPE_HVCC:
-	case GF_ISOM_BOX_TYPE_SHCC:
+	case GF_ISOM_BOX_TYPE_LHVC:
 		a = hvcc_New();
 		if (a) a->type = boxType;
 		return a;
@@ -646,8 +680,8 @@ GF_Box *gf_isom_box_new(u32 boxType)
 	case GF_ISOM_BOX_TYPE_HEV1:
 	case GF_ISOM_BOX_TYPE_HVC2:
 	case GF_ISOM_BOX_TYPE_HEV2:
-	case GF_ISOM_BOX_TYPE_SHC1:
-	case GF_ISOM_BOX_TYPE_SHV1:
+	case GF_ISOM_BOX_TYPE_LHV1:
+	case GF_ISOM_BOX_TYPE_LHE1:
 	case GF_ISOM_BOX_TYPE_HVT1:
 		return mp4v_encv_avc_hevc_new(boxType);
 
@@ -700,6 +734,8 @@ GF_Box *gf_isom_box_new(u32 boxType)
 		return infe_New();
 	case GF_ISOM_BOX_TYPE_IINF:
 		return iinf_New();
+	case GF_ISOM_BOX_TYPE_IREF:
+		return iref_New();
 	case GF_ISOM_BOX_TYPE_SINF:
 		return sinf_New();
 	case GF_ISOM_BOX_TYPE_FRMA:
@@ -722,8 +758,10 @@ GF_Box *gf_isom_box_new(u32 boxType)
 		return piff_psec_New();
 	case GF_ISOM_BOX_UUID_PSSH:
 		return piff_pssh_New();
-	case GF_ISOM_BOX_UUID_TFRF:
 	case GF_ISOM_BOX_UUID_TFXD:
+		return tfxd_New();
+	case GF_ISOM_BOX_UUID_MSSM:
+	case GF_ISOM_BOX_UUID_TFRF:
 	case GF_ISOM_BOX_TYPE_UUID:
 		return uuid_New();
 
@@ -830,13 +868,21 @@ GF_Box *gf_isom_box_new(u32 boxType)
 
 	case GF_ISOM_BOX_TYPE_PRFT:
 		return prft_New();
+	case GF_ISOM_BOX_TYPE_TRGR:
+		return trgr_New();
+	case GF_ISOM_BOX_TYPE_TRGT:
+	case GF_ISOM_BOX_TYPE_MSRC:
+	case GF_ISOM_BOX_TYPE_CSTG:
+	case GF_ISOM_BOX_TYPE_STER:
+		return trgt_New(boxType);
 
 #ifndef GPAC_DISABLE_TTXT
 	case GF_ISOM_BOX_TYPE_STXT:
 		return metx_New(GF_ISOM_BOX_TYPE_STXT);
 	case GF_ISOM_BOX_TYPE_TXTC:
 		return txtc_New();
-
+		
+#ifndef GPAC_DISABLE_VTT
 	case GF_ISOM_BOX_TYPE_VTCU:
 		return vtcu_New();
 	case GF_ISOM_BOX_TYPE_VTTE:
@@ -855,6 +901,7 @@ GF_Box *gf_isom_box_new(u32 boxType)
 		return boxstring_New(GF_ISOM_BOX_TYPE_PAYL);
 	case GF_ISOM_BOX_TYPE_WVTT:
 		return wvtt_New();
+#endif
 
 	case GF_ISOM_BOX_TYPE_STPP:
 		return metx_New(GF_ISOM_BOX_TYPE_STPP);
@@ -877,10 +924,29 @@ GF_Box *gf_isom_box_new(u32 boxType)
 	case GF_ISOM_BOX_TYPE_ADAF:
 		return adaf_New();
 
+	/* Image File Format */
+	case GF_ISOM_BOX_TYPE_ISPE:
+		return ispe_New();
+	case GF_ISOM_BOX_TYPE_COLR:
+		return colr_New();
+	case GF_ISOM_BOX_TYPE_PIXI:
+		return pixi_New();
+	case GF_ISOM_BOX_TYPE_RLOC:
+		return rloc_New();
+	case GF_ISOM_BOX_TYPE_IROT:
+		return irot_New();
+	case GF_ISOM_BOX_TYPE_IPCO:
+		return ipco_New();
+	case GF_ISOM_BOX_TYPE_IPRP:
+		return iprp_New();
+	case GF_ISOM_BOX_TYPE_IPMA:
+		return ipma_New();
+	case GF_ISOM_BOX_TYPE_GRPL:
+		return grpl_New();
+
 	default:
-		a = defa_New();
-		if (a) a->type = boxType;
-		return a;
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Unknown box type %s\n", gf_4cc_to_str(boxType) ));
+		return unkn_New(boxType);
 	}
 }
 
@@ -905,6 +971,9 @@ void gf_isom_box_del(GF_Box *a)
 	switch (a->type) {
 	case GF_ISOM_BOX_TYPE_REFT:
 		reftype_del(a);
+		return;
+	case GF_ISOM_BOX_TYPE_REFI:
+		ireftype_del(a);
 		return;
 	case GF_ISOM_BOX_TYPE_FREE:
 	case GF_ISOM_BOX_TYPE_SKIP:
@@ -935,6 +1004,7 @@ void gf_isom_box_del(GF_Box *a)
 	case GF_ISOM_BOX_TYPE_CRHD:
 	case GF_ISOM_BOX_TYPE_SDHD:
 	case GF_ISOM_BOX_TYPE_NMHD:
+	case GF_ISOM_BOX_TYPE_STHD:
 		nmhd_del(a);
 		return;
 	case GF_ISOM_BOX_TYPE_STBL:
@@ -1050,6 +1120,13 @@ void gf_isom_box_del(GF_Box *a)
 	case GF_ISOM_BOX_TYPE_MDIA:
 		mdia_del(a);
 		return;
+	case GF_ISOM_BOX_TYPE_MFRA:
+		mfra_del(a);
+		return;
+	case GF_ISOM_BOX_TYPE_TFRA:
+		tfra_del(a);
+		return;
+
 	case GF_ISOM_BOX_TYPE_ELNG:
 		elng_del(a);
 		return;
@@ -1238,13 +1315,13 @@ void gf_isom_box_del(GF_Box *a)
 	case GF_ISOM_BOX_TYPE_HEV1:
 	case GF_ISOM_BOX_TYPE_HVC2:
 	case GF_ISOM_BOX_TYPE_HEV2:
-	case GF_ISOM_BOX_TYPE_SHC1:
-	case GF_ISOM_BOX_TYPE_SHV1:
+	case GF_ISOM_BOX_TYPE_LHV1:
+	case GF_ISOM_BOX_TYPE_LHE1:
 	case GF_ISOM_BOX_TYPE_HVT1:
 		mp4v_del(a);
 		return;
 	case GF_ISOM_BOX_TYPE_HVCC:
-	case GF_ISOM_BOX_TYPE_SHCC:
+	case GF_ISOM_BOX_TYPE_LHVC:
 		hvcc_del(a);
 		return;
 
@@ -1319,6 +1396,9 @@ void gf_isom_box_del(GF_Box *a)
 	case GF_ISOM_BOX_TYPE_IINF:
 		iinf_del(a);
 		return;
+	case GF_ISOM_BOX_TYPE_IREF:
+		iref_del(a);
+		return;
 	case GF_ISOM_BOX_TYPE_SINF:
 		sinf_del(a);
 		return;
@@ -1333,14 +1413,33 @@ void gf_isom_box_del(GF_Box *a)
 		return;
 
 	case GF_ISOM_BOX_TYPE_ENCA:
+	{
+		GF_ProtectionInfoBox *sinf = gf_list_get(((GF_SampleEntryBox *)a)->protections, 0);
+		if (sinf) {
+			a->type = sinf->original_format->data_format;
+		}
+		mp4a_del(a);
+		return;
+	}
 	case GF_ISOM_BOX_TYPE_ENCV:
+	{
+		GF_ProtectionInfoBox *sinf = gf_list_get(((GF_SampleEntryBox *)a)->protections, 0);
+		if (sinf) {
+			a->type = sinf->original_format->data_format;
+		}
+		mp4v_del(a);
+		return;
+	}
 	case GF_ISOM_BOX_TYPE_ENCS:
 	{
 		GF_ProtectionInfoBox *sinf = gf_list_get(((GF_SampleEntryBox *)a)->protections, 0);
-		a->type = sinf->original_format->data_format;
-		gf_isom_box_del(a);
+		if (sinf) {
+			a->type = sinf->original_format->data_format;
+		}
+		mp4s_del(a);
+		return;
 	}
-	return;
+
 	case GF_ISOM_BOX_TYPE_SENC:
 		senc_del(a);
 		return;
@@ -1355,8 +1454,11 @@ void gf_isom_box_del(GF_Box *a)
 		case GF_ISOM_BOX_UUID_PSSH:
 			piff_pssh_del(a);
 			return;
-		case GF_ISOM_BOX_UUID_TFRF:
 		case GF_ISOM_BOX_UUID_TFXD:
+			tfxd_del(a);
+			return;
+		case GF_ISOM_BOX_UUID_MSSM:
+		case GF_ISOM_BOX_UUID_TFRF:
 		default:
 			uuid_del(a);
 			return;
@@ -1488,6 +1590,13 @@ void gf_isom_box_del(GF_Box *a)
 		prft_del(a);
 		return;
 
+	case GF_ISOM_BOX_TYPE_TRGR:
+		trgr_del(a);
+		return;
+	case GF_ISOM_BOX_TYPE_TRGT:
+		trgt_del(a);
+		return;
+
 #ifndef GPAC_DISABLE_TTXT
 	case GF_ISOM_BOX_TYPE_STXT:
 		metx_del(a);
@@ -1495,7 +1604,8 @@ void gf_isom_box_del(GF_Box *a)
 	case GF_ISOM_BOX_TYPE_TXTC:
 		txtc_del(a);
 		return;
-
+		
+#ifndef GPAC_DISABLE_VTT
 	case GF_ISOM_BOX_TYPE_VTCU:
 		vtcu_del(a);
 		return;
@@ -1513,6 +1623,7 @@ void gf_isom_box_del(GF_Box *a)
 	case GF_ISOM_BOX_TYPE_WVTT:
 		wvtt_del(a);
 		return;
+#endif /*GPAC_DISABLE_VTT*/
 
 	case GF_ISOM_BOX_TYPE_STPP:
 		metx_del(a);
@@ -1545,8 +1656,39 @@ void gf_isom_box_del(GF_Box *a)
 		adaf_del(a);
 		return;
 
+	/* Image File Format */
+	case GF_ISOM_BOX_TYPE_ISPE:
+		ispe_del(a);
+		return;
+	case GF_ISOM_BOX_TYPE_COLR:
+		colr_del(a);
+		return;
+	case GF_ISOM_BOX_TYPE_PIXI:
+		pixi_del(a);
+		return;
+	case GF_ISOM_BOX_TYPE_RLOC:
+		rloc_del(a);
+		return;
+	case GF_ISOM_BOX_TYPE_IROT:
+		irot_del(a);
+		return;
+	case GF_ISOM_BOX_TYPE_IPCO:
+		ipco_del(a);
+		return;
+	case GF_ISOM_BOX_TYPE_IPRP:
+		iprp_del(a);
+		return;
+	case GF_ISOM_BOX_TYPE_IPMA:
+		ipma_del(a);
+		return;
+	case GF_ISOM_BOX_TYPE_GRPL:
+		grpl_del(a);
+		return;
+
+	case GF_ISOM_BOX_TYPE_UNKNOWN:
+		unkn_del(a);
+		return;
 	default:
-		defa_del(a);
 		return;
 	}
 }
@@ -1557,6 +1699,8 @@ GF_Err gf_isom_box_read(GF_Box *a, GF_BitStream *bs)
 	switch (a->type) {
 	case GF_ISOM_BOX_TYPE_REFT:
 		return reftype_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_REFI:
+		return ireftype_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_FREE:
 	case GF_ISOM_BOX_TYPE_SKIP:
 		return free_Read(a, bs);
@@ -1647,6 +1791,10 @@ GF_Err gf_isom_box_read(GF_Box *a, GF_BitStream *bs)
 		return tref_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_MDIA:
 		return mdia_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_MFRA:
+		return mfra_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_TFRA:
+		return tfra_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_ELNG:
 		return elng_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_CHPL:
@@ -1784,12 +1932,12 @@ GF_Err gf_isom_box_read(GF_Box *a, GF_BitStream *bs)
 	case GF_ISOM_BOX_TYPE_HEV1:
 	case GF_ISOM_BOX_TYPE_HVC2:
 	case GF_ISOM_BOX_TYPE_HEV2:
-	case GF_ISOM_BOX_TYPE_SHC1:
-	case GF_ISOM_BOX_TYPE_SHV1:
+	case GF_ISOM_BOX_TYPE_LHV1:
+	case GF_ISOM_BOX_TYPE_LHE1:
 	case GF_ISOM_BOX_TYPE_HVT1:
 		return mp4v_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_HVCC:
-	case GF_ISOM_BOX_TYPE_SHCC:
+	case GF_ISOM_BOX_TYPE_LHVC:
 		return hvcc_Read(a, bs);
 
 	/*3GPP streaming text*/
@@ -1841,6 +1989,8 @@ GF_Err gf_isom_box_read(GF_Box *a, GF_BitStream *bs)
 		return infe_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_IINF:
 		return iinf_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_IREF:
+		return iref_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_SINF:
 		return sinf_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_FRMA:
@@ -1865,8 +2015,10 @@ GF_Err gf_isom_box_read(GF_Box *a, GF_BitStream *bs)
 			return piff_psec_Read(a, bs);
 		case GF_ISOM_BOX_UUID_PSSH:
 			return piff_pssh_Read(a, bs);
-		case GF_ISOM_BOX_UUID_TFRF:
 		case GF_ISOM_BOX_UUID_TFXD:
+			return tfxd_Read(a, bs);
+		case GF_ISOM_BOX_UUID_MSSM:
+		case GF_ISOM_BOX_UUID_TFRF:
 		default:
 			return uuid_Read(a, bs);
 		}
@@ -1966,12 +2118,18 @@ GF_Err gf_isom_box_read(GF_Box *a, GF_BitStream *bs)
 	case GF_ISOM_BOX_TYPE_PRFT:
 		return prft_Read(a, bs);
 
+	case GF_ISOM_BOX_TYPE_TRGR:
+		return trgr_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_TRGT:
+		return trgt_Read(a, bs);
+
 #ifndef GPAC_DISABLE_TTXT
 	case GF_ISOM_BOX_TYPE_STXT:
 		return metx_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_TXTC:
 		return txtc_Read(a, bs);
-
+		
+#ifndef GPAC_DISABLE_VTT
 	case GF_ISOM_BOX_TYPE_VTCU:
 		return vtcu_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_VTTE:
@@ -1985,6 +2143,7 @@ GF_Err gf_isom_box_read(GF_Box *a, GF_BitStream *bs)
 		return boxstring_Read(a, bs);
 	case GF_ISOM_BOX_TYPE_WVTT:
 		return wvtt_Read(a, bs);
+#endif
 
 	case GF_ISOM_BOX_TYPE_STPP:
 		return metx_Read(a, bs);
@@ -2008,8 +2167,30 @@ GF_Err gf_isom_box_read(GF_Box *a, GF_BitStream *bs)
 	case GF_ISOM_BOX_TYPE_ADAF:
 		return adaf_Read(a, bs);
 
+	/* Image File Format */
+	case GF_ISOM_BOX_TYPE_ISPE:
+		return ispe_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_COLR:
+		return colr_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_PIXI:
+		return pixi_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_RLOC:
+		return rloc_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_IROT:
+		return irot_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_IPCO:
+		return ipco_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_IPRP:
+		return iprp_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_IPMA:
+		return ipma_Read(a, bs);
+	case GF_ISOM_BOX_TYPE_GRPL:
+		return grpl_Read(a, bs);
+
+	case GF_ISOM_BOX_TYPE_UNKNOWN:
+		return unkn_Read(a, bs);
 	default:
-		return defa_Read(a, bs);
+		return GF_ISOM_INVALID_FILE;
 	}
 }
 
@@ -2020,6 +2201,8 @@ GF_Err gf_isom_box_write_listing(GF_Box *a, GF_BitStream *bs)
 	switch (a->type) {
 	case GF_ISOM_BOX_TYPE_REFT:
 		return reftype_Write(a, bs);
+	case GF_ISOM_BOX_TYPE_REFI:
+		return ireftype_Write(a, bs);
 	case GF_ISOM_BOX_TYPE_FREE:
 	case GF_ISOM_BOX_TYPE_SKIP:
 		return free_Write(a, bs);
@@ -2240,7 +2423,7 @@ GF_Err gf_isom_box_write_listing(GF_Box *a, GF_BitStream *bs)
 	case GF_ISOM_BOX_TYPE_SVCC:
 		return avcc_Write(a, bs);
 	case GF_ISOM_BOX_TYPE_HVCC:
-	case GF_ISOM_BOX_TYPE_SHCC:
+	case GF_ISOM_BOX_TYPE_LHVC:
 		return hvcc_Write(a, bs);
 	case GF_ISOM_BOX_TYPE_BTRT:
 		return btrt_Write(a, bs);
@@ -2255,8 +2438,8 @@ GF_Err gf_isom_box_write_listing(GF_Box *a, GF_BitStream *bs)
 	case GF_ISOM_BOX_TYPE_HEV1:
 	case GF_ISOM_BOX_TYPE_HVC2:
 	case GF_ISOM_BOX_TYPE_HEV2:
-	case GF_ISOM_BOX_TYPE_SHC1:
-	case GF_ISOM_BOX_TYPE_SHV1:
+	case GF_ISOM_BOX_TYPE_LHV1:
+	case GF_ISOM_BOX_TYPE_LHE1:
 	case GF_ISOM_BOX_TYPE_HVT1:
 		return mp4v_Write(a, bs);
 
@@ -2309,6 +2492,8 @@ GF_Err gf_isom_box_write_listing(GF_Box *a, GF_BitStream *bs)
 		return infe_Write(a, bs);
 	case GF_ISOM_BOX_TYPE_IINF:
 		return iinf_Write(a, bs);
+	case GF_ISOM_BOX_TYPE_IREF:
+		return iref_Write(a, bs);
 	case GF_ISOM_BOX_TYPE_SINF:
 		return sinf_Write(a, bs);
 	case GF_ISOM_BOX_TYPE_FRMA:
@@ -2335,8 +2520,10 @@ GF_Err gf_isom_box_write_listing(GF_Box *a, GF_BitStream *bs)
 			return piff_psec_Write(a, bs);
 		case GF_ISOM_BOX_UUID_PSSH:
 			return piff_pssh_Write(a, bs);
-		case GF_ISOM_BOX_UUID_TFRF:
 		case GF_ISOM_BOX_UUID_TFXD:
+			return tfxd_Write(a, bs);
+		case GF_ISOM_BOX_UUID_MSSM:
+		case GF_ISOM_BOX_UUID_TFRF:
 		default:
 			return uuid_Write(a, bs);
 		}
@@ -2434,12 +2621,18 @@ GF_Err gf_isom_box_write_listing(GF_Box *a, GF_BitStream *bs)
 	case GF_ISOM_BOX_TYPE_RVCC:
 		return rvcc_Write(a, bs);
 
+	case GF_ISOM_BOX_TYPE_TRGR:
+		return trgr_Write(a, bs);
+	case GF_ISOM_BOX_TYPE_TRGT:
+		return trgt_Write(a, bs);
+
 #ifndef GPAC_DISABLE_TTXT
 	case GF_ISOM_BOX_TYPE_STXT:
 		return metx_Write(a, bs);
 	case GF_ISOM_BOX_TYPE_TXTC:
 		return txtc_Write(a, bs);
-
+		
+#ifndef GPAC_DISABLE_VTT
 	case GF_ISOM_BOX_TYPE_VTCU:
 		return vtcu_Write(a, bs);
 	case GF_ISOM_BOX_TYPE_VTTE:
@@ -2453,6 +2646,7 @@ GF_Err gf_isom_box_write_listing(GF_Box *a, GF_BitStream *bs)
 		return boxstring_Write(a, bs);
 	case GF_ISOM_BOX_TYPE_WVTT:
 		return wvtt_Write(a, bs);
+#endif
 
 	case GF_ISOM_BOX_TYPE_STPP:
 		return metx_Write(a, bs);
@@ -2475,8 +2669,30 @@ GF_Err gf_isom_box_write_listing(GF_Box *a, GF_BitStream *bs)
 	case GF_ISOM_BOX_TYPE_ADAF:
 		return adaf_Write(a, bs);
 
+	/* Image File Format */
+	case GF_ISOM_BOX_TYPE_ISPE:
+		return ispe_Write(a, bs);
+	case GF_ISOM_BOX_TYPE_COLR:
+		return colr_Write(a, bs);
+	case GF_ISOM_BOX_TYPE_PIXI:
+		return pixi_Write(a, bs);
+	case GF_ISOM_BOX_TYPE_RLOC:
+		return rloc_Write(a, bs);
+	case GF_ISOM_BOX_TYPE_IROT:
+		return irot_Write(a, bs);
+	case GF_ISOM_BOX_TYPE_IPCO:
+		return ipco_Write(a, bs);
+	case GF_ISOM_BOX_TYPE_IPRP:
+		return iprp_Write(a, bs);
+	case GF_ISOM_BOX_TYPE_IPMA:
+		return ipma_Write(a, bs);
+	case GF_ISOM_BOX_TYPE_GRPL:
+		return grpl_Write(a, bs);
+
+	case GF_ISOM_BOX_TYPE_UNKNOWN:
+		return unkn_Write(a, bs);
 	default:
-		return defa_Write(a, bs);
+		return GF_ISOM_INVALID_FILE;
 	}
 }
 
@@ -2496,6 +2712,8 @@ static GF_Err gf_isom_box_size_listing(GF_Box *a)
 	switch (a->type) {
 	case GF_ISOM_BOX_TYPE_REFT:
 		return reftype_Size(a);
+	case GF_ISOM_BOX_TYPE_REFI:
+		return ireftype_Size(a);
 	case GF_ISOM_BOX_TYPE_FREE:
 	case GF_ISOM_BOX_TYPE_SKIP:
 		return free_Size(a);
@@ -2715,7 +2933,7 @@ static GF_Err gf_isom_box_size_listing(GF_Box *a)
 	case GF_ISOM_BOX_TYPE_SVCC:
 		return avcc_Size(a);
 	case GF_ISOM_BOX_TYPE_HVCC:
-	case GF_ISOM_BOX_TYPE_SHCC:
+	case GF_ISOM_BOX_TYPE_LHVC:
 		return hvcc_Size(a);
 	case GF_ISOM_BOX_TYPE_BTRT:
 		return btrt_Size(a);
@@ -2730,8 +2948,8 @@ static GF_Err gf_isom_box_size_listing(GF_Box *a)
 	case GF_ISOM_BOX_TYPE_HEV1:
 	case GF_ISOM_BOX_TYPE_HVC2:
 	case GF_ISOM_BOX_TYPE_HEV2:
-	case GF_ISOM_BOX_TYPE_SHC1:
-	case GF_ISOM_BOX_TYPE_SHV1:
+	case GF_ISOM_BOX_TYPE_LHV1:
+	case GF_ISOM_BOX_TYPE_LHE1:
 	case GF_ISOM_BOX_TYPE_HVT1:
 		return mp4v_Size(a);
 
@@ -2784,6 +3002,8 @@ static GF_Err gf_isom_box_size_listing(GF_Box *a)
 		return infe_Size(a);
 	case GF_ISOM_BOX_TYPE_IINF:
 		return iinf_Size(a);
+	case GF_ISOM_BOX_TYPE_IREF:
+		return iref_Size(a);
 	case GF_ISOM_BOX_TYPE_SINF:
 		return sinf_Size(a);
 	case GF_ISOM_BOX_TYPE_FRMA:
@@ -2808,8 +3028,10 @@ static GF_Err gf_isom_box_size_listing(GF_Box *a)
 			return piff_psec_Size(a);
 		case GF_ISOM_BOX_UUID_PSSH:
 			return piff_pssh_Size(a);
-		case GF_ISOM_BOX_UUID_TFRF:
 		case GF_ISOM_BOX_UUID_TFXD:
+			return tfxd_Size(a);
+		case GF_ISOM_BOX_UUID_MSSM:
+		case GF_ISOM_BOX_UUID_TFRF:
 		default:
 			return uuid_Size(a);
 		}
@@ -2907,12 +3129,18 @@ static GF_Err gf_isom_box_size_listing(GF_Box *a)
 	case GF_ISOM_BOX_TYPE_RVCC:
 		return rvcc_Size(a);
 
+	case GF_ISOM_BOX_TYPE_TRGR:
+		return trgr_Size(a);
+	case GF_ISOM_BOX_TYPE_TRGT:
+		return trgt_Size(a);
+
 #ifndef GPAC_DISABLE_TTXT
 	case GF_ISOM_BOX_TYPE_STXT:
 		return metx_Size(a);
 	case GF_ISOM_BOX_TYPE_TXTC:
 		return txtc_Size(a);
-
+		
+#ifndef GPAC_DISABLE_VTT
 	case GF_ISOM_BOX_TYPE_VTCU:
 		return vtcu_Size(a);
 	case GF_ISOM_BOX_TYPE_VTTE:
@@ -2926,6 +3154,7 @@ static GF_Err gf_isom_box_size_listing(GF_Box *a)
 		return boxstring_Size(a);
 	case GF_ISOM_BOX_TYPE_WVTT:
 		return wvtt_Size(a);
+#endif
 
 	case GF_ISOM_BOX_TYPE_STPP:
 		return metx_Size(a);
@@ -2948,8 +3177,30 @@ static GF_Err gf_isom_box_size_listing(GF_Box *a)
 	case GF_ISOM_BOX_TYPE_ADAF:
 		return adaf_Size(a);
 
+	/* Image File Format */
+	case GF_ISOM_BOX_TYPE_ISPE:
+		return ispe_Size(a);
+	case GF_ISOM_BOX_TYPE_COLR:
+		return colr_Size(a);
+	case GF_ISOM_BOX_TYPE_PIXI:
+		return pixi_Size(a);
+	case GF_ISOM_BOX_TYPE_RLOC:
+		return rloc_Size(a);
+	case GF_ISOM_BOX_TYPE_IROT:
+		return irot_Size(a);
+	case GF_ISOM_BOX_TYPE_IPCO:
+		return ipco_Size(a);
+	case GF_ISOM_BOX_TYPE_IPRP:
+		return iprp_Size(a);
+	case GF_ISOM_BOX_TYPE_IPMA:
+		return ipma_Size(a);
+	case GF_ISOM_BOX_TYPE_GRPL:
+		return grpl_Size(a);
+
+	case GF_ISOM_BOX_TYPE_UNKNOWN:
+		return unkn_Size(a);
 	default:
-		return defa_Size(a);
+		return GF_ISOM_INVALID_FILE;
 	}
 }
 

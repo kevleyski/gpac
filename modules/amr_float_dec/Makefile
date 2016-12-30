@@ -16,7 +16,7 @@ LDFLAGS+=-pg
 endif
 
 #common obj
-OBJS=../amr_dec/amr_in.o amr_float_dec.o
+OBJS=amr_float_dec.o
 
 #AMR NB obj
 CFLAGS+=-DGPAC_HAS_AMR_FT
@@ -36,7 +36,7 @@ endif
 
 SRCS := $(OBJS:.o=.c) 
 
-LIB=gm_amr_float_dec.$(DYN_LIB_SUFFIX)
+LIB=gm_amr_float_dec$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
 #LDFLAGS+=-export-symbols amr_float_dec.def 
 endif
@@ -45,7 +45,7 @@ all: $(LIB)
 
 
 $(LIB): $(OBJS)
-	$(CC) $(SHFLAGS) $(LDFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L../../bin/gcc -lgpac
+	$(CC) $(SHFLAGS) -o ../../bin/gcc/$@ $(OBJS) $(EXTRALIBS) -L../../bin/gcc -lgpac $(LDFLAGS)
 
 clean: 
 	rm -f $(OBJS) ../../bin/gcc/$(LIB)

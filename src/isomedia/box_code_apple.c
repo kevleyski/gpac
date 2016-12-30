@@ -181,7 +181,7 @@ GF_Err ListItem_Size(GF_Box *s)
 		ptr->size += ptr->data->size;
 	}
 	/*QT way*/
-	else {
+	else if (ptr->data) {
 		ptr->size += ptr->data->dataSize + 4;
 	}
 	return GF_OK;
@@ -207,6 +207,7 @@ GF_Err data_Read(GF_Box *s,GF_BitStream *bs)
 	e = gf_isom_full_box_read(s, bs);
 	if (e) return e;
 	ptr->reserved = gf_bs_read_int(bs, 32);
+	if (ptr->size < 4) return GF_ISOM_INVALID_FILE;
 	ptr->size -= 4;
 	if (ptr->size) {
 		ptr->dataSize = (u32) ptr->size;

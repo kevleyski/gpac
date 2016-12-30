@@ -450,7 +450,7 @@ static void gather_buffer_level(GF_ObjectManager *odm, GF_ClientService *service
 		if (ch->service != service) continue;
 		if (ch->es_state != GF_ESM_ES_RUNNING) continue;
 		if (com->base.on_channel && (com->base.on_channel != ch)) continue;
-		if (/*!ch->MaxBuffer || */ch->dispatch_after_db || ch->bypass_sl_and_db || ch->IsEndOfStream) continue;
+		if (ch->dispatch_after_db || ch->bypass_sl_and_db || ch->IsEndOfStream) continue;
 
 		//if not in hybrid mode, perform buffer management only on base layer  -this is because we don't signal which ESs are on/off in the underlying service ...
 		if (ch->esd->dependsOnESID) {
@@ -462,6 +462,7 @@ static void gather_buffer_level(GF_ObjectManager *odm, GF_ClientService *service
 
 		if (ch->MaxBuffer>com->buffer.max) com->buffer.max = ch->MaxBuffer;
 		if (ch->MinBuffer<com->buffer.min) com->buffer.min = ch->MinBuffer;
+		if (ch->MaxBufferOccupancy > com->buffer.max) com->buffer.max = ch->MaxBufferOccupancy;
 
 		if (ch->IsClockInit) {
 			s32 buf_time = (s32) (ch->BufferTime / FIX2FLT(ch->clock->speed) );
@@ -476,6 +477,9 @@ static void gather_buffer_level(GF_ObjectManager *odm, GF_ClientService *service
 			} else if ( (u32) buf_time < com->buffer.occupancy ) {
 				com->buffer.occupancy = buf_time;
 			}
+		}
+		if (ch->BufferOn) {
+			com->buffer.buffering = GF_TRUE;
 		}
 	}
 }
@@ -492,6 +496,7 @@ static void term_on_command(GF_ClientService *service, GF_NetworkCommand *com, G
 		GF_ObjectManager *odm;
 		com->buffer.max = 0;
 		com->buffer.min = com->buffer.occupancy = (u32) -1;
+		com->buffer.buffering = GF_FALSE;
 		if (!service->owner) {
 			com->buffer.occupancy = 0;
 			return;
@@ -512,18 +517,20 @@ static void term_on_command(GF_ClientService *service, GF_NetworkCommand *com, G
 		gf_mx_p(scene->mx_resources);
 
 		max_buffer_time=0;
-		if (!gf_list_count(scene->resources))
-			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[ODM] No object manager found for the scene (URL: %s), buffer occupancy will remain unchanged\n", service->url));
-		i=0;
-		while ((odm = (GF_ObjectManager*)gf_list_enum(scene->resources, &i))) {
-			gather_buffer_level(odm, service, com, &max_buffer_time);
+		if (!gf_list_count(scene->resources)) {
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_MEDIA, ("[ODM] No object manager found for the scene (URL: %s), buffer occupancy will remain unchanged\n", service->url));
+		} else {
+			i=0;
+			while ((odm = (GF_ObjectManager*)gf_list_enum(scene->resources, &i))) {
+				gather_buffer_level(odm, service, com, &max_buffer_time);
+			}
 		}
 		gf_mx_v(scene->mx_resources);
 		if (com->buffer.occupancy==(u32) -1) com->buffer.occupancy = 0;
 
-		//in bench mode return the 1 if one of the buffer is full (eg sleep until all buffers are not full), 0 otherwise
+		//in bench mode set occupancy to 0 only if we have less data than max buffer, otherwise wait
 		if (term->bench_mode) {
-			com->buffer.occupancy = (max_buffer_time>com->buffer.max) ? 2 : 0;
+			com->buffer.occupancy = (max_buffer_time < com->buffer.max) ? 0 : 2;
 			com->buffer.max = 1;
 			com->buffer.min = 0;
 		}
@@ -593,9 +600,54 @@ static void term_on_command(GF_ClientService *service, GF_NetworkCommand *com, G
 		}
 		if (scene && scene->is_dynamic_scene) {
 			gf_sc_lock(term->compositor, 1);
-			gf_scene_restart_dynamic(scene, (u64) (com->play.start_range*1000), 0);
+			gf_scene_restart_dynamic(scene, (u64) (com->play.start_range*1000), 0, 0);
 			gf_sc_lock(term->compositor, 0);
 		}
+		return;
+	}
+
+	if (com->command_type == GF_NET_SERVICE_CODEC_STAT_QUERY) {
+		GF_List *od_list;
+		u32 i;
+		GF_ObjectManager *odm;
+
+		com->codec_stat.avg_dec_time = 0;
+		com->codec_stat.max_dec_time = 0;
+		com->codec_stat.irap_avg_dec_time = 0;
+		com->codec_stat.irap_max_dec_time = 0;
+
+		if (!service->owner) return;
+		/*browse all channels in the scene, running on this service, and get codec stat*/
+		od_list = NULL;
+		if (service->owner->subscene) {
+			od_list = service->owner->subscene->resources;
+		} else if (service->owner->parentscene) {
+			od_list = service->owner->parentscene->resources;
+		}
+		if (!od_list) return;
+
+		/*get exclusive access to media scheduler, to make sure ODs are not being manipulated*/
+		i=0;
+		while ((odm = (GF_ObjectManager*)gf_list_enum(od_list, &i))) {
+			u32 avg_dec_time;
+			/*the decoder statistics are reliable only if we decoded at least 1s*/
+			if (!odm->codec || !odm->codec->nb_dec_frames ||
+			        (odm->codec->ck->speed > 0 ? odm->codec->stat_start + 1000 > odm->codec->last_unit_dts : odm->codec->stat_start - 1000 < odm->codec->last_unit_dts))
+				continue;
+			avg_dec_time = (u32) (odm->codec->total_dec_time / odm->codec->nb_dec_frames);
+			if (avg_dec_time > com->codec_stat.avg_dec_time) {
+				com->codec_stat.avg_dec_time = avg_dec_time;
+				com->codec_stat.max_dec_time = odm->codec->max_dec_time;
+				com->codec_stat.irap_avg_dec_time = odm->codec->nb_iframes ? (u32) (odm->codec->total_iframes_time / odm->codec->nb_iframes) : 0;
+				com->codec_stat.irap_max_dec_time = odm->codec->max_iframes_time;
+			}
+			if (odm->codec->codec_reset) {
+				com->codec_stat.codec_reset = GF_TRUE;
+				odm->codec->codec_reset = GF_FALSE;
+			}
+			com->codec_stat.decode_only_rap = odm->codec->decode_only_rap ? GF_TRUE : GF_FALSE;
+		}
+
 		return;
 	}
 
@@ -631,11 +683,11 @@ static void term_on_command(GF_ClientService *service, GF_NetworkCommand *com, G
 			//ignore everything
 		} else {
 			u32 i;
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_SYNC, ("[SyncLayer] ES%d: before mapping: seed TS %d - TS offset %d\n", ch->esd->ESID, ch->seed_ts, ch->ts_offset));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_SYNC, ("[SyncLayer] ES%d: before mapping: seed TS "LLU" - TS offset %u\n", ch->esd->ESID, ch->seed_ts, ch->ts_offset));
 			ch->seed_ts = com->map_time.timestamp;
 			ch->ts_offset = (u32) (com->map_time.media_time*1000);
 			GF_LOG(GF_LOG_INFO, GF_LOG_SYNC, ("[SyncLayer] ES%d: mapping TS "LLD" to media time %f - current time %d\n", ch->esd->ESID, com->map_time.timestamp, com->map_time.media_time, gf_clock_time(ch->clock)));
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_SYNC, ("[SyncLayer] ES%d: after mapping: seed TS %d - TS offset %d\n", ch->esd->ESID, ch->seed_ts, ch->ts_offset));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_SYNC, ("[SyncLayer] ES%d: after mapping: seed TS "LLU" - TS offset %u\n", ch->esd->ESID, ch->seed_ts, ch->ts_offset));
 
 			if (com->map_time.reset_buffers) {
 				gf_es_reset_buffers(ch);
@@ -708,7 +760,7 @@ static void term_on_command(GF_ClientService *service, GF_NetworkCommand *com, G
 	case GF_NET_CHAN_BUFFER:
 		ch->MaxBuffer = com->buffer.max;
 		ch->MinBuffer = com->buffer.min;
-		ch->BufferTime = com->buffer.max * com->buffer.occupancy / 100;
+		ch->BufferTime = com->buffer.occupancy;
 		gf_es_update_buffering(ch, 1);
 		break;
 	default:
@@ -833,10 +885,7 @@ static GF_InputService *gf_term_can_handle_service(GF_Terminal *term, const char
 	if (no_mime_check) {
 		mime_type = NULL;
 	} else {
-		/*fetch a mime type if any. If error don't even attempt to open the service
-		TRYTOFIXME: it would be nice to reuse the downloader created while fetching the mime type, however
-		we don't know if the plugin will want it threaded or not....
-		*/
+		/*fetch a mime type if any. If error don't even attempt to open the service	*/
 		mime_type = get_mime_type(term, sURL, &e, the_session);
 		if (e) {
 			(*ret_code) = e;
@@ -847,6 +896,7 @@ static GF_InputService *gf_term_can_handle_service(GF_Terminal *term, const char
 	if (mime_type &&
 	        (!stricmp(mime_type, "text/plain")
 	         || !stricmp(mime_type, "video/quicktime")
+	         || !stricmp(mime_type, "video/mpeg")
 	         || !stricmp(mime_type, "application/octet-stream")
 	        )
 	   ) {
@@ -1008,6 +1058,10 @@ GF_ClientService *gf_term_service_new(GF_Terminal *term, struct _od_manager *own
 		return NULL;
 	}
 	GF_SAFEALLOC(serv, GF_ClientService);
+	if (!serv) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[Terminal] Failed to allocate network service\n"));
+		return NULL;
+	}
 	serv->term = term;
 	serv->owner = owner;
 	serv->ifce = ifce;
@@ -1257,6 +1311,17 @@ void gf_service_download_update_stats(GF_DownloadSession * sess)
 		gf_term_service_media_event_with_download(serv->owner, GF_EVENT_MEDIA_PROGRESS, bytes_done, total_size, bytes_per_sec);
 		break;
 	case GF_NETIO_DATA_TRANSFERED:
+		/*notify some connection / ...*/
+		if (total_size) {
+			GF_Event evt;
+			evt.type = GF_EVENT_PROGRESS;
+			evt.progress.progress_type = 1;
+			evt.progress.service = szURI;
+			evt.progress.total = total_size;
+			evt.progress.done = total_size;
+			evt.progress.bytes_per_seconds = bytes_per_sec;
+			gf_term_send_event(serv->term, &evt);
+		}
 		gf_term_service_media_event(serv->owner, GF_EVENT_MEDIA_LOAD_DONE);
 		if (serv->owner && !(serv->owner->flags & GF_ODM_DESTROYED) && serv->owner->duration) {
 			GF_Clock *ck = gf_odm_get_media_clock(serv->owner);

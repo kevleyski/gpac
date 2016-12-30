@@ -78,8 +78,11 @@ void gf_term_message_ex(GF_Terminal *term, const char *service, const char *mess
 	evt.message.error = error;
 
 	if (no_filtering) {
-		if (term->user->EventProc)
+		if (term->user->EventProc) {
+			term->nb_calls_in_event_proc++;
 			term->user->EventProc(term->user->opaque, &evt);
+			term->nb_calls_in_event_proc--;
+		}
 	} else {
 		gf_term_send_event(term, &evt);
 	}
@@ -186,7 +189,7 @@ static Bool term_script_action(void *opaque, u32 type, GF_Node *n, GF_JSAPIParam
 			if (ck) {
 				Bool is_paused = ck->Paused;
 				if (is_paused) gf_clock_resume(ck);
-				gf_scene_restart_dynamic(scene, 0, 0);
+				gf_scene_restart_dynamic(scene, 0, 0, 0);
 				if (is_paused) gf_clock_pause(ck);
 			}
 			return 1;
@@ -236,9 +239,9 @@ static Bool term_find_res(GF_TermLocales *loc, char *parent, char *path, char *r
 	loc->szAbsRelocatedPath = gf_url_concatenate(parent, path);
 	if (!loc->szAbsRelocatedPath) loc->szAbsRelocatedPath = gf_strdup(path);
 
-	f = gf_f64_open(loc->szAbsRelocatedPath, "rb");
+	f = gf_fopen(loc->szAbsRelocatedPath, "rb");
 	if (f) {
-		fclose(f);
+		gf_fclose(f);
 		strcpy(localized_rel_path, path);
 		strcpy(relocated_path, loc->szAbsRelocatedPath);
 		return 1;
@@ -350,6 +353,14 @@ static void gf_term_reload_cfg(GF_Terminal *term)
 	}
 	term->frame_duration = atoi(sOpt);
 
+	sOpt = gf_cfg_get_key(term->user->config, "Network", "LowLatencyBufferMax");
+	if (!sOpt) {
+		sOpt = "500";
+		gf_cfg_set_key(term->user->config, "Network", "LowLatencyBufferMax", sOpt);
+	}
+	term->low_latency_buffer_max = atoi(sOpt);
+
+
 	if (!(term->user->init_flags & GF_TERM_NO_DECODER_THREAD) ) {
 		prio = GF_THREAD_PRIORITY_NORMAL;
 		sOpt = gf_cfg_get_key(term->user->config, "Systems", "Priority");
@@ -413,6 +424,55 @@ static Bool gf_term_get_user_pass(void *usr_cbk, const char *site_url, char *usr
 	return gf_term_send_event(term, &evt);
 }
 
+static GF_Err gf_term_step_clocks_intern(GF_Terminal * term, u32 ms_diff, Bool force_resume_pause)
+{
+	/*only play/pause if connected*/
+	if (!term || !term->root_scene || !term->root_scene->root_od) return GF_BAD_PARAM;
+
+	if (ms_diff) {
+		u32 i, j;
+		GF_ClientService *ns;
+		GF_Clock *ck;
+
+		if (term->play_state == GF_STATE_PLAYING) return GF_BAD_PARAM;
+
+		gf_sc_lock(term->compositor, 1);
+		i = 0;
+		while ((ns = (GF_ClientService*)gf_list_enum(term->net_services, &i))) {
+			j = 0;
+			while ((ck = (GF_Clock *)gf_list_enum(ns->Clocks, &j))) {
+				ck->init_time += ms_diff;
+				ck->media_time_at_init += ms_diff;
+				//make sure we don't touch clock while doing resume/pause below
+				if (force_resume_pause)
+					ck->Paused++;
+			}
+		}
+		term->compositor->step_mode = GF_TRUE;
+		gf_sc_next_frame_state(term->compositor, GF_SC_DRAW_FRAME);
+
+		//resume/pause to trigger codecs state change 
+		if (force_resume_pause) {
+			mediacontrol_resume(term->root_scene->root_od, 0);
+			mediacontrol_pause(term->root_scene->root_od);
+
+			//release our safety
+			i = 0;
+			while ((ns = (GF_ClientService*)gf_list_enum(term->net_services, &i))) {
+				j = 0;
+				while ((ck = (GF_Clock *)gf_list_enum(ns->Clocks, &j))) {
+					ck->Paused--;
+				}
+			}
+		}
+
+		gf_sc_lock(term->compositor, 0);
+
+	}
+
+	gf_sc_flush_next_audio(term->compositor);
+	return GF_OK;
+}
 
 static void gf_term_set_play_state(GF_Terminal *term, u32 PlayState, Bool reset_audio, Bool pause_clocks)
 {
@@ -451,9 +511,7 @@ static void gf_term_set_play_state(GF_Terminal *term, u32 PlayState, Bool reset_
 		} else {
 			u32 diff=1;
 			if (term->compositor->ms_until_next_frame>0) diff = term->compositor->ms_until_next_frame;
-			gf_term_step_clocks(term, diff);
-			mediacontrol_resume(term->root_scene->root_od, 0);
-			mediacontrol_pause(term->root_scene->root_od);
+			gf_term_step_clocks_intern(term, diff, GF_TRUE);
 		}
 		return;
 	}
@@ -461,6 +519,9 @@ static void gf_term_set_play_state(GF_Terminal *term, u32 PlayState, Bool reset_
 	/* nothing to change*/
 	if (term->play_state == PlayState) return;
 	term->play_state = PlayState;
+
+	if (term->root_scene->first_frame_pause_type && (PlayState == GF_STATE_PLAYING))
+		term->root_scene->first_frame_pause_type = 0;
 
 	if (!pause_clocks) return;
 
@@ -472,7 +533,7 @@ static void gf_term_set_play_state(GF_Terminal *term, u32 PlayState, Bool reset_
 
 }
 
-static void gf_term_connect_from_time_ex(GF_Terminal * term, const char *URL, u64 startTime, Bool pause_at_first_frame, Bool secondary_scene, const char *parent_path)
+static void gf_term_connect_from_time_ex(GF_Terminal * term, const char *URL, u64 startTime, u32 pause_at_first_frame, Bool secondary_scene, const char *parent_path)
 {
 	GF_Scene *scene;
 	GF_ObjectManager *odm;
@@ -509,8 +570,10 @@ static void gf_term_connect_from_time_ex(GF_Terminal * term, const char *URL, u6
 
 	odm->media_start_time = startTime;
 	/*render first visual frame and pause*/
-	if (pause_at_first_frame)
+	if (pause_at_first_frame) {
 		gf_term_set_play_state(term, GF_STATE_STEP_PAUSE, 0, 0);
+		scene->first_frame_pause_type = pause_at_first_frame;
+	}
 
 	if (!strnicmp(URL, "views://", 8)) {
 		odm->OD = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
@@ -546,9 +609,9 @@ void gf_term_refresh_cache(GF_Config *cfg)
 
 		force_delete = 0;
 		if (file) {
-			FILE *t = gf_f64_open(file, "r");
+			FILE *t = gf_fopen(file, "r");
 			if (!t) force_delete = 1;
-			else fclose(t);
+			else gf_fclose(t);
 		}
 		sscanf(opt, "%u", &exp);
 		gf_net_get_ntp(&sec, &frac);
@@ -569,8 +632,7 @@ Bool gf_term_is_type_supported(GF_Terminal *term, const char* mime)
 {
 	if (mime) {
 		/* TODO: handle codecs and params */
-		const char *sPlug;
-		sPlug = gf_cfg_get_key(term->user->config, "MimeTypes", mime);
+		const char *sPlug = gf_cfg_get_key(term->user->config, "MimeTypes", mime);
 		if (sPlug) {
 			return 1;
 		} else {
@@ -600,7 +662,7 @@ GF_Terminal *gf_term_new(GF_User *user)
 	memset(tmp, 0, sizeof(GF_Terminal));
 
 	/*just for safety*/
-	gf_sys_init(GF_FALSE);
+	gf_sys_init(GF_MemTrackerNone);
 
 	tmp->user = user;
 
@@ -821,7 +883,7 @@ GF_Err gf_term_del(GF_Terminal * term)
 #ifndef GPAC_DISABLE_SCENE_DUMP
 		if (term->dcci_doc->modified) {
 			char *pref_file = (char *)gf_cfg_get_key(term->user->config, "General", "EnvironmentFile");
-			GF_SceneDumper *dumper = gf_sm_dumper_new(term->dcci_doc, pref_file, ' ', GF_SM_DUMP_AUTO_XML);
+			GF_SceneDumper *dumper = gf_sm_dumper_new(term->dcci_doc, pref_file, GF_FALSE, ' ', GF_SM_DUMP_AUTO_XML);
 			if (!dumper) return GF_IO_ERR;
 			e = gf_sm_dump_graph(dumper, 1, 0);
 			gf_sm_dumper_del(dumper);
@@ -840,35 +902,11 @@ GF_Err gf_term_del(GF_Terminal * term)
 GF_EXPORT
 GF_Err gf_term_step_clocks(GF_Terminal * term, u32 ms_diff)
 {
-	u32 i, j;
-	GF_ClientService *ns;
-	/*only play/pause if connected*/
-	if (!term || !term->root_scene || !term->root_scene->root_od) return GF_BAD_PARAM;
+	return gf_term_step_clocks_intern(term, ms_diff, GF_FALSE);
 
-	if (ms_diff) {
-		if (term->play_state == GF_STATE_PLAYING) return GF_BAD_PARAM;
-
-		gf_sc_lock(term->compositor, 1);
-		i=0;
-		while ( (ns = (GF_ClientService*)gf_list_enum(term->net_services, &i)) ) {
-			GF_Clock *ck;
-			j=0;
-			while ( (ck = (GF_Clock *)gf_list_enum(ns->Clocks, &j)) ) {
-				ck->init_time += ms_diff;
-			}
-		}
-		term->compositor->step_mode = 1;
-
-		gf_sc_next_frame_state(term->compositor, GF_SC_DRAW_FRAME);
-		gf_sc_lock(term->compositor, 0);
-	}
-
-	gf_sc_flush_next_audio(term->compositor);
-	return GF_OK;
 }
-
 GF_EXPORT
-void gf_term_connect_from_time(GF_Terminal * term, const char *URL, u64 startTime, Bool pause_at_first_frame)
+void gf_term_connect_from_time(GF_Terminal * term, const char *URL, u64 startTime, u32 pause_at_first_frame)
 {
 	gf_term_connect_from_time_ex(term, URL, startTime, pause_at_first_frame, 0, NULL);
 }
@@ -889,7 +927,15 @@ GF_EXPORT
 void gf_term_disconnect(GF_Terminal *term)
 {
 	Bool handle_services;
-	if (!term->root_scene) return;
+	if (!term || !term->root_scene) return;
+
+	if (term->nb_calls_in_event_proc) {
+		if (!term->disconnect_request_status)
+			term->disconnect_request_status = 1;
+
+		return;
+	}
+
 	/*resume*/
 	if (term->play_state != GF_STATE_PLAYING) gf_term_set_play_state(term, GF_STATE_PLAYING, 1, 1);
 
@@ -971,7 +1017,11 @@ GF_Err gf_term_set_option(GF_Terminal * term, u32 type, u32 value)
 		return GF_OK;
 	case GF_OPT_VIDEO_BENCH:
 		term->bench_mode = value;
-	//fallthrough
+		return gf_sc_set_option(term->compositor, type, value);
+	case GF_OPT_MULTIVIEW_MODE:
+		term->compositor->multiview_mode = value;
+		return gf_sc_set_option(term->compositor, type, value);
+
 	default:
 		return gf_sc_set_option(term->compositor, type, value);
 	}
@@ -998,7 +1048,7 @@ Double gf_term_get_simulation_frame_rate(GF_Terminal *term, u32 *nb_frames_drawn
 
 u32 gf_term_check_end_of_scene(GF_Terminal *term, Bool skip_interactions)
 {
-	if (!term->root_scene) return 1;
+	if (!term->root_scene || !term->root_scene->root_od || !term->root_scene->root_od->net_service) return 1;
 	if (!skip_interactions) {
 		/*if input sensors consider the scene runs forever*/
 		if (gf_list_count(term->input_streams)) return 0;
@@ -1050,7 +1100,8 @@ u32 gf_term_get_option(GF_Terminal * term, u32 type)
 		return gf_dm_get_data_rate(term->downloader);
 	case GF_OPT_VIDEO_BENCH:
 		return term->bench_mode ? GF_TRUE : GF_FALSE;
-
+	case GF_OPT_ORIENTATION_SENSORS_ACTIVE:
+		return term->orientation_sensors_active;
 	default:
 		return gf_sc_get_option(term->compositor, type);
 	}
@@ -1084,6 +1135,15 @@ typedef struct
 void gf_term_handle_services(GF_Terminal *term)
 {
 	GF_ClientService *ns;
+
+
+	if (term->disconnect_request_status == 1) {
+		term->disconnect_request_status = 2;
+		term->thread_id_handling_services = gf_th_id();
+		gf_term_disconnect(term);
+		return;
+	}
+
 
 	/*we could run into a deadlock if some thread has requested opening of a URL. If we cannot
 	grab the media queue now, we'll do our management at the next cycle*/
@@ -1397,6 +1457,8 @@ void gf_term_service_media_event_with_download(GF_ObjectManager *odm, GF_EventTy
 
 	min_time = min_buffer = (u32) -1;
 	scene = odm->subscene ? odm->subscene : odm->parentscene;
+	if (!scene) return;
+	
 	/*get buffering on root OD*/
 	media_event_collect_info(odm->net_service, scene->root_od, &evt.media_event, &min_time, &min_buffer);
 	gf_mx_p(scene->mx_resources);
@@ -1445,7 +1507,6 @@ Bool gf_term_relocate_url(GF_Terminal *term, const char *service_url, const char
 {
 	u32 i, count;
 
-	i=0;
 	count = gf_list_count(term->uri_relocators);
 	for (i=0; i<count; i++) {
 		Bool result;
@@ -1463,6 +1524,10 @@ void gf_term_post_connect_object(GF_Terminal *term, GF_ObjectManager *odm, char 
 {
 	GF_TermConnectObject *connect;
 	GF_SAFEALLOC(connect, GF_TermConnectObject);
+	if (!connect) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[Terminal] Failed to allocate media connection task\n"));
+		return;
+	}
 	connect->odm = odm;
 	connect->service_url = gf_strdup(serviceURL);
 	connect->parent_url = parent_url ? gf_strdup(parent_url) : NULL;
@@ -1534,7 +1599,6 @@ static void gf_term_connect_object(GF_Terminal *term, GF_ObjectManager *odm, cha
 		if (gf_term_service_can_handle_url(ns, serviceURL)) {
 			if (net_locked) {
 				gf_term_lock_net(term, 0);
-				net_locked = 0;
 			}
 
 			/*wait for service to setup - service may become destroyed if not available*/
@@ -1543,13 +1607,11 @@ static void gf_term_connect_object(GF_Terminal *term, GF_ObjectManager *odm, cha
 				if (!ns->owner) {
 					if (net_locked) {
 						gf_term_lock_net(term, 0);
-						net_locked = 0;
 					}
 					return;
 				}
 				if (net_locked) {
 					gf_term_lock_net(term, 0);
-					net_locked = 0;
 				}
 
 				if (ns->owner->OD) break;
@@ -1663,7 +1725,7 @@ u32 gf_term_play_from_time(GF_Terminal *term, u64 from_time, u32 pause_at_first_
 			gf_term_set_play_state(term, GF_STATE_STEP_PAUSE, 0, 0);
 
 		gf_sc_lock(term->compositor, 1);
-		gf_scene_restart_dynamic(term->root_scene, from_time, 0);
+		gf_scene_restart_dynamic(term->root_scene, from_time, 0, 0);
 		gf_sc_lock(term->compositor, 0);
 		return 2;
 	}
@@ -1709,8 +1771,21 @@ u32 gf_term_get_time_in_ms(GF_Terminal *term)
 	ck = NULL;
 	if (term->root_scene->scene_codec && term->root_scene->scene_codec->ck) ck = term->root_scene->scene_codec->ck;
 	else if (term->root_scene->dyn_ck) ck = term->root_scene->dyn_ck;
-
+	if (!ck) return 0;
 	return gf_clock_media_time(ck);
+}
+
+GF_EXPORT
+u32 gf_term_get_elapsed_time_in_ms(GF_Terminal *term)
+{
+	GF_Clock *ck;
+	if (!term || !term->root_scene) return 0;
+	ck = NULL;
+	if (term->root_scene->scene_codec && term->root_scene->scene_codec->ck) ck = term->root_scene->scene_codec->ck;
+	else if (term->root_scene->dyn_ck) ck = term->root_scene->dyn_ck;
+	if (!ck) return 0;
+
+	return gf_clock_elapsed_time(ck);
 }
 
 GF_Node *gf_term_pick_node(GF_Terminal *term, s32 X, s32 Y)
@@ -1803,6 +1878,11 @@ void gf_term_attach_service(GF_Terminal *term, GF_InputService *service_hdl)
 	odm->term = term;
 
 	GF_SAFEALLOC(odm->net_service , GF_ClientService);
+	if (!odm->net_service) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_MEDIA, ("[Terminal] Failed to allocate network service\n"));
+		gf_term_lock_net(term, 0);
+		return;
+	}
 	odm->net_service->term = term;
 	odm->net_service->owner = odm;
 	odm->net_service->ifce = service_hdl;
@@ -1831,7 +1911,7 @@ GF_Err gf_term_scene_update(GF_Terminal *term, char *type, char *com)
 	u32 i, tag;
 	GF_SceneLoader load;
 
-	if (!term) return GF_BAD_PARAM;
+	if (!term || !com) return GF_BAD_PARAM;
 
 	if (type && (!stricmp(type, "application/ecmascript") || !stricmp(type, "js")) )  {
 		return gf_scene_execute_script(term->root_scene->graph, com);
@@ -2002,7 +2082,7 @@ GF_Err gf_term_paste_text(GF_Terminal *term, const char *txt, Bool probe_only)
 GF_EXPORT
 Bool gf_term_forward_event(GF_Terminal *term, GF_Event *evt, Bool consumed, Bool forward_only)
 {
-	if (!term) return 0;
+	if (!term) return GF_FALSE;
 
 	if (term->event_filters) {
 		GF_TermEventFilter *ef;
@@ -2014,16 +2094,21 @@ Bool gf_term_forward_event(GF_Terminal *term, GF_Event *evt, Bool consumed, Bool
 		while ((ef=gf_list_enum(term->event_filters, &i))) {
 			if (ef->on_event(ef->udta, evt, consumed)) {
 				term->in_event_filter --;
-				return 1;
+				return GF_TRUE;
 			}
 		}
 		term->in_event_filter --;
 	}
 
-	if (!forward_only && !consumed && term->user->EventProc)
-		return term->user->EventProc(term->user->opaque, evt);
+	if (!forward_only && !consumed && term->user->EventProc) {
+		Bool res;
+		term->nb_calls_in_event_proc++;
+		res = term->user->EventProc(term->user->opaque, evt);
+		term->nb_calls_in_event_proc--;
+		return res;
+	}
 
-	return 0;
+	return GF_FALSE;
 }
 
 GF_EXPORT
@@ -2105,7 +2190,7 @@ static void set_clocks_speed(GF_Terminal *term, Fixed ratio)
 }
 
 GF_EXPORT
-void gf_term_set_speed(GF_Terminal *term, Fixed speed)
+GF_Err gf_term_set_speed(GF_Terminal *term, Fixed speed)
 {
 	Double fps;
 	u32 i, j;
@@ -2114,9 +2199,23 @@ void gf_term_set_speed(GF_Terminal *term, Fixed speed)
 	Bool restart = 0;
 	u32 scene_time = gf_term_get_time_in_ms(term);
 
-	if (!speed) return;
+	if (!speed) return GF_BAD_PARAM;
 
-	/*adjust all clocks on all services*/
+	if (speed<0) {
+		i=0;
+		while ( (ns = (GF_ClientService*)gf_list_enum(term->net_services, &i)) ) {
+			GF_NetworkCommand com;
+			GF_Err e;
+			memset(&com, 0, sizeof(GF_NetworkCommand));
+			com.base.command_type = GF_NET_SERVICE_CAN_REVERSE_PLAYBACK;
+			e = gf_term_service_command(ns, &com);
+			if (e != GF_OK) {
+				return e;
+			}
+		}
+	}
+
+	/*adjust all clocks on all services, if possible*/
 	i=0;
 	while ( (ns = (GF_ClientService*)gf_list_enum(term->net_services, &i)) ) {
 		GF_Clock *ck;
@@ -2124,7 +2223,8 @@ void gf_term_set_speed(GF_Terminal *term, Fixed speed)
 		j=0;
 		while ( (ck = (GF_Clock *)gf_list_enum(ns->Clocks, &j)) ) {
 			//we will have to reissue a PLAY command since playback direction changed
-			if ( gf_mulfix(ck->speed,speed) < 0) restart = 1;
+			if ( gf_mulfix(ck->speed,speed) < 0)
+				restart = 1;
 			gf_clock_set_speed(ck, speed);
 
 			if (ns->owner) {
@@ -2143,7 +2243,7 @@ void gf_term_set_speed(GF_Terminal *term, Fixed speed)
 
 	if (restart) {
 		if (term->root_scene->is_dynamic_scene) {
-			gf_scene_restart_dynamic(term->root_scene, scene_time, 0);
+			gf_scene_restart_dynamic(term->root_scene, scene_time, 0, 0);
 		} else {
 		}
 	}
@@ -2162,6 +2262,8 @@ void gf_term_set_speed(GF_Terminal *term, Fixed speed)
 	fps *= FIX2FLT(speed);
 	if (fps>100) fps = 1000;
 	gf_sc_set_fps(term->compositor, fps);
+
+	return GF_OK;
 }
 
 GF_EXPORT
@@ -2401,6 +2503,13 @@ void gf_scene_switch_quality(GF_Scene *scene, Bool up)
 			odm->net_service->ifce->ServiceCommand(odm->net_service->ifce, &net_cmd);
 		if (odm->subscene)
 			gf_scene_switch_quality(odm->subscene, up);
+
+		if (odm->scalable_addon) {
+			if (up)
+				gf_odm_start(odm, 0);
+			else
+				gf_odm_stop(odm, GF_FALSE);
+		}
 	}
 }
 

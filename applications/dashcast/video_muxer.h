@@ -36,7 +36,6 @@
 
 #include "video_scaler.h"
 
-
 typedef enum {
 	FFMPEG_VIDEO_MUXER,
 	RAW_VIDEO_H264,
@@ -61,8 +60,11 @@ typedef struct {
 
 	FILE *file;
 
+#ifndef GPAC_DISABLE_ISOM
 	GF_ISOFile *isof;
 	GF_ISOSample *sample;
+#endif
+
 	u32 trackID;
 	/* Index of the video stream in the file */
 	int vstream_idx;
@@ -80,7 +82,8 @@ typedef struct {
 	int seg_dur;
 	int frag_dur;
 
-	u64 first_dts;
+	u64 first_dts_in_fragment;
+	u64 ntp_at_first_dts;
 
 	u32 seg_marker;
 
@@ -89,12 +92,15 @@ typedef struct {
 
 	Bool use_source_timing;
 
-	u64 pts_at_segment_start;
+	u64 pts_at_segment_start, pts_at_first_segment;
 	u64 last_pts, last_dts;
 	u64 frame_dur;
 	u32 timescale;
+	u32 nb_segments;
 	Bool fragment_started, segment_started;
 	const char *rep_id;
+
+	u64 frame_ntp, frame_utc;
 } VideoOutputFile;
 
 int dc_video_muxer_init(VideoOutputFile *video_output_file, VideoDataConf *video_data_conf, VideoMuxerType muxer_type, int frame_per_segment, int frame_per_fragment, u32 seg_marker, int gdr, int seg_dur, int frag_dur, int frame_dur, int gop_size, int video_cb_size);
@@ -103,7 +109,7 @@ int dc_video_muxer_free(VideoOutputFile *video_output_file);
 
 int dc_video_muxer_open(VideoOutputFile *video_output_file, char *directory, char *id_name, int seg);
 
-int dc_video_muxer_write(VideoOutputFile *video_output_file, int frame_nb, Bool insert_utc);
+int dc_video_muxer_write(VideoOutputFile *video_output_file, int frame_nb, Bool insert_ntp_timestamp);
 
 int dc_video_muxer_close(VideoOutputFile *video_output_file);
 

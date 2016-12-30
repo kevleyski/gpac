@@ -301,6 +301,10 @@ void compositor_init_viewport(GF_Compositor *compositor, GF_Node *node)
 {
 	ViewStack *ptr;
 	GF_SAFEALLOC(ptr, ViewStack);
+	if (!ptr) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate viewport stack\n"));
+		return;
+	}
 
 	ptr->reg_stacks = gf_list_new();
 
@@ -401,6 +405,10 @@ void compositor_init_viewpoint(GF_Compositor *compositor, GF_Node *node)
 {
 	ViewStack *st;
 	GF_SAFEALLOC(st, ViewStack);
+	if (!st) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate viewpoint stack\n"));
+		return;
+	}
 
 	st->reg_stacks = gf_list_new();
 	gf_mx_init(st->world_view_mx);
@@ -422,6 +430,7 @@ static void TraverseNavigationInfo(GF_Node *node, void *rs, Bool is_destroy)
 {
 	u32 i;
 #ifndef GPAC_DISABLE_3D
+	u32 nb_select_mode;
 	SFVec3f start, end;
 	Fixed scale;
 	ViewStack *st = (ViewStack *) gf_node_get_private(node);
@@ -474,18 +483,25 @@ static void TraverseNavigationInfo(GF_Node *node, void *rs, Bool is_destroy)
 	if (!gf_node_dirty_get(node)) return;
 	gf_node_dirty_clear(node, 0);
 
+	nb_select_mode = 0;
 	tr_state->camera->navigation_flags = 0;
 	tr_state->camera->navigate_mode = 0;
 	for (i=0; i<ni->type.count; i++) {
 		if (ni->type.vals[i] && !stricmp(ni->type.vals[i], "ANY")) tr_state->camera->navigation_flags |= NAV_ANY;
+		else {
+			nb_select_mode++;
+		}
+
 		if (!tr_state->camera->navigate_mode) {
 			if (ni->type.vals[i] && !stricmp(ni->type.vals[i], "NONE")) tr_state->camera->navigate_mode = GF_NAVIGATE_NONE;
 			else if (ni->type.vals[i] && !stricmp(ni->type.vals[i], "WALK")) tr_state->camera->navigate_mode = GF_NAVIGATE_WALK;
 			else if (ni->type.vals[i] && !stricmp(ni->type.vals[i], "EXAMINE")) tr_state->camera->navigate_mode = GF_NAVIGATE_EXAMINE;
 			else if (ni->type.vals[i] && !stricmp(ni->type.vals[i], "FLY")) tr_state->camera->navigate_mode = GF_NAVIGATE_FLY;
-			else if (ni->type.vals[i] && !stricmp(ni->type.vals[i], "QTVR")) tr_state->camera->navigate_mode = GF_NAVIGATE_VR;
+			else if (ni->type.vals[i] && !stricmp(ni->type.vals[i], "VR")) tr_state->camera->navigate_mode = GF_NAVIGATE_VR;
 		}
 	}
+	if (nb_select_mode>1) tr_state->camera->navigation_flags |= NAV_SELECTABLE;
+
 	if (ni->headlight) tr_state->camera->navigation_flags |= NAV_HEADLIGHT;
 
 	start.x = start.y = start.z = 0;
@@ -519,6 +535,10 @@ void compositor_init_navigation_info(GF_Compositor *compositor, GF_Node *node)
 {
 	ViewStack *st;
 	GF_SAFEALLOC(st, ViewStack);
+	if (!st) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate navigation stack\n"));
+		return;
+	}
 
 	st->reg_stacks = gf_list_new();
 	gf_node_set_private(node, st);
@@ -601,6 +621,10 @@ void compositor_init_fog(GF_Compositor *compositor, GF_Node *node)
 {
 	ViewStack *st;
 	GF_SAFEALLOC(st, ViewStack);
+	if (!st) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_COMPOSE, ("[Compositor] Failed to allocate fog stack\n"));
+		return;
+	}
 
 	st->reg_stacks = gf_list_new();
 	gf_node_set_private(node, st);
