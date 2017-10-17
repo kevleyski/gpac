@@ -210,7 +210,8 @@ struct _scene
 	/*URLs of current video, audio and subs (we can't store objects since they may be destroyed when seeking)*/
 	SFURL visual_url, audio_url, text_url, dims_url;
 
-	Bool is_srd, is_tiled_srd;
+	Bool is_tiled_srd;
+	u32 srd_type;
 	s32 srd_min_x, srd_max_x, srd_min_y, srd_max_y;
 
 
@@ -247,6 +248,8 @@ struct _scene
 	//0: no pause - 1: paused and trigger pause command to net, 2: only clocks are paused but commands not sent
 	u32 first_frame_pause_type;
 	u32 vr_type;
+
+	Bool has_splicing_addons;
 };
 
 GF_Scene *gf_scene_new(GF_Scene *parentScene);
@@ -300,6 +303,7 @@ GF_Node *gf_scene_get_subscene_root(GF_Node *inline_node);
 
 void gf_scene_select_main_addon(GF_Scene *scene, GF_ObjectManager *odm, Bool set_on, u32 current_clock_time);
 void gf_scene_reset_addons(GF_Scene *scene);
+void gf_scene_reset_addon(GF_AddonMedia *addon, Bool disconnect);
 
 #ifndef GPAC_DISABLE_VRML
 
@@ -477,6 +481,8 @@ struct _tag_terminal
 	u32 disconnect_request_status;
 	
 	Bool orientation_sensors_active;
+	//set when compositor uses step mode, in order to drop frames even when the clock is paused
+	Bool use_step_mode;
 };
 
 
@@ -868,6 +874,8 @@ struct _generic_codec
 	/*base process routine*/
 	GF_Err (*process)(GF_Codec *codec, u32 TimeAvailable);
 
+	GF_List *blacklisted;
+
 	/*composition memory for media streams*/
 	struct _composition_memory *CB;
 	/*input media channles*/
@@ -931,8 +939,9 @@ struct _generic_codec
 
 	/*signals that CB should be resized to this value once all units in CB has been consumed (codec config change)*/
 	u32 force_cb_resize;
-	
+	u32 profile_level;
 	Bool hybrid_layered_coded;
+	Bool in_splice, coding_config_changed;
 };
 
 GF_Codec *gf_codec_new(GF_ObjectManager *odm, GF_ESD *base_layer, s32 PL, GF_Err *e);
@@ -949,6 +958,7 @@ instance when loading a BT with an animation stream*/
 GF_Codec *gf_codec_use_codec(GF_Codec *codec, GF_ObjectManager *odm);
 
 GF_Err gf_codec_resize_composition_buffer(GF_Codec *dec, u32 NewSize);
+GF_Err gf_codec_change_decoder(GF_Codec *codec, GF_ESD *for_esd, Bool do_blacklist);
 
 /*OD manager*/
 
@@ -998,6 +1008,7 @@ enum
 	GF_ODM_STATE_PLAY,
 	GF_ODM_STATE_IN_SETUP,
 	GF_ODM_STATE_BLOCKED,
+	GF_ODM_STATE_STOP_NO_NET,
 };
 
 enum
@@ -1008,6 +1019,7 @@ enum
 	GF_ODM_ACTION_SCENE_DISCONNECT,
 	GF_ODM_ACTION_SCENE_RECONNECT,
 	GF_ODM_ACTION_SCENE_INLINE_RESTART,
+	GF_ODM_ACTION_SETUP
 };
 
 struct _od_manager
@@ -1065,6 +1077,7 @@ struct _od_manager
 	u32 action_type;
 
 	Fixed set_speed;
+	Bool disable_buffer_at_next_play;
 
 //	u32 raw_media_frame_pending;
 	GF_Semaphore *raw_frame_sema;
@@ -1080,6 +1093,8 @@ struct _od_manager
 
 	//only set on root OD of addon subscene, which gather all the hybrid resources
 	GF_AddonMedia *addon;
+	//set for objects splicing the main content, indicates the media type (usually in @codec but no codec created for splicing)
+	u32 splice_addon_mtype;
 	//set to true if this is a scalable addon for an existing object
 	Bool scalable_addon;
 
@@ -1144,6 +1159,8 @@ void gf_odm_signal_eos(GF_ObjectManager *odm);
 
 void gf_odm_reset_media_control(GF_ObjectManager *odm, Bool signal_reset);
 
+void gf_odm_setup_task(GF_ObjectManager *odm);
+
 /*GF_MediaObject: link between real object manager and scene. although there is a one-to-one mapping between a
 MediaObject and an ObjectManager, we have to keep them separated in order to handle OD remove commands which destroy
 ObjectManagers. */
@@ -1194,7 +1211,7 @@ struct _mediaobj
 	u32 width, height, stride, pixel_ar, pixelformat;
 	Bool is_flipped;
 	u32 sample_rate, num_channels, bits_per_sample, channel_config;
-	u32 srd_x, srd_y, srd_w, srd_h;
+	u32 srd_x, srd_y, srd_w, srd_h, srd_full_w, srd_full_h;
 	
 	u32 quality_degradation_hint;
 	u32 nb_views;
@@ -1230,6 +1247,7 @@ void gf_term_service_media_event_with_download(GF_ObjectManager *odm, GF_EventTy
 u32 gf_mo_get_od_id(MFURL *url);
 
 void gf_scene_generate_views(GF_Scene *scene, char *url, char *parent_url);
+void gf_scene_generate_mosaic(GF_Scene *scene, char *url, char *parent_path);
 //sets pos and size of addon
 //	size is 1/2 height (0), 1/3 (1) or 1/4 (2)
 //	pos is bottom-left(0), top-left (1) bottom-right (2) or top-right (3)
@@ -1258,6 +1276,8 @@ enum
 	GF_ADDON_TYPE_SCALABLE,
 	//multiview reconstruction - reassembly after the decoder(s)
 	GF_ADDON_TYPE_MULTIVIEW,
+	//addon used for temporary splicing
+	GF_ADDON_TYPE_SPLICED,
 };
 
 struct _gf_addon_media
@@ -1285,6 +1305,13 @@ struct _gf_addon_media
 	Bool loop_detected;
 
 	u32 addon_type;
+
+	Double splice_start, splice_end;
+	u32 is_over;
+	Bool splice_in_pts;
+	u32 nb_splicing;
+	Bool min_dts_set;
+	u64 splice_min_dts;
 };
 
 void gf_scene_toggle_addons(GF_Scene *scene, Bool show_addons);

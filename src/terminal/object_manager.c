@@ -265,6 +265,13 @@ void gf_odm_disconnect(GF_ObjectManager *odm, u32 do_remove)
 	/*delete from the parent scene.*/
 	if (odm->parentscene) {
 		GF_Event evt;
+
+		if (odm->addon) {
+			gf_list_del_item(odm->parentscene->declared_addons, odm->addon);
+			gf_scene_reset_addon(odm->addon, GF_FALSE);
+			odm->addon = NULL;
+		}
+
 		evt.type = GF_EVENT_CONNECT;
 		evt.connect.is_connected = GF_FALSE;
 		gf_term_forward_event(odm->term, &evt, GF_FALSE, GF_TRUE);
@@ -319,7 +326,7 @@ void gf_odm_setup_entry_point(GF_ObjectManager *odm, const char *service_sub_url
 
 	if (odm->subscene) {
 		char *sep = strchr(sub_url, '#');
-		if (sep && !strnicmp(sep, "#LIVE360", 8)) {
+		if (sep && ( !strnicmp(sep, "#LIVE360", 8) || !strnicmp(sep, "#360", 4) || !strnicmp(sep, "#VR", 3) ) ) {
 			sep[0] = 0;
 			odm->subscene->vr_type = 1;
 		}
@@ -415,6 +422,9 @@ void gf_odm_setup_entry_point(GF_ObjectManager *odm, const char *service_sub_url
 
 	if (redirect_url && !strnicmp(redirect_url, "views://", 8)) {
 		gf_scene_generate_views(odm->subscene ? odm->subscene : odm->parentscene , (char *) redirect_url + 8, (char*)odm->parentscene ? odm->parentscene->root_od->net_service->url : NULL);
+	}
+	else if (redirect_url && !strnicmp(redirect_url, "mosaic://", 9)) {
+		gf_scene_generate_mosaic(odm->subscene ? odm->subscene : odm->parentscene , (char *) redirect_url + 9, (char*)odm->parentscene ? odm->parentscene->root_od->net_service->url : NULL);
 	}
 	/*it may happen that this object was inserted in a dynamic scene from a service through a URL redirect. In which case,
 	the scene regeneration might not have been completed since the redirection was not done yet - force a scene regenerate*/
@@ -721,6 +731,8 @@ void gf_odm_setup_object(GF_ObjectManager *odm, GF_ClientService *serv)
 		}
 		parent_url = parent ? parent->url : NULL;
 		if (parent_url && !strnicmp(parent_url, "views://", 8))
+			parent_url = NULL;
+		else if (parent_url && !strnicmp(parent_url, "mosaic://", 9))
 			parent_url = NULL;
 
 		gf_term_post_connect_object(odm->term, odm, url, parent_url);
@@ -1559,7 +1571,7 @@ void gf_odm_play(GF_ObjectManager *odm)
 	MediaControlStack *ctrl;
 #endif
 	GF_Clock *parent_ck = NULL;
-
+	
 	if (odm->codec && odm->codec->CB && !(odm->flags & GF_ODM_PREFETCH)) {
 		/*reset*/
 		gf_cm_set_status(odm->codec->CB, CB_STOP);
@@ -1679,7 +1691,7 @@ void gf_odm_play(GF_ObjectManager *odm)
 #ifndef GPAC_DISABLE_VRML
 		ctrl = parent_ck ? parent_ck->mc : gf_odm_get_mediacontrol(odm);
 		/*override range and speed with MC*/
-		if (ctrl) {
+		if (ctrl && !odm->disable_buffer_at_next_play) {
 			//for addon, use current clock settings (media control is ignored)
 			if (!odm->parentscene || !odm->parentscene->root_od->addon) {
 				//this is fake timeshift, eg we are playing a VoD as a timeshift service: stop and start times have already been adjusted
@@ -1755,6 +1767,7 @@ void gf_odm_play(GF_ObjectManager *odm)
 	}
 	if (nb_failure) {
 		odm->state = GF_ODM_STATE_BLOCKED;
+		odm->disable_buffer_at_next_play = GF_FALSE;
 		return;
 	}
 
@@ -1781,6 +1794,8 @@ void gf_odm_play(GF_ObjectManager *odm)
 #ifndef GPAC_MINIMAL_ODF
 	if (odm->oci_codec) gf_term_start_codec(odm->oci_codec, 0);
 #endif
+
+	odm->disable_buffer_at_next_play = GF_FALSE;
 
 	if (odm->flags & GF_ODM_PAUSE_QUEUED) {
 		odm->flags &= ~GF_ODM_PAUSE_QUEUED;
@@ -1909,8 +1924,8 @@ void gf_odm_stop(GF_ObjectManager *odm, Bool force_close)
 			evt.channel = ch;
 			ch->ipmp_tool->process(ch->ipmp_tool, &evt);
 		}
-
-		if (ch->service) {
+		
+		if (ch->service &&  (odm->state != GF_ODM_STATE_STOP_NO_NET ) ) {
 			com.base.on_channel = ch;
 			gf_term_service_command(ch->service, &com);
 			GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[ODM%d %s] CH %d At OTB %u requesting STOP\n", odm->OD->objectDescriptorID, odm->net_service->url, ch->esd->ESID, gf_clock_time(ch->clock)));
@@ -1990,7 +2005,10 @@ void gf_odm_on_eos(GF_ObjectManager *odm, GF_Channel *on_channel)
 	} else {
 		if (nb_eos != count) return;
 	}
-
+	if (odm->addon && odm->addon->is_splicing)
+		odm->addon->is_over = 1;
+	if (odm->parentscene && odm->parentscene->root_od->addon && odm->parentscene->root_od->addon->is_splicing)
+		odm->parentscene->root_od->addon->is_over = 1;
 
 	gf_term_service_media_event(odm, GF_EVENT_MEDIA_LOAD_DONE);
 

@@ -47,6 +47,10 @@
 #include <gpac/internal/odf_dev.h>
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 
 /*MPEG-2 Descriptor tags*/
 enum
@@ -921,6 +925,7 @@ struct tag_m2ts_demux
 	const char *network_type;
 	//for sockets, we need to reopen them after resume/restart....
 	char *socket_url;
+	u32 udp_buffer_size;
 	/* Set it to 1 if the TS is meant to be played during the demux */
 	Bool demux_and_play;
 	/* End of M2TSIn */
@@ -1177,7 +1182,7 @@ typedef struct __m2ts_mux_stream {
 	Bool start_pes_at_rap, prevent_two_au_start_in_pes;
 
 	struct __elementary_stream_ifce *ifce;
-	Double ts_scale;
+	GF_Fraction ts_scale;
 
 	/*packet fifo*/
 	GF_M2TS_Packet *pck_first, *pck_last;
@@ -1406,5 +1411,11 @@ GF_Err gf_m2ts_demuxer_close(GF_M2TS_Demuxer *ts);
 GF_Err gf_m2ts_get_socket(const char *url, const char *mcast_ifce_or_mobileip, u32 buf_size, GF_Socket **out_socket);
 
 /*! @} */
+
+
+#ifdef __cplusplus
+}
+#endif
+
 
 #endif	//_GF_MPEG_TS_H_

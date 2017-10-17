@@ -53,6 +53,11 @@ GF_Codec *gf_codec_new(GF_ObjectManager *odm, GF_ESD *base_layer, s32 PL, GF_Err
 			base_layer->dependsOnESID = 0xFFFF;
 			return NULL;
 		default:
+			if (odm->parentscene->root_od->addon->addon_type == GF_ADDON_TYPE_SPLICED) {
+				*e = GF_OK;
+				odm->splice_addon_mtype = base_layer->decoderConfig->streamType;
+				return NULL;
+			}
 			break;
 		}
 	}
@@ -113,6 +118,36 @@ GF_Codec *gf_codec_use_codec(GF_Codec *codec, GF_ObjectManager *odm)
 	return tmp;
 }
 
+static void codec_check_frame_output_mode(GF_Codec *codec)
+{
+	GF_CodecCapability cap;
+	codec->direct_frame_output = GF_FALSE;
+	codec->direct_vout = GF_FALSE;
+
+	if (codec->type == GF_STREAM_VISUAL) {
+		cap.CapCode = GF_CODEC_FRAME_OUTPUT;
+		gf_codec_get_capability(codec, &cap);
+		if (cap.cap.valueBool) {
+			cap.CapCode = GF_CODEC_FRAME_OUTPUT;
+			cap.cap.valueInt = gf_sc_use_3d(codec->odm->term->compositor) ? 2 : 1;
+			if ((gf_codec_set_capability(codec, cap)==GF_OK) && (((GF_MediaDecoder*)codec->decio)->GetOutputFrame != NULL))
+				codec->direct_frame_output = GF_TRUE;
+		}
+		if (!codec->direct_frame_output) {
+			//this works but we need at least double buffering of textures on the GPU which we don't have now
+			if ( gf_sc_use_raw_texture(codec->odm->term->compositor)) {
+				cap.CapCode = GF_CODEC_RAW_MEMORY;
+				gf_codec_get_capability(codec, &cap);
+				if (cap.cap.valueBool) {
+					cap.CapCode = GF_CODEC_RAW_MEMORY;
+					if ((gf_codec_set_capability(codec, cap)==GF_OK) && (((GF_MediaDecoder*)codec->decio)->GetOutputBuffer != NULL))
+						codec->direct_vout = GF_TRUE;
+				}
+			}
+		}
+	}
+}
+
 GF_Err gf_codec_add_channel(GF_Codec *codec, GF_Channel *ch)
 {
 	GF_Err e;
@@ -124,9 +159,6 @@ GF_Err gf_codec_add_channel(GF_Codec *codec, GF_Channel *ch)
 	u32 min, max;
 
 	if (!ch || !ch->esd) return GF_BAD_PARAM;
-
-	if (ch && ch->odm && !ch->is_pulling && (ch->MaxBuffer <= ch->odm->term->low_latency_buffer_max))
-		codec->flags |= GF_ESM_CODEC_IS_LOW_LATENCY;
 
 	/*only for valid codecs (eg not OCR)*/
 	if (codec->decio) config_decio = GF_TRUE;
@@ -151,67 +183,44 @@ GF_Err gf_codec_add_channel(GF_Codec *codec, GF_Channel *ch)
 		}
 		GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[Codec] Attaching stream %d to codec %s\n", ch->esd->ESID, codec->decio->module_name));
 
-		if (codec->type == GF_STREAM_VISUAL) {
-			cap.CapCode = GF_CODEC_FRAME_OUTPUT;
-			gf_codec_get_capability(codec, &cap);
-			if (cap.cap.valueBool) {
-				cap.CapCode = GF_CODEC_FRAME_OUTPUT;
-				cap.cap.valueInt = gf_sc_use_3d(codec->odm->term->compositor) ? 2 : 1;
-				if ((gf_codec_set_capability(codec, cap)==GF_OK) && (((GF_MediaDecoder*)codec->decio)->GetOutputFrame != NULL))
-					codec->direct_frame_output = GF_TRUE;
-			}
-			if (!codec->direct_frame_output) {
-				//this works but we need at least double buffering of textures on the GPU which we don't have now
-				if ( gf_sc_use_raw_texture(codec->odm->term->compositor)) {
-					cap.CapCode = GF_CODEC_RAW_MEMORY;
-					gf_codec_get_capability(codec, &cap);
-					if (cap.cap.valueBool) {
-						cap.CapCode = GF_CODEC_RAW_MEMORY;
-						if ((gf_codec_set_capability(codec, cap)==GF_OK) && (((GF_MediaDecoder*)codec->decio)->GetOutputBuffer != NULL))
-							codec->direct_vout = GF_TRUE;
-					}
-				}
-			}
-		}
+		codec_check_frame_output_mode(codec);
 
 		if (codec->odm->term->bench_mode==2) {
 			e = GF_OK;
 		} else {
+			Bool force_annex_b = GF_FALSE;
+			GF_NetworkCommand com;
 			/*lock the channel before setup in case we are using direct_decode */
 			gf_mx_p(ch->mx);
 			ch->esd->service_url = (ch->odm && ch->odm->net_service) ? ch->odm->net_service->url : NULL;
 
-		//test code to force annexB format for AVC/SVC or HEVC/LHEVC streams
-#if GPAC_ANDROID
-			{
-				char *dsi = NULL;
-				GF_NetworkCommand com;
-				u32 len = 0;
-#if 0
-				if (ch->esd->decoderConfig->decoderSpecificInfo) {
-					dsi = ch->esd->decoderConfig->decoderSpecificInfo->data;
-					ch->esd->decoderConfig->decoderSpecificInfo->data = NULL;
-					len = ch->esd->decoderConfig->decoderSpecificInfo->dataLength;
-					ch->esd->decoderConfig->decoderSpecificInfo->dataLength=0;
-				}
+			cap.CapCode = GF_CODEC_FORCE_ANNEXB;
+			gf_codec_get_capability(codec, &cap);
+			if (cap.cap.valueBool) {
+				force_annex_b = GF_TRUE;
+			}
+
+			if (force_annex_b && ch->esd->decoderConfig->decoderSpecificInfo) {
+				gf_free(ch->esd->decoderConfig->decoderSpecificInfo->data);
+				ch->esd->decoderConfig->decoderSpecificInfo->data = NULL;
+				ch->esd->decoderConfig->decoderSpecificInfo->dataLength=0;
+			}
+
+			e = codec->decio->AttachStream(codec->decio, ch->esd);
+			while (e == GF_PROFILE_NOT_SUPPORTED) {
+				e = gf_codec_change_decoder(codec, ch->esd, GF_TRUE);
+				if (e) break;
+				codec_check_frame_output_mode(codec);
 				e = codec->decio->AttachStream(codec->decio, ch->esd);
-				if (ch->esd->decoderConfig->decoderSpecificInfo) {
-					ch->esd->decoderConfig->decoderSpecificInfo->data = dsi;
-					ch->esd->decoderConfig->decoderSpecificInfo->dataLength = 0;
-				}
-#endif
+			}
+
+			if (force_annex_b) {
 				memset(&com, 0, sizeof(GF_NetworkCommand));
 				com.command_type = GF_NET_CHAN_NALU_MODE;
 				com.nalu_mode.extract_mode = 1;
 				com.base.on_channel = ch;
 				gf_term_service_command(ch->service, &com);
-
 			}
-
-			e = codec->decio->AttachStream(codec->decio, ch->esd);
-#else
-			e = codec->decio->AttachStream(codec->decio, ch->esd);
-#endif
 
 			gf_mx_v(ch->mx);
 		}
@@ -455,7 +464,7 @@ static void codec_update_stats(GF_Codec *codec, u32 dataLength, u64 dec_time, u3
 	}
 }
 
-static void MediaDecoder_GetNextAU(GF_Codec *codec, GF_Channel **activeChannel, GF_DBUnit **nextAU)
+static void MediaDecoder_GetNextAU(GF_Codec *codec, GF_Channel **activeChannel, GF_DBUnit **nextAU, Bool *prev_channel_unreliable)
 {
 	GF_Channel *ch;
 	GF_DBUnit *AU;
@@ -463,13 +472,18 @@ static void MediaDecoder_GetNextAU(GF_Codec *codec, GF_Channel **activeChannel, 
 	GF_ObjectManager *current_odm = codec->odm;
 	u32 count, curCTS, i, stream_state, now=0;
 	Bool scalable_check = 0;
+	Bool splice_check = 0;
 	s32 cts_diff;
 	Bool no_au_in_enhancement = GF_FALSE;
+	GF_Channel *spliced_channel = NULL;
+	GF_DBUnit *spliced_AU = NULL;
+	GF_AddonMedia *addon=NULL;
 	*nextAU = NULL;
 	*activeChannel = NULL;
+	*prev_channel_unreliable = GF_FALSE;
 	curCTS = 0;
 
-browse_scalable:
+rebrowse_object:
 
 	count = gf_list_count(src_channels);
 	if (!count) return;
@@ -554,8 +568,9 @@ refetch_AU:
 				baseAU->data = gf_realloc(baseAU->data, baseAU->dataLength + AU->dataLength);
 				memcpy(baseAU->data + baseAU->dataLength , AU->data, AU->dataLength);
 			}
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[%s] ODM%d#CH%d (%s) AU DTS %u CTS %u size %d reaggregated on base layer %d - base DTS %d size %d\n", codec->decio->module_name, codec->odm->OD->objectDescriptorID, ch->esd->ESID, ch->odm->net_service->url, AU->DTS, AU->CTS, AU->dataLength, (*activeChannel)->esd->ESID, baseAU->DTS, baseAU->dataLength));
+
 			baseAU->dataLength += AU->dataLength;
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[%s] ODM%d#CH%d (%s) AU DTS %u reaggregated on base layer %d\n", codec->decio->module_name, codec->odm->OD->objectDescriptorID, ch->esd->ESID, ch->odm->net_service->url, AU->DTS, (*activeChannel)->esd->ESID));
 			gf_es_drop_au(ch);
 			ch->first_au_fetched = 1;
 			scalable_check = 2;
@@ -619,21 +634,54 @@ refetch_AU:
 	}
 	//scalable addon, browse channels in scalable object
 	if (current_odm->upper_layer_odm) {
+		GF_CodecCapability cap;
+		Bool check_addon = GF_TRUE;
 		if (*nextAU) {
-			if (gf_scene_check_addon_restart(current_odm->upper_layer_odm->parentscene->root_od->addon, (*nextAU)->CTS, (*nextAU)->DTS)) {
+			GF_AddonMedia *addon = current_odm->upper_layer_odm->parentscene->root_od->addon;
+			if (gf_scene_check_addon_restart(addon, (*nextAU)->CTS, (*nextAU)->DTS)) {
 				//due to some issues in openhevc we reset the decoder when we restart the scalable addon
 				GF_CodecCapability cap;
 				cap.CapCode = GF_CODEC_WAIT_RAP;
 				gf_codec_set_capability(codec, cap);
 			}
+
+			assert(addon->addon_type==GF_ADDON_TYPE_SCALABLE);
+			if (addon->is_splicing) {
+				//addon start not yet reached
+				if (addon->splice_start > (*nextAU)->CTS ) check_addon = GF_FALSE;
+				//addon end reached
+				if ((addon->is_over==2) || ((addon->splice_end>=0) && (addon->splice_end <= (*nextAU)->CTS) ) ) {
+					check_addon = GF_FALSE;
+					//switch off enhancement layer
+					if (codec->coding_config_changed) {
+						cap.CapCode = GF_CODEC_MEDIA_SWITCH_QUALITY;
+						cap.cap.valueInt = 0;
+						gf_codec_set_capability(codec, cap);
+					}
+
+					gf_list_del_item(codec->odm->parentscene->declared_addons, addon);
+					gf_scene_reset_addon(addon, GF_TRUE);
+					current_odm->upper_layer_odm = NULL;
+					*prev_channel_unreliable = GF_TRUE;
+				}
+				//switch on enhancement layer
+				if (check_addon && !codec->coding_config_changed) {
+					codec->coding_config_changed = GF_TRUE;
+					cap.CapCode = GF_CODEC_MEDIA_SWITCH_QUALITY;
+					cap.cap.valueInt = 1;
+					gf_codec_set_capability(codec, cap);
+				}
+			}
 		}
-		current_odm = current_odm->upper_layer_odm;
-		src_channels = current_odm->channels;
-		scalable_check = 1;
-		goto browse_scalable;
+		if (check_addon) {
+			current_odm = current_odm->upper_layer_odm;
+			src_channels = current_odm->channels;
+			scalable_check = 1;
+			goto rebrowse_object;
+		}
 	}
 
-	if (*nextAU  && no_au_in_enhancement ) {
+	if (*nextAU && no_au_in_enhancement ) {
 		//do we have time to wait for the enhancement to be filled ?
 		if (now < (*nextAU)->DTS) {
 			//GF_LOG(GF_LOG_INFO, GF_LOG_CODEC, ("[%s] Enhancement layer not ready for this AU (DTS %u) at OTB %d- decoding postponed\n", codec->decio->module_name, (*nextAU)->DTS, now));
@@ -644,18 +692,117 @@ refetch_AU:
 		GF_LOG(GF_LOG_INFO, GF_LOG_CODEC, ("[%s] Warning: could not find enhancement layer for this AU (DTS %u) at OTB %d - decoding only base\n", codec->decio->module_name, (*nextAU)->DTS, now));
 	}
 
-	if (codec->is_reordering && *nextAU && codec->first_frame_dispatched) {
-		u32 CTS = (*nextAU)->CTS;
-		/*reordering !!*/
-		u32 prev_ts_diff;
-		u32 diff = 0;
-		if (codec->recomputed_cts && (codec->recomputed_cts > (*nextAU)->CTS)) {
-			diff = codec->recomputed_cts - CTS;
-		}
-		prev_ts_diff = (CTS > codec->last_unit_cts) ? (CTS - codec->last_unit_cts) : (codec->last_unit_cts - CTS);
-		if (!diff) diff = prev_ts_diff;
-		else if (prev_ts_diff && (prev_ts_diff < diff) ) diff = prev_ts_diff;
+	if (!splice_check && *nextAU && codec->odm->parentscene->has_splicing_addons) {
+		Bool check_coding_config = GF_FALSE;
+		count = gf_list_count(codec->odm->parentscene->declared_addons);
+		for (i=0; i<count; i++) {
+			GF_AddonMedia *an_addon = gf_list_get(codec->odm->parentscene->declared_addons, i);
+			if (an_addon->addon_type!=GF_ADDON_TYPE_SPLICED) continue;
+			if (an_addon->splice_start<0) continue;
+			if (an_addon->splice_start > (*nextAU)->CTS ) continue;
+			//addon end reached
+			if ((an_addon->is_over==2) ||
+				((an_addon->splice_end>=0) && an_addon->splice_end  <= (*nextAU)->CTS )
+			) {
+				if (codec->in_splice) {
+					assert(an_addon->nb_splicing);
+					an_addon->nb_splicing --;
+					codec->in_splice = GF_FALSE;
+					check_coding_config = codec->coding_config_changed;
+				}
+				if (!an_addon->nb_splicing) {
+					gf_scene_reset_addon(an_addon, GF_TRUE);
+					gf_list_rem(codec->odm->parentscene->declared_addons, i);
+					i--;
+					count--;
+					*prev_channel_unreliable = GF_TRUE;
+				}
+				continue;
+			}
 
+			addon = an_addon;
+			break;
+		}
+		if (!addon && check_coding_config) {
+			codec->coding_config_changed = GF_FALSE;
+			gf_codec_change_decoder(codec, (*activeChannel)->esd, GF_FALSE);
+		}
+		//we found our addon, browse for same codec
+		if (addon && addon->root_od->subscene) {
+			count = gf_list_count(addon->root_od->subscene->resources);
+			for (i=0; i<count; i++) {
+				GF_ObjectManager *an_odm = gf_list_get(addon->root_od->subscene->resources, i);
+				if (an_odm->splice_addon_mtype == codec->type) {
+					spliced_channel = *activeChannel;
+					spliced_AU = *nextAU;
+					*activeChannel = NULL;
+					*nextAU = NULL;
+					current_odm = an_odm;
+					src_channels = an_odm->channels;
+					splice_check = 1;
+					goto rebrowse_object;
+				}
+			}
+		}
+	}
+	if (splice_check) {
+		Bool is_over = *nextAU ? 0 : addon->is_over;
+		if (!is_over) {
+			//nextAU might be NULL if no RAP yet arrived on spliced channel
+			if (*nextAU && spliced_AU && spliced_AU->CTS <= (*nextAU)->CTS) {
+				gf_es_drop_au(spliced_channel);
+			}
+
+			if (!codec->in_splice) {
+				GF_DefaultDescriptor *dsi1, *dsi2;
+				dsi1 = spliced_channel->esd->decoderConfig->decoderSpecificInfo;
+				dsi2 = (*activeChannel)->esd->decoderConfig->decoderSpecificInfo;
+				if (!codec->coding_config_changed
+				&& (
+				(spliced_channel->esd->decoderConfig->objectTypeIndication != (*activeChannel)->esd->decoderConfig->objectTypeIndication)
+				|| (!dsi1 || ! dsi2 || (dsi1->dataLength != dsi2->dataLength)
+
+				|| memcmp(dsi1->data, dsi2->data, dsi1->dataLength)	)
+				)
+				) {
+
+					gf_codec_change_decoder(codec, (*activeChannel)->esd, GF_FALSE);
+					codec->coding_config_changed = GF_TRUE;
+				}
+				codec->in_splice = GF_TRUE;
+				addon->nb_splicing++;
+			}
+		} else {
+			if (addon->is_over) addon->is_over = 2;
+			*activeChannel = spliced_channel;
+			*nextAU = spliced_AU;
+			if (codec->coding_config_changed) {
+				gf_codec_change_decoder(codec, (*activeChannel)->esd, GF_FALSE);
+				codec->coding_config_changed = GF_FALSE;
+			}
+		}
+	}
+
+	if (codec->is_reordering && *nextAU && codec->first_frame_dispatched) {
+		u32 diff = 0;
+
+		//if DTS is signalled, used min DTS diff to compute AU duration
+		if ((*activeChannel)->esd->slConfig->no_dts_signaling==GF_FALSE) {
+			u32 DTS = (*nextAU)->DTS;
+			diff = (DTS > codec-> last_unit_dts) ? (DTS - codec->last_unit_dts) : (codec->last_unit_dts - DTS);
+		} else {
+			//otherwise use CTS diff to compute AU duration
+			u32 prev_ts_diff;
+			u32 CTS = (*nextAU)->CTS;
+			if (codec->recomputed_cts && (codec->recomputed_cts > (*nextAU)->CTS)) {
+				diff = codec->recomputed_cts - CTS;
+				//happens when AU duration not yet initialized
+				if (diff<2) diff=0;
+			}
+			prev_ts_diff = (CTS > codec-> last_unit_cts) ? (CTS - codec->last_unit_cts) : (codec->last_unit_cts - CTS);
+			if (!diff) diff = prev_ts_diff;
+			else if (prev_ts_diff && (prev_ts_diff < diff) ) diff = prev_ts_diff;
+		}
 		if (!codec->min_au_duration || (diff < codec->min_au_duration))
 			codec->min_au_duration = diff;
 
@@ -1057,10 +1204,12 @@ static GF_Err MediaCodec_Process(GF_Codec *codec, u32 TimeAvailable)
 	u64 now, entryTime;
 	u32 mmlevel, cts;
 	u32 first, obj_time, unit_size;
-	GF_MediaDecoder *mdec = (GF_MediaDecoder*)codec->decio;
+	GF_MediaDecoder *mdec;
 	GF_Err e = GF_OK;
 	s32 cts_diff;
 	u32 scal_unit_size=0;
+	Bool prev_channel_unreliable;
+
 	CU = NULL;
 
 	/*if video codec muted don't decode (try to saves ressources)
@@ -1083,7 +1232,8 @@ static GF_Err MediaCodec_Process(GF_Codec *codec, u32 TimeAvailable)
 
 
 	/*fetch next AU in DTS order for this codec*/
-	MediaDecoder_GetNextAU(codec, &ch, &AU);
+	MediaDecoder_GetNextAU(codec, &ch, &AU, &prev_channel_unreliable);
+	mdec = (GF_MediaDecoder*)codec->decio;
 
 	/*no active channel return*/
 	if (!AU || !ch) {
@@ -1346,7 +1496,7 @@ scalable_retry:
 			unit_size = 0;
 			GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[%s] ODM%d: force drop requested in fast playback for AU CTS %u\n", codec->decio->module_name, codec->odm->OD->objectDescriptorID, AU->CTS));
 		} else {
-			GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[%s] At %u ODM%d ES%d decoding frame DTS %u CTS %u size %d (%d in channels)\n", codec->decio->module_name, gf_clock_real_time(ch->clock), codec->odm->OD->objectDescriptorID, ch->esd->ESID, AU->DTS, AU->CTS, AU->dataLength, ch->AU_Count));
+			GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[%s] At %u ODM%d ES%d (%s) decoding frame DTS %u CTS %u size %d (%d in channels)\n", codec->decio->module_name, gf_clock_real_time(ch->clock), codec->odm->OD->objectDescriptorID, ch->esd->ESID, ch->odm->net_service->url, AU->DTS, AU->CTS, AU->dataLength, ch->AU_Count));
 			e = mdec->ProcessData(mdec, AU->data, AU->dataLength, ch->esd->ESID, &CU->TS, CU->data, &unit_size, AU->PaddingBits, mmlevel);
 		}
 		now = gf_sys_clock_high_res() - now;
@@ -1364,6 +1514,7 @@ scalable_retry:
 			if (codec->CB->LastRenderedTS) {
 				GF_LOG(GF_LOG_INFO, GF_LOG_CODEC, ("[%s] ODM%d ES%d: Resize output buffer requested\n", codec->decio->module_name, codec->odm->OD->objectDescriptorID, ch->esd->ESID));
 				codec->force_cb_resize = unit_size;
+				gf_cm_abort_buffering(codec->CB);
 				return GF_OK;
 			}
 			GF_LOG(GF_LOG_INFO, GF_LOG_CODEC, ("[%s] ODM%d ES%d: Resizing output buffer %d -> %d\n", codec->decio->module_name, codec->odm->OD->objectDescriptorID, ch->esd->ESID, codec->CB->UnitSize, unit_size));
@@ -1407,8 +1558,7 @@ scalable_retry:
 		processing a scalable stream*/
 		case GF_OK:
 			if (unit_size) {
-				GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[%s] At %u ODM%d ES%d decoded frame DTS %u CTS %u size %d in "LLU" us - %d in CB\n", codec->decio->module_name, gf_clock_real_time(ch->clock), codec->odm->OD->objectDescriptorID, ch->esd->ESID, AU->DTS, AU->CTS, AU->dataLength, now, codec->CB->UnitCount + 1));
-
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[%s] At %u ODM%d ES%d (%s) decoded frame DTS %u CTS %u size %d in "LLU" us - %d in CB\n", codec->decio->module_name, gf_clock_real_time(ch->clock), codec->odm->OD->objectDescriptorID, ch->esd->ESID, ch->odm->net_service->url, AU->DTS, AU->CTS, AU->dataLength, now, codec->CB->UnitCount + 1));
 
 				if (codec->direct_frame_output) {
 					Bool needs_resize = 0;
@@ -1470,6 +1620,55 @@ scalable_retry:
 			}
 #endif
 			break;
+
+		case GF_PROFILE_NOT_SUPPORTED:
+			/*release but no dispatch*/
+			UnlockCompositionUnit(codec, CU, 0);
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[%s] Unsupported profile detected, blacklisting decoder for this stream and changing decoder\n", codec->decio->module_name ));
+			return gf_codec_change_decoder(codec, NULL, GF_TRUE);
+		case GF_CODEC_BUFFER_UNAVAILABLE:
+			if (unit_size) {
+				GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[%s] At %u ODM%d ES%d decoded frame DTS %u CTS %u size %d in "LLU" us - %d in CB\n", codec->decio->module_name, gf_clock_real_time(ch->clock), codec->odm->OD->objectDescriptorID, ch->esd->ESID, AU->DTS, AU->CTS, AU->dataLength, now, codec->CB->UnitCount + 1));
+				
+				if (codec->direct_frame_output) {
+					Bool needs_resize = 0;
+					//may happen during seek
+					if (CU->frame) {
+						CU->frame->Release(CU->frame);
+						CU->frame = NULL;
+					}
+
+					e = mdec->GetOutputFrame(mdec, ch->esd->ESID, &CU->frame, &needs_resize);
+					if (e!=GF_OK) {
+						CU->frame=NULL;
+					}
+					if (!CU->frame)
+						unit_size = 0;
+					else if (needs_resize) {
+						assert(unit_size);
+						//if dynamic scene, set size
+						if ((codec->type==GF_STREAM_VISUAL) && codec->odm->parentscene->is_dynamic_scene) {
+							/*update config*/
+							gf_mo_update_caps(codec->odm->mo);
+							gf_scene_force_size_to_video(codec->odm->parentscene, codec->odm->mo);
+						}
+					}
+					
+				}
+				else if (codec->direct_vout) {
+					e = mdec->GetOutputBuffer(mdec, ch->esd->ESID, &codec->CB->pY, &codec->CB->pU, &codec->CB->pV);
+					if (e==GF_OK) {
+						gf_sc_set_video_pending_frame(codec->odm->term->compositor);
+					}
+				}
+				CU->sender_ntp = AU->sender_ntp;
+			}
+
+			codec_update_stats(codec, AU->dataLength, now, AU->DTS, (AU->flags & GF_DB_AU_RAP));
+			UnlockCompositionUnit(codec, CU, unit_size);
+			
+			continue;
+
 		default:
 			unit_size = 0;
 			/*error - if the object is in intitial buffering resume it!!*/
@@ -1511,7 +1710,12 @@ scalable_retry:
 			return e;
 		}
 
-		MediaDecoder_GetNextAU(codec, &ch, &AU);
+		MediaDecoder_GetNextAU(codec, &ch, &AU, &prev_channel_unreliable);
+		mdec = (GF_MediaDecoder*)codec->decio;
+		//in splicing we may have destroyed the previous channel, discard the info
+		if (prev_channel_unreliable)
+			prev_ch = ch ? ch : gf_list_get(codec->inChannels, 0);
+
 		/*same CTS: same output, likely scalable stream so don't release the CB*/
 		if (AU && (AU->CTS == cts) && (ch != prev_ch) ) {
 			if (scal_unit_size < unit_size) scal_unit_size = unit_size;
@@ -1547,7 +1751,7 @@ scalable_retry:
 		if (cts_diff < 0) cts_diff = -cts_diff;
 		//the decoder is dispathing CTS in the previous time base , override the timestamp ...
 		if (cts_diff > 20000 ) {
-			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[%s] decoded frame CTS %d but input frame CTS %d, lilely due to clock discontinuity\n", codec->decio->module_name, CU->TS, cts));
+			GF_LOG(GF_LOG_WARNING, GF_LOG_MEDIA, ("[%s] decoded frame CTS %d but input frame CTS %d, likely due to clock discontinuity\n", codec->decio->module_name, CU->TS, cts));
 			CU->TS = cts;
 		}
 
@@ -1575,6 +1779,7 @@ scalable_retry:
 			return GF_OK;
 		}
 	}
+	GF_LOG(GF_LOG_DEBUG, GF_LOG_CODEC, ("[%s] Exit decode loop because no more space in CB\n", codec->decio->module_name));
 	return GF_OK;
 }
 
@@ -1804,6 +2009,8 @@ static u32 get_codec_confidence(GF_Codec *codec, GF_BaseDecoder *ifce, GF_ESD *e
 {
 	u32 conf = 0;
 	u32 i_es;
+
+	codec->hybrid_layered_coded = 0;
 	for (i_es=0; i_es<gf_list_count(codec->odm->OD->ESDescriptors); i_es++) {
 		GF_ESD *an_esd = gf_list_get(codec->odm->OD->ESDescriptors, i_es);
 		u32 c;
@@ -1811,10 +2018,22 @@ static u32 get_codec_confidence(GF_Codec *codec, GF_BaseDecoder *ifce, GF_ESD *e
 		if (an_esd->dependsOnESID && (an_esd->decoderConfig->objectTypeIndication != esd->decoderConfig->objectTypeIndication)) {
 			codec->hybrid_layered_coded = 1;
 		}
-		c = ifce->CanHandleStream(ifce, an_esd->decoderConfig->streamType, an_esd, PL);
+		c = ifce->CanHandleStream(ifce, an_esd->decoderConfig->streamType, i_es ? an_esd : esd, PL);
 		if (!conf || (c<conf) ) conf=c;
 	}
 	return conf;
+}
+
+Bool decio_blacklisted(GF_Codec *codec, const char *ifce_name)
+{
+	u32 i, count;
+	if (!codec->blacklisted) return GF_FALSE;
+	count = gf_list_count(codec->blacklisted);
+	for (i=0; i<count; i++) {
+		const char *name = gf_list_get(codec->blacklisted, i);
+		if (!stricmp(name, ifce_name)) return GF_TRUE;
+	}
+	return GF_FALSE;
 }
 
 static GF_Err Codec_LoadModule(GF_Codec *codec, GF_ESD *esd, u32 PL)
@@ -1828,6 +2047,7 @@ static GF_Err Codec_LoadModule(GF_Codec *codec, GF_ESD *esd, u32 PL)
 	u32 dec_confidence;
 	GF_Terminal *term = codec->odm->term;
 
+	codec->profile_level = PL;
 	switch (esd->decoderConfig->streamType) {
 	case GF_STREAM_AUDIO:
 	case GF_STREAM_VISUAL:
@@ -1876,6 +2096,9 @@ static GF_Err Codec_LoadModule(GF_Codec *codec, GF_ESD *esd, u32 PL)
 	dec_confidence = 0;
 	ifce = NULL;
 
+	if (sOpt && decio_blacklisted(codec, sOpt))
+		sOpt = NULL;
+
 	if (sOpt) {
 		ifce = (GF_BaseDecoder *) gf_modules_load_interface_by_name(term->user->modules, sOpt, ifce_type);
 		if (ifce) {
@@ -1913,7 +2136,7 @@ static GF_Err Codec_LoadModule(GF_Codec *codec, GF_ESD *esd, u32 PL)
 	if (sOpt) {
 		ifce = (GF_BaseDecoder *) gf_modules_load_interface_by_name(term->user->modules, sOpt, ifce_type);
 		if (ifce) {
-			if (ifce->CanHandleStream) {
+			if (ifce->CanHandleStream && !decio_blacklisted(codec, ifce->module_name)) {
 				u32 conf = get_codec_confidence(codec, ifce, esd, PL);
 				if ((conf!=GF_CODEC_NOT_SUPPORTED) && (conf>=dec_confidence)) {
 					/*switch*/
@@ -1936,7 +2159,7 @@ static GF_Err Codec_LoadModule(GF_Codec *codec, GF_ESD *esd, u32 PL)
 	for (i = 0; i < plugCount ; i++) {
 		ifce = (GF_BaseDecoder *) gf_modules_load_interface(term->user->modules, i, ifce_type);
 		if (!ifce) continue;
-		if (ifce->CanHandleStream) {
+		if (ifce->CanHandleStream && !decio_blacklisted(codec, ifce->module_name)) {
 			u32 conf = get_codec_confidence(codec, ifce, esd, PL);
 			
 			if (conf==GF_CODEC_PROFILE_NOT_SUPPORTED) do_dec_switch = GF_FALSE;
@@ -1955,7 +2178,7 @@ static GF_Err Codec_LoadModule(GF_Codec *codec, GF_ESD *esd, u32 PL)
 
 	if (dec_ifce) {
 		codec->decio = dec_ifce;
-		if (do_dec_switch) {
+		if (do_dec_switch && !codec->blacklisted) {
 			sprintf(szPrefDec, "codec_%02X_%02X", esd->decoderConfig->streamType, esd->decoderConfig->objectTypeIndication);
 			gf_cfg_set_key(term->user->config, "Systems", szPrefDec, dec_ifce->module_name);
 		}
@@ -1963,6 +2186,45 @@ static GF_Err Codec_LoadModule(GF_Codec *codec, GF_ESD *esd, u32 PL)
 	}
 
 	return GF_CODEC_NOT_FOUND;
+}
+
+GF_Err gf_codec_change_decoder(GF_Codec *codec, GF_ESD *for_esd, Bool do_blacklist)
+{
+	GF_Err e;
+	u32 i, count;
+	GF_ESD *esd=NULL;
+	if (!codec || !codec->decio) return GF_CODEC_NOT_FOUND;
+	if (!codec->blacklisted) codec->blacklisted = gf_list_new();
+	if (do_blacklist) gf_list_add(codec->blacklisted, gf_strdup(codec->decio->module_name) );
+
+	count = gf_list_count(codec->inChannels);
+	for (i=0; i<count; i++) {
+		GF_Channel *ch = gf_list_get(codec->inChannels, i);
+		if (ch && ch->esd) {
+			codec->decio->DetachStream(codec->decio, ch->esd->ESID);
+			if (!esd) esd = ch->esd;
+		}
+	}
+	gf_modules_close_interface((GF_BaseInterface *) codec->decio);
+	codec->decio = NULL;
+	if (!esd && !for_esd) return GF_CODEC_NOT_FOUND;
+	e = Codec_LoadModule(codec, for_esd ? for_esd : esd, codec->profile_level);
+	if (e) return e;
+	if (!codec->decio) return GF_CODEC_NOT_FOUND;
+
+	if (for_esd) {
+		return codec->decio->AttachStream(codec->decio, for_esd);
+	}
+
+	for (i=0; i<count; i++) {
+		GF_Channel *ch = gf_list_get(codec->inChannels, i);
+		if (ch->esd == for_esd) continue;
+
+		if (ch && ch->esd) {
+			codec->decio->AttachStream(codec->decio, ch->esd);
+		}
+	}
+	return GF_OK;
 }
 
 GF_Err Codec_Load(GF_Codec *codec, GF_ESD *esd, u32 PL)
@@ -2028,6 +2290,13 @@ void gf_codec_del(GF_Codec *codec)
 	}
 	if (codec->inChannels) gf_list_del(codec->inChannels);
 	codec->inChannels = NULL;
+	if (codec->blacklisted) {
+		while (gf_list_count(codec->blacklisted)) {
+			char *name = gf_list_pop_back(codec->blacklisted);
+			gf_free(name);
+		}
+		gf_list_del(codec->blacklisted);
+	}
 	gf_free(codec);
 }
 

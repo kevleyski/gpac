@@ -113,6 +113,7 @@ want_pic="no"
 want_gcov="no"
 has_joystick="no"
 has_xul="no"
+has_hid="no"
 enable_joystick="no"
 static_mp4box="no"
 disable_core_tools="no"
@@ -660,7 +661,7 @@ mkdir -p extra_lib/lib/gcc
 
 #OK check for all local & systems lib
 local_inc=$source_path/extra_lib/include
-local_lib=extra_lib/lib/gcc
+local_lib=$source_path/extra_lib/lib/gcc
 
 
 dolog() {
@@ -1047,7 +1048,7 @@ else
     fi
     if docxx -o $TMPO $TMPC $avcap_cflags $LDFLAGS -L$local_lib $avcap_ldflags ; then
         has_avcap="yes"
-        avcap_ldflags="-L../../$local_lib $avcap_ldflags"
+        avcap_ldflags="-L$local_lib $avcap_ldflags"
     fi
 fi
 
@@ -1069,12 +1070,12 @@ EOF
 if docc $osvc_cflags $LDFLAGS $osvc_ldflags ; then
   has_opensvc="yes"
 else
-osvc_cflags="-I$local_inc"
+osvc_cflags="-idirafter $local_inc"
 osvc_ldflags="-lOpenSVCDec"
 
 if docc $osvc_cflags $LDFLAGS -L$local_lib $osvc_ldflags ; then
   has_opensvc="yes"
-  osvc_ldflags="-L../../$local_lib $osvc_ldflags"
+  osvc_ldflags="-L$local_lib $osvc_ldflags"
 fi
 
 fi
@@ -1104,7 +1105,7 @@ else
   ohevc_ldflags="-lLibOpenHevcWrapper -lm -lpthread"
   if docc $ohevc_cflags $ohevc_ldflags $LDFLAGS -L$local_lib ; then
     has_openhevc="yes"
-    ohevc_ldflags="-L../../$local_lib $ohevc_ldflags"
+    ohevc_ldflags="-L$local_lib $ohevc_ldflags"
   fi
 fi
 
@@ -1845,6 +1846,16 @@ EOF
 fi
 
 
+#look for hid support
+cat > $TMPC << EOF
+#include <hidapi/hidapi.h>
+int main( void ) { hid_init(); hid_exit(); return 0; }
+EOF
+
+if docc -lhidapi-hidraw $LDFLAGS ; then
+    hid_lib="-lhidapi-hidraw"
+    has_hid="yes"
+fi
 
 #overwrite detection with manual settings
 for opt do
@@ -1980,7 +1991,7 @@ for opt do
             ;;
         --enable-pulseaudio) has_pulseaudio="yes"
             ;;
-        --disable-all) has_pulseaudio="no"; has_alsa="no"; disable_core_tools="yes"; disable_3d="yes"; disable_svg="yes"; disable_vrml="yes"; disable_od="yes"; disable_bifs="yes"; disable_bifs_enc="yes"; disable_laser="yes"; disable_seng="yes"; disable_qtvr="yes";  disable_avi="yes"; disable_ogg="yes"; disable_m2ps="yes"; disable_m2ts="yes"; disable_m2ts_mux="yes"; disable_parsers="yes"; disable_import="yes"; disable_export="yes"; disable_swf="yes"; disable_scene_stats="yes"; disable_scene_dump="yes"; disable_scene_encode="yes"; disable_loader_isoff="yes"; disable_od_dump="yes"; disable_od_parse="yes"; disable_isom_dump="yes"; disable_mcrypt="yes"; disable_isoff="yes"; disable_isoff_write="yes"; disable_isoff_hint="yes"; disable_isoff_frag="yes"; disable_streaming="yes"; disable_x3d="yes"; disable_loader_bt="yes"; disable_loader_xmt="yes"; has_dvb4linux="no"; disable_player="yes"; disable_vobsub="yes"; disable_scenegraph="yes"; disable_dvbx="yes"; disable_ttxt="yes"; disable_ttml="yes"; disable_saf="yes"; disable_smgr="yes"; disable_mpd="yes"; disable_dash="yes"; disable_isoff_hds="yes"; disable_hevc="yes"
+        --disable-all) has_pulseaudio="no"; has_alsa="no"; disable_core_tools="yes"; disable_3d="yes"; disable_svg="yes"; disable_vrml="yes"; disable_od="yes"; disable_bifs="yes"; disable_bifs_enc="yes"; disable_laser="yes"; disable_seng="yes"; disable_qtvr="yes";  disable_avi="yes"; disable_ogg="yes"; disable_m2ps="yes"; disable_m2ts="yes"; disable_m2ts_mux="yes"; disable_parsers="yes"; disable_import="yes"; disable_export="yes"; disable_swf="yes"; disable_scene_stats="yes"; disable_scene_dump="yes"; disable_scene_encode="yes"; disable_loader_isoff="yes"; disable_od_dump="yes"; disable_od_parse="yes"; disable_isom_dump="yes"; disable_mcrypt="yes"; disable_isoff="yes"; disable_isoff_write="yes"; disable_isoff_hint="yes"; disable_isoff_frag="yes"; disable_streaming="yes"; disable_x3d="yes"; disable_loader_bt="yes"; disable_loader_xmt="yes"; has_dvb4linux="no"; disable_player="yes"; disable_vobsub="yes"; disable_scenegraph="yes"; disable_dvbx="yes"; disable_ttxt="yes"; disable_vtt="yes"; disable_ttml="yes"; disable_saf="yes"; disable_smgr="yes"; disable_mpd="yes"; disable_dash="yes"; disable_isoff_hds="yes"; disable_hevc="yes"
             ;;
         --isomedia-only) has_pulseaudio="no"; has_alsa="no"; disable_core_tools="yes"; disable_3d="yes"; disable_svg="yes"; disable_vrml="yes"; disable_od="yes"; disable_bifs="yes"; disable_bifs_enc="yes"; disable_laser="yes"; disable_seng="yes"; disable_qtvr="yes";  disable_avi="yes"; disable_ogg="yes"; disable_m2ps="yes"; disable_m2ts="yes"; disable_m2ts_mux="yes"; disable_parsers="yes"; disable_import="yes"; disable_export="yes"; disable_swf="yes"; disable_scene_stats="yes"; disable_scene_dump="yes"; disable_scene_encode="yes"; disable_loader_isoff="yes"; disable_od_dump="yes"; disable_od_parse="yes"; disable_isom_dump="yes"; disable_mcrypt="yes"; disable_streaming="yes"; disable_x3d="yes"; disable_loader_bt="yes"; disable_loader_xmt="yes"; has_dvb4linux="no"; disable_player="yes"; disable_vobsub="yes"; disable_scenegraph="yes"; disable_dvbx="yes"; disable_ttxt="yes"; disable_saf="yes"; disable_smgr="yes"; disable_mpd="yes"; disable_dash="yes"; disable_hevc="no"; disable_isoff="no"; disable_isoff_hds="no"; disable_isoff_write="no"; disable_isoff_hint="no"; disable_isoff_frag="no"
             ;;
@@ -2147,6 +2158,10 @@ for opt do
         --enable-ttxt) disable_ttxt="no"
             ;; 
         --disable-ttml) disable_ttml="yes"
+            ;;
+        --enable-vtt) disable_vtt="no"
+            ;; 
+        --disable-vtt) disable_vtt="yes"
             ;;
         --enable-ttml) disable_ttml="no"
             ;; 
@@ -2661,7 +2676,7 @@ if test "$disable_import" = "yes" ; then
     echo "#define GPAC_DISABLE_MEDIA_IMPORT" >> $TMPH
 fi
 if test "$disable_export" = "yes" ; then
-    echo "Media exmporters disabled"
+    echo "Media exporters disabled"
     echo "#define GPAC_DISABLE_MEDIA_EXPORT" >> $TMPH
 fi
 if test "$disable_swf" = "yes" ; then
@@ -2750,6 +2765,11 @@ fi
 if test "$disable_ttml" = "yes" ; then
     echo "TTML TimedText disabled"
     echo "#define GPAC_DISABLE_TTML" >> $TMPH
+fi
+
+if test "$disable_vtt" = "yes" ; then
+    echo "WebVTT disabled"
+    echo "#define GPAC_DISABLE_VTT" >> $TMPH
 fi
 
 if test "$enable_depth_compositor" = "yes" ; then
@@ -3269,6 +3289,10 @@ fi
 if test "$has_x11_xv" = "yes"; then
     echo "USE_X11_XV=$has_x11_xv" >> config.mak
 fi
+
+echo "CONFIG_HID=$has_hid" >> config.mak
+echo "HID_LDFLAGS=$hid_lib" >> config.mak
+
 
 if test "$is_64" = "yes"; then
 #not on OSX ...

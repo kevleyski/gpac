@@ -703,16 +703,16 @@ Bool dump_file(char *url, char *out_url, u32 dump_mode_flags, Double fps, u32 wi
 
 	if (!prev) prev = url;
 	strcpy(szPath, prev);
-	prev = strrchr(szPath, '.');
-	if (prev) prev[0] = 0;
+	prev = gf_file_ext_start(szPath);
+	if (prev) *prev = 0;
 
 	if (out_url) {
 		strcpy(szOutPath, out_url);
 	} else {
 		strcpy(szOutPath, szPath);
 	}
-	prev = strrchr(szOutPath, '.');
-	if (prev) prev[0] = 0;
+	prev = gf_file_ext_start(szOutPath);
+	if (prev) *prev = 0;
 
 	gf_term_set_simulation_frame_rate(term, (Double) fps);
 
@@ -893,7 +893,8 @@ Bool dump_file(char *url, char *out_url, u32 dump_mode_flags, Double fps, u32 wi
 			//if we can't flush a frame in 30 seconds consider this is an error
 			if (gf_sys_clock() - frame_start_time > 30000) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_APP, ("[MP4Client] Could not flush frame in 30 seconds for AVI dump, aborting dump\n"));
-				return 1;
+				ret = 1;
+				break;
 			}
 		}
 		if (ret)
@@ -949,7 +950,7 @@ Bool dump_file(char *url, char *out_url, u32 dump_mode_flags, Double fps, u32 wi
 
 #ifndef GPAC_DISABLE_AVILIB
 	//flush audio dump
-	if ((mode==DUMP_AVI) && ! (term->user->init_flags & GF_TERM_NO_AUDIO)) {
+	if (!ret && (mode==DUMP_AVI) && ! (term->user->init_flags & GF_TERM_NO_AUDIO)) {
 		avi_al.flush_retry=0;
 		while ((avi_al.flush_retry <1000) && (avi_al.audio_time < avi_al.audio_time_init + avi_al.max_dur)) {
 			gf_term_step_clocks(term, 0);
@@ -961,7 +962,7 @@ Bool dump_file(char *url, char *out_url, u32 dump_mode_flags, Double fps, u32 wi
 			ret = 1;
 		}
 	}
-	
+
 	if (! (term->user->init_flags & GF_TERM_NO_AUDIO)) {
 		gf_sc_remove_audio_listener(term->compositor, &avi_al.al);
 	}
