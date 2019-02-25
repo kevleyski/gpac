@@ -91,6 +91,7 @@ LOCAL_SRC_FILES := \
 	../../../../src/compositor/svg_text.c \
 	../../../../src/compositor/hc_flash_shape.c \
 	../../../../src/compositor/svg_filters.c \
+	../../../../src/media_tools/atsc_dmx.c \
 	../../../../src/media_tools/avilib.c \
 	../../../../src/media_tools/filestreamer.c \
 	../../../../src/media_tools/isom_tools.c \
@@ -217,20 +218,10 @@ LOCAL_SRC_FILES := \
 	../../../../src/isomedia/isom_store.c \
 	../../../../src/isomedia/movie_fragments.c \
 	../../../../src/isomedia/media_odf.c \
-	../../../../src/mcrypt/ofb.c \
-	../../../../src/mcrypt/tripledes.c \
-	../../../../src/mcrypt/cfb.c \
-	../../../../src/mcrypt/stream.c \
-	../../../../src/mcrypt/rijndael-256.c \
-	../../../../src/mcrypt/ncfb.c \
-	../../../../src/mcrypt/rijndael-192.c \
-	../../../../src/mcrypt/ctr.c \
-	../../../../src/mcrypt/nofb.c \
-	../../../../src/mcrypt/des.c \
-	../../../../src/mcrypt/g_crypt.c \
-	../../../../src/mcrypt/ecb.c \
-	../../../../src/mcrypt/cbc.c \
-	../../../../src/mcrypt/rijndael-128.c \
+	../../../../src/crypto/g_crypt.c \
+	../../../../src/crypto/g_crypt_openssl.c \
+	../../../../src/crypto/g_crypt_tinyaes.c \
+	../../../../src/crypto/tiny_aes.c \
 	../../../../src/terminal/scene.c \
 	../../../../src/terminal/terminal.c \
 	../../../../src/terminal/network_service.c \

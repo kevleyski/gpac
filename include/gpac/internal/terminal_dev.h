@@ -76,6 +76,8 @@ struct _net_service
 	u32 nb_ch_users;
 	/*number of attached remote ODM (OD URLs)*/
 	u32 nb_odm_users;
+	//original serviceID in case remote OD created the service
+	u32 serviceID;
 
 	/*clock objects. Kept at service level since ESID namespace is the service one*/
 	GF_List *Clocks;
@@ -213,6 +215,8 @@ struct _scene
 	Bool is_tiled_srd;
 	u32 srd_type;
 	s32 srd_min_x, srd_max_x, srd_min_y, srd_max_y;
+	//ambisonic type of the scene
+	u32 ambisonic_type;
 
 
 	Bool end_of_scene;
@@ -535,7 +539,7 @@ u32 gf_term_get_time(GF_Terminal *term);
 /*forces scene composition*/
 void gf_term_invalidate_compositor(GF_Terminal *term);
 
-/*callbacks for scene graph library so that all related ESM nodes are properly instanciated*/
+/*callbacks for scene graph library so that all related ESM nodes are properly instantiated*/
 void gf_term_node_callback(void *_is, u32 type, GF_Node *node, void *param);
 
 /*add/rem node requiring a call to render without being present in traversed graph (VRML/MPEG-4 protos).
@@ -1102,6 +1106,9 @@ struct _od_manager
 	struct _od_manager *upper_layer_odm;
 	//for a scalable ODM, this indicates the lower layer odm associated
 	struct _od_manager *lower_layer_odm;
+
+	//indicates channel order (1->N) if the object is a ambisonic channel
+	u32 ambi_ch_id;
 };
 
 GF_ObjectManager *gf_odm_new();

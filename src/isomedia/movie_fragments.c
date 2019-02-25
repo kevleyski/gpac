@@ -105,7 +105,8 @@ GF_Err gf_isom_finalize_for_fragment(GF_ISOFile *movie, u32 media_segment_type)
 
 	if (store_file) {
 		/*"dash" brand: this is a DASH Initialization Segment*/
-		gf_isom_modify_alternate_brand(movie, GF_ISOM_BRAND_DASH, 1);
+		if (media_segment_type)
+			gf_isom_modify_alternate_brand(movie, GF_ISOM_BRAND_DASH, 1);
 
 		if (!movie->moov->mvex->mehd || !movie->moov->mvex->mehd->fragment_duration) {
 			//update durations
@@ -114,17 +115,17 @@ GF_Err gf_isom_finalize_for_fragment(GF_ISOFile *movie, u32 media_segment_type)
 
 		i=0;
 		while ((trex = (GF_TrackExtendsBox *)gf_list_enum(movie->moov->mvex->TrackExList, &i))) {
-			GF_TrackExtensionPropertiesBox *trep;
 			if (trex->type != GF_ISOM_BOX_TYPE_TREX) continue;
-			trep = GetTrep(movie->moov, trex->trackID);
-
-			if (!trep) {
-				trep = (GF_TrackExtensionPropertiesBox*) gf_isom_box_new(GF_ISOM_BOX_TYPE_TREP);
-				trep->trackID = trex->trackID;
-				gf_list_add(movie->moov->mvex->TrackExPropList, trep);
-			}
-
 			if (trex->track->Media->information->sampleTable->CompositionToDecode) {
+				GF_TrackExtensionPropertiesBox *trep;
+				trep = GetTrep(movie->moov, trex->trackID);
+
+				if (!trep) {
+					trep = (GF_TrackExtensionPropertiesBox*) gf_isom_box_new(GF_ISOM_BOX_TYPE_TREP);
+					trep->trackID = trex->trackID;
+					gf_list_add(movie->moov->mvex->TrackExPropList, trep);
+				}
+
 				if (!trex->track->Media->information->sampleTable->SampleSize || ! trex->track->Media->information->sampleTable->SampleSize->sampleCount) {
 					gf_list_add(trep->other_boxes, trex->track->Media->information->sampleTable->CompositionToDecode);
 					trex->track->Media->information->sampleTable->CompositionToDecode = NULL;
@@ -143,6 +144,10 @@ GF_Err gf_isom_finalize_for_fragment(GF_ISOFile *movie, u32 media_segment_type)
 			if (movie->moov->mvex->mehd && movie->moov->mvex->mehd->fragment_duration) {
 				trex->track->Header->duration = 0;
 				Media_SetDuration(trex->track);
+				if (trex->track->editBox && trex->track->editBox->editList) {
+					GF_EdtsEntry *edts = gf_list_last(trex->track->editBox->editList->entryList);
+					edts->segmentDuration = 0;
+				}
 			}
 		}
 
@@ -223,7 +228,10 @@ GF_Err gf_isom_change_track_fragment_defaults(GF_ISOFile *movie, u32 TrackID,
 	if (DefaultSampleIsSync) {
 		trex->def_sample_flags |= (2<<24);
 	}
-
+	if (DefaultSampleDescriptionIndex == 0 && DefaultSampleDuration == 0 && DefaultSampleSize == 0
+		&& DefaultSampleIsSync == 0 && DefaultSamplePadding == 0 && DefaultDegradationPriority == 0) {
+		trex->cannot_use_default = GF_TRUE;
+	}
 	return GF_OK;
 }
 
@@ -368,7 +376,7 @@ escape_size:
 		}
 	}
 	//store if #
-	if (DefValue && (DefValue != traf->trex->def_sample_flags)) {
+	if (traf->trex->cannot_use_default || (DefValue && (DefValue != traf->trex->def_sample_flags))) {
 		traf->tfhd->def_sample_flags = DefValue;
 	}
 }
@@ -512,7 +520,7 @@ u32 UpdateRuns(GF_ISOFile *movie, GF_TrackFragmentBox *traf)
 
 		//size checking
 		//constant size, check if this is from current fragment default or global default
-		if (RunSize && (traf->trex->def_sample_size == RunSize)) {
+		if (RunSize && (traf->trex->def_sample_size == RunSize) && !traf->trex->cannot_use_default) {
 			if (!UseDefaultSize) UseDefaultSize = 2;
 			else if (UseDefaultSize==1) RunSize = 0;
 		} else if (RunSize && (traf->tfhd->def_sample_size == RunSize)) {
@@ -528,7 +536,7 @@ u32 UpdateRuns(GF_ISOFile *movie, GF_TrackFragmentBox *traf)
 		if (!RunSize) trun->flags |= GF_ISOM_TRUN_SIZE;
 
 		//duration checking
-		if (RunDur && (traf->trex->def_sample_duration == RunDur)) {
+		if (RunDur && (traf->trex->def_sample_duration == RunDur) && !traf->trex->cannot_use_default) {
 			if (!UseDefaultDur) UseDefaultDur = 2;
 			else if (UseDefaultDur==1) RunDur = 0;
 		} else if (RunDur && (traf->tfhd->def_sample_duration == RunDur)) {
@@ -540,7 +548,7 @@ u32 UpdateRuns(GF_ISOFile *movie, GF_TrackFragmentBox *traf)
 		//flag checking
 		if (!NeedFlags) {
 			// all samples flags are the same after the 2nd entry
-			if (RunFlags == traf->trex->def_sample_flags) {
+			if (RunFlags == traf->trex->def_sample_flags && !traf->trex->cannot_use_default) {
 				/* this run can use trex flags */
 				if (!UseDefaultFlag) {
 					/* if all previous runs used explicit flags per sample, we can still use trex flags for this run */
@@ -588,10 +596,14 @@ u32 UpdateRuns(GF_ISOFile *movie, GF_TrackFragmentBox *traf)
 	}
 
 	//after all runs in the traf are processed, update TRAF flags
-	if (UseDefaultSize==1) traf->tfhd->flags |= GF_ISOM_TRAF_SAMPLE_SIZE;
-	if (UseDefaultDur==1) traf->tfhd->flags |= GF_ISOM_TRAF_SAMPLE_DUR;
-	if (UseDefaultFlag==1) traf->tfhd->flags |= GF_ISOM_TRAF_SAMPLE_FLAGS;
-	if (traf->tfhd->sample_desc_index && traf->tfhd->sample_desc_index != traf->trex->def_sample_desc_index) traf->tfhd->flags |= GF_ISOM_TRAF_SAMPLE_DESC;
+	if (UseDefaultSize==1)
+		traf->tfhd->flags |= GF_ISOM_TRAF_SAMPLE_SIZE;
+	if (UseDefaultDur==1)
+		traf->tfhd->flags |= GF_ISOM_TRAF_SAMPLE_DUR;
+	if (UseDefaultFlag==1)
+		traf->tfhd->flags |= GF_ISOM_TRAF_SAMPLE_FLAGS;
+	if (traf->tfhd->sample_desc_index != traf->trex->def_sample_desc_index)
+		traf->tfhd->flags |= GF_ISOM_TRAF_SAMPLE_DESC;
 
 
 	return sampleCount;
@@ -628,6 +640,7 @@ static u32 moof_get_sap_info(GF_MovieFragmentBox *moof, u32 refTrackID, u32 *sap
 
 		switch (sg->grouping_type) {
 		case GF_ISOM_SAMPLE_GROUP_RAP:
+		case GF_ISOM_SAMPLE_GROUP_SYNC:
 			rap_type = GF_TRUE;
 			break;
 		case GF_ISOM_SAMPLE_GROUP_ROLL:
@@ -785,32 +798,40 @@ GF_Err StoreFragment(GF_ISOFile *movie, Bool load_mdat_only, s32 data_offset_dif
 
 	if (load_mdat_only) {
 		u64 pos = gf_bs_get_position(bs);
+		if (movie->moof->fragment_offset > pos)
+			return GF_CORRUPTED_DATA;
+
 		//we assume we never write large MDATs in fragment mode which should always be true
 		movie->moof->mdat_size = (u32) (pos - movie->moof->fragment_offset);
 
 		if (movie->segment_bs) {
-			gf_bs_seek(bs, 0);
+			e = gf_bs_seek(bs, 0);
+			if (e) return e;
 			/*write mdat size*/
 			gf_bs_write_u32(bs, (u32) movie->moof->mdat_size);
 			/*and get internal buffer*/
-			gf_bs_seek(bs, movie->moof->mdat_size);
+			e = gf_bs_seek(bs, movie->moof->mdat_size);
+			if (e) return e;
 			gf_bs_get_content(bs, &movie->moof->mdat, &movie->moof->mdat_size);
 
 			gf_bs_del(bs);
 			movie->editFileMap->bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
 		} else {
 			u64 offset = movie->segment_start;
-			gf_bs_seek(bs, offset);
+			e = gf_bs_seek(bs, offset);
+			if (e) return e;
 			/*write mdat size*/
 			gf_bs_write_u32(bs, (u32) movie->moof->mdat_size);
 
 			movie->moof->mdat = (char*)gf_malloc(sizeof(char) * movie->moof->mdat_size);
 			if (!movie->moof->mdat) return GF_OUT_OF_MEM;
 
-			gf_bs_seek(bs, offset);
+			e = gf_bs_seek(bs, offset);
+			if (e) return e;
 			gf_bs_read_data(bs, movie->moof->mdat, movie->moof->mdat_size);
 
-			gf_bs_seek(bs, offset);
+			e = gf_bs_seek(bs, offset);
+			if (e) return e;
 			gf_bs_truncate(bs);
 		}
 
@@ -825,12 +846,14 @@ GF_Err StoreFragment(GF_ISOFile *movie, Bool load_mdat_only, s32 data_offset_dif
 
 	//2- update MOOF MDAT header
 	if (!movie->moof->mdat) {
-		gf_bs_seek(bs, movie->moof->fragment_offset);
+		e = gf_bs_seek(bs, movie->moof->fragment_offset);
+		if (e) return e;
 		//we assume we never write large MDATs in fragment mode which should always be true
 		mdat_size = (u32) (moof_start - movie->moof->fragment_offset);
 		gf_bs_write_u32(bs, (u32) mdat_size);
 		gf_bs_write_u32(bs, GF_ISOM_BOX_TYPE_MDAT);
-		gf_bs_seek(bs, moof_start);
+		e = gf_bs_seek(bs, moof_start);
+		if (e) return e;
 	}
 
 	/*estimate moof size and shift trun offsets*/
@@ -866,10 +889,12 @@ GF_Err StoreFragment(GF_ISOFile *movie, Bool load_mdat_only, s32 data_offset_dif
 	/*rewind bitstream and load mdat in memory */
 	if (movie->moof_first && !movie->moof->mdat) {
 		buffer = (char*)gf_malloc(sizeof(char)*mdat_size);
-		gf_bs_seek(bs, movie->moof->fragment_offset);
+		e = gf_bs_seek(bs, movie->moof->fragment_offset);
+		if (e) return e;
 		gf_bs_read_data(bs, buffer, mdat_size);
 		/*back to mdat start and erase with moov*/
-		gf_bs_seek(bs, movie->moof->fragment_offset);
+		e = gf_bs_seek(bs, movie->moof->fragment_offset);
+		if (e) return e;
 		gf_bs_truncate(bs);
 	}
 
@@ -940,26 +965,35 @@ GF_Err StoreFragment(GF_ISOFile *movie, Bool load_mdat_only, s32 data_offset_dif
 	return GF_OK;
 }
 
-static GF_Err sidx_rewrite(GF_SegmentIndexBox *sidx, GF_BitStream *bs, u64 start_pos)
+static GF_Err sidx_rewrite(GF_SegmentIndexBox *sidx, GF_BitStream *bs, u64 start_pos, GF_SubsegmentIndexBox *ssix)
 {
-	GF_Err e;
+	GF_Err e = GF_OK;
 	u64 pos = gf_bs_get_position(bs);
+	if (ssix) {
+		e = gf_isom_box_size((GF_Box *)ssix);
+		sidx->first_offset = ssix->size;
+	}
 	/*write sidx*/
 	gf_bs_seek(bs, start_pos);
-	e = gf_isom_box_write((GF_Box *) sidx, bs);
+	if (!e) e = gf_isom_box_write((GF_Box *) sidx, bs);
+	if (!e && ssix) {
+		e = gf_isom_box_write((GF_Box *) ssix, bs);
+	}
 	gf_bs_seek(bs, pos);
 	return e;
 }
 
-GF_Err gf_isom_allocate_sidx(GF_ISOFile *movie, s32 subsegs_per_sidx, Bool daisy_chain_sidx, u32 nb_segs, u32 *frags_per_segment, u32 *start_range, u32 *end_range)
+GF_Err gf_isom_allocate_sidx(GF_ISOFile *movie, s32 subsegs_per_sidx, Bool daisy_chain_sidx, u32 nb_segs, u32 *frags_per_segment, u32 *start_range, u32 *end_range, Bool use_ssix)
 {
 	GF_BitStream *bs;
 	GF_Err e;
+	u32 i;
 
 	//and only at setup
 	if (!movie || !(movie->FragmentsFlags & GF_ISOM_FRAG_WRITE_READY) ) return GF_BAD_PARAM;
 	if (movie->openMode != GF_ISOM_OPEN_WRITE) return GF_ISOM_INVALID_MODE;
 	if (movie->root_sidx) return GF_BAD_PARAM;
+	if (movie->root_ssix) return GF_BAD_PARAM;
 	if (movie->moof) return GF_BAD_PARAM;
 	if (gf_list_count(movie->moof_list)) return GF_BAD_PARAM;
 
@@ -975,6 +1009,20 @@ GF_Err gf_isom_allocate_sidx(GF_ISOFile *movie, s32 subsegs_per_sidx, Bool daisy
 
 	movie->root_sidx_index = 0;
 
+	if (use_ssix) {
+		movie->root_ssix = (GF_SubsegmentIndexBox *)gf_isom_box_new(GF_ISOM_BOX_TYPE_SSIX);
+		movie->root_ssix->subsegments = gf_malloc(sizeof(GF_SubsegmentInfo) * nb_segs);
+		movie->root_ssix->subsegment_count = nb_segs;
+		for (i=0; i<nb_segs; i++) {
+			movie->root_ssix->subsegments[i].range_count = 2;
+			movie->root_ssix->subsegments[i].ranges = gf_malloc(sizeof(GF_SubsegmentRangeInfo)*2);
+			movie->root_ssix->subsegments[i].ranges[0].level = 0;
+			movie->root_ssix->subsegments[i].ranges[0].range_size = 0;
+			movie->root_ssix->subsegments[i].ranges[1].level = 0xFF;
+			movie->root_ssix->subsegments[i].ranges[1].range_size = 0;
+		}
+	}
+	
 	/*remember start of sidx*/
 	movie->root_sidx_offset = gf_bs_get_position(movie->editFileMap->bs);
 
@@ -985,6 +1033,13 @@ GF_Err gf_isom_allocate_sidx(GF_ISOFile *movie, s32 subsegs_per_sidx, Bool daisy
 	e = gf_isom_box_write((GF_Box *) movie->root_sidx, bs);
 	if (e) return e;
 
+	if (movie->root_ssix) {
+		e = gf_isom_box_size((GF_Box *) movie->root_ssix);
+		if (e) return e;
+		e = gf_isom_box_write((GF_Box *) movie->root_ssix, bs);
+		if (e) return e;
+	}
+	//include ssix in index range - spec is not clear whether this is forbidden
 	if (start_range) *start_range = (u32) movie->root_sidx_offset;
 	if (end_range) *end_range = (u32) gf_bs_get_position(bs)-1;
 
@@ -1127,11 +1182,39 @@ static void compute_seg_size(GF_ISOFile *movie, u64 *out_seg_size)
 	}
 }
 
+static u32 moof_get_first_sap_end(GF_MovieFragmentBox *moof)
+{
+	u32 i, count = gf_list_count(moof->TrackList);
+	u32 base_offset = 0;
+	for (i=0; i<count; i++) {
+		u32 j, nb_trun;
+		GF_TrackFragmentBox *traf = gf_list_get(moof->TrackList, i);
+		base_offset = (u32) traf->tfhd->base_data_offset;
+
+		nb_trun = gf_list_count(traf->TrackRuns);
+		for (j=0; j<nb_trun; j++) {
+			u32 k, nb_ent;
+			GF_TrackFragmentRunBox *trun = gf_list_get(traf->TrackRuns, j);
+			u32 offset = base_offset + trun->data_offset;
+			nb_ent = gf_list_count(trun->entries);
+			for (k=0; k<nb_ent; k++) {
+				GF_TrunEntry *ent = gf_list_get(trun->entries, k);
+				if (ent->SAP_type) return offset + ent->size;
+
+				offset += ent->size;
+			}
+		}
+	}
+	return 0;
+}
+
+
 GF_EXPORT
-GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, u32 referenceTrackID, u64 ref_track_decode_time, s32 ts_shift, u64 ref_track_next_cts, Bool daisy_chain_sidx, Bool last_segment, Bool close_segment_handle, u32 segment_marker_4cc, u64 *index_start_range, u64 *index_end_range, u64 *out_seg_size)
+GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, u32 referenceTrackID, u64 ref_track_decode_time, s32 ts_shift, u64 ref_track_next_cts, Bool daisy_chain_sidx, Bool use_ssix, Bool last_segment, Bool close_segment_handle, u32 segment_marker_4cc, u64 *index_start_range, u64 *index_end_range, u64 *out_seg_size)
 {
 	GF_SegmentIndexBox *sidx=NULL;
 	GF_SegmentIndexBox *root_sidx=NULL;
+	GF_SubsegmentIndexBox *ssix=NULL;
 	GF_List *daisy_sidx = NULL;
 	u64 sidx_start, sidx_end;
 	Bool first_frag_in_subseg;
@@ -1317,6 +1400,26 @@ GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, u32 re
 			e = gf_isom_box_write((GF_Box *) sidx, movie->editFileMap->bs);
 			if (e) return e;
 
+			if (use_ssix && !ssix && !movie->root_ssix) {
+				u32 k;
+				ssix = (GF_SubsegmentIndexBox *) gf_isom_box_new(GF_ISOM_BOX_TYPE_SSIX);
+				ssix->subsegments = gf_malloc(sizeof(GF_SubsegmentInfo) * sidx->nb_refs);
+				ssix->subsegment_count = sidx->nb_refs;
+				for (k=0; k<sidx->nb_refs; k++) {
+					GF_SubsegmentInfo *subs = &ssix->subsegments[k];
+					subs->range_count = 2;
+					subs->ranges = gf_malloc(sizeof(GF_SubsegmentRangeInfo)*2);
+					subs->ranges[0].level = 1;
+					subs->ranges[1].level = 0xFF;
+					subs->ranges[0].range_size = subs->ranges[1].range_size = 0;
+				}
+
+				e = gf_isom_box_size((GF_Box *) ssix);
+				if (e) return e;
+				e = gf_isom_box_write((GF_Box *) ssix, movie->editFileMap->bs);
+				if (e) return e;
+			}
+
 			sidx_end = gf_bs_get_position(movie->editFileMap->bs);
 
 			if (daisy_sidx) {
@@ -1410,6 +1513,10 @@ GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, u32 re
 		movie->moof->fragment_offset = gf_bs_get_position(movie->editFileMap->bs);
 
 		if (!e) {
+			Bool generate_ssix = GF_FALSE;
+			if (movie->root_ssix) generate_ssix = GF_TRUE;
+			else if (use_ssix) generate_ssix = GF_TRUE;
+
 			e = StoreFragment(movie, GF_FALSE, offset_diff, &moof_size);
 
 
@@ -1449,6 +1556,21 @@ GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, u32 re
 
 				count++;
 
+				if (generate_ssix) {
+					if (movie->root_ssix)
+						ssix = movie->root_ssix;
+
+					//get
+					ssix->subsegments[cur_index].ranges[0].level = 1;
+					ssix->subsegments[cur_index].ranges[0].range_size = moof_get_first_sap_end(movie->moof);
+
+					ssix->subsegments[cur_index].ranges[1].level = 0xFF;
+					ssix->subsegments[cur_index].ranges[1].range_size = sidx->refs[cur_index].reference_size - ssix->subsegments[count-1].ranges[0].range_size;
+
+					if (movie->root_ssix)
+						ssix = NULL;
+				}
+
 				/*we are switching subsegment*/
 				frag_count--;
 
@@ -1485,7 +1607,7 @@ GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, u32 re
 						if (!sidx_idx) {
 							root_sidx->earliest_presentation_time = sidx->earliest_presentation_time;
 						}
-						sidx_rewrite(sidx, movie->editFileMap->bs, local_sidx_start);
+						sidx_rewrite(sidx, movie->editFileMap->bs, local_sidx_start, ssix);
 						gf_isom_box_del((GF_Box*)sidx);
 						sidx = NULL;
 					} else if (daisy_chain_sidx) {
@@ -1518,19 +1640,32 @@ GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, u32 re
 		if (last_segment) {
 			assert(movie->root_sidx_index == movie->root_sidx->nb_refs);
 
-			sidx_rewrite(movie->root_sidx, movie->editFileMap->bs, movie->root_sidx_offset);
+			sidx_rewrite(movie->root_sidx, movie->editFileMap->bs, movie->root_sidx_offset, movie->root_ssix);
 			gf_isom_box_del((GF_Box*) movie->root_sidx);
 			movie->root_sidx = NULL;
+
+			if (movie->root_ssix) {
+				gf_isom_box_del((GF_Box*)movie->root_ssix);
+				movie->root_ssix = NULL;
+			}
 		}
+		if (ssix)
+			gf_isom_box_del((GF_Box*)ssix);
+
 		compute_seg_size(movie, out_seg_size);
 		return GF_OK;
 	}
 
 	if (sidx) {
 		assert(!root_sidx);
-		sidx_rewrite(sidx, movie->editFileMap->bs, sidx_start);
+		sidx_rewrite(sidx, movie->editFileMap->bs, sidx_start, ssix);
 		gf_isom_box_del((GF_Box*)sidx);
 	}
+	if (ssix) {
+		gf_isom_box_del((GF_Box*)ssix);
+		ssix = NULL;
+	}
+
 	if (daisy_sidx) {
 		u32 i, j;
 		u64 last_entry_end_offset = 0;
@@ -1542,7 +1677,7 @@ GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, u32 re
 			if (!last_entry_end_offset) {
 				last_entry_end_offset = next_entry->end_offset;
 				/*rewrite last sidx*/
-				sidx_rewrite(next_entry->sidx, movie->editFileMap->bs, next_entry->start_offset);
+				sidx_rewrite(next_entry->sidx, movie->editFileMap->bs, next_entry->start_offset, NULL);
 			}
 			/*copy over SAP info for last item (which points to next item !)*/
 			entry->sidx->refs[entry->sidx->nb_refs-1] = next_entry->sidx->refs[0];
@@ -1553,7 +1688,7 @@ GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, u32 re
 			for (j=0; j<next_entry->sidx->nb_refs; j++) {
 				entry->sidx->refs[entry->sidx->nb_refs-1].subsegment_duration += next_entry->sidx->refs[j].subsegment_duration;
 			}
-			sidx_rewrite(entry->sidx, movie->editFileMap->bs, entry->start_offset);
+			sidx_rewrite(entry->sidx, movie->editFileMap->bs, entry->start_offset, NULL);
 		}
 		while (gf_list_count(daisy_sidx)) {
 			SIDXEntry *entry = (SIDXEntry*)gf_list_last(daisy_sidx);
@@ -1564,7 +1699,7 @@ GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegments_per_sidx, u32 re
 		gf_list_del(daisy_sidx);
 	}
 	if (root_sidx) {
-		sidx_rewrite(root_sidx, movie->editFileMap->bs, sidx_start);
+		sidx_rewrite(root_sidx, movie->editFileMap->bs, sidx_start, NULL);
 		gf_isom_box_del((GF_Box*)root_sidx);
 	}
 
@@ -1597,7 +1732,7 @@ GF_EXPORT
 GF_Err gf_isom_close_fragments(GF_ISOFile *movie)
 {
 	if (movie->use_segments) {
-		return gf_isom_close_segment(movie, 0, 0, 0, 0, 0, GF_FALSE, GF_FALSE, 1, 0, NULL, NULL, NULL);
+		return gf_isom_close_segment(movie, 0, 0, 0, 0, 0, 0, GF_FALSE, GF_FALSE, 1, 0, NULL, NULL, NULL);
 	} else {
 		return StoreFragment(movie, GF_FALSE, 0, NULL);
 	}
@@ -1619,7 +1754,7 @@ GF_Err gf_isom_start_segment(GF_ISOFile *movie, const char *SegName, Bool memory
 	/*update segment file*/
 	if (SegName || !gf_isom_get_filename(movie)) {
 		if (movie->editFileMap) gf_isom_datamap_del(movie->editFileMap);
-		e = gf_isom_datamap_new(SegName, NULL, GF_ISOM_DATA_MAP_WRITE, & movie->editFileMap);
+		e = gf_isom_datamap_new(SegName, NULL, GF_ISOM_DATA_MAP_WRITE, &movie->editFileMap);
 		movie->segment_start = 0;
 		movie->styp_written = GF_FALSE;
 		if (e) return e;
@@ -1719,8 +1854,31 @@ GF_Err gf_isom_start_fragment(GF_ISOFile *movie, Bool moof_first)
 		//add 8 bytes (MDAT size+type) to avoid the data_offset in the first trun
 		traf->tfhd->base_data_offset = movie->moof->fragment_offset + 8;
 		gf_list_add(movie->moof->TrackList, traf);
-	}
 
+		if (movie->mfra) {
+			GF_TrackFragmentRandomAccessBox *tfra;
+			GF_RandomAccessEntry *raf;
+			if (!traf->trex->tfra) {
+				tfra = (GF_TrackFragmentRandomAccessBox *)gf_isom_box_new(GF_ISOM_BOX_TYPE_TFRA);
+				tfra->track_id = traf->trex->trackID;
+				tfra->traf_bits = 8;
+				tfra->trun_bits = 8;
+				tfra->sample_bits = 8;
+				gf_list_add(movie->mfra->tfra_list, tfra);
+				traf->trex->tfra = tfra;
+			}
+			tfra = traf->trex->tfra;
+			tfra->entries = (GF_RandomAccessEntry *)gf_realloc(tfra->entries, (tfra->nb_entries+1)*sizeof(GF_RandomAccessEntry));
+			tfra->nb_entries++;
+			raf = &tfra->entries[tfra->nb_entries-1];
+			raf->sample_number = 1;
+			raf->time = 0;
+			raf->traf_number = i+1;
+			//trun number is set once we fond a sync
+			raf->trun_number = 0;
+			raf->moof_offset = movie->moof->fragment_offset;
+		}
+	}
 	return GF_OK;
 }
 
@@ -1850,7 +2008,7 @@ GF_Err gf_isom_fragment_add_sample(GF_ISOFile *movie, u32 TrackID, const GF_ISOS
 
 	//rewrite OD frames
 	if (traf->trex->track->Media->handler->handlerType == GF_ISOM_MEDIA_OD) {
-		//this may fail if depandancies are not well done ...
+		//this may fail if dependencies are not well done ...
 		Media_ParseODFrame(traf->trex->track->Media, sample, &od_sample);
 		sample = od_sample;
 	}
@@ -1872,6 +2030,17 @@ GF_Err gf_isom_fragment_add_sample(GF_ISOFile *movie, u32 TrackID, const GF_ISOS
 		}
 	}
 	if (od_sample) gf_isom_sample_del(&od_sample);
+
+	if (traf->trex->tfra) {
+		GF_RandomAccessEntry *raf;
+		raf = &traf->trex->tfra->entries[traf->trex->tfra->nb_entries-1];
+		//if sample is sync, store its time and trun number
+		if (!raf->trun_number && sample->IsRAP) {
+			raf->time = sample->DTS + sample->CTS_Offset;
+			raf->trun_number = gf_list_count(traf->TrackRuns);
+			raf->sample_number = trun->sample_count;
+		}
+	}
 	return GF_OK;
 }
 
@@ -1897,6 +2066,9 @@ GF_Err gf_isom_fragment_add_sai(GF_ISOFile *output, GF_ISOFile *input, u32 Track
 		gf_isom_get_sample_cenc_info(input, trackNum, SampleNum, &IsEncrypted, &IV_size, NULL, NULL, NULL, NULL, NULL);
 		e = gf_isom_cenc_get_sample_aux_info(input, trackNum, SampleNum, &sai, &boxType);
 		if (e) return e;
+		//no associated SAI (constant IV and no subsample)
+		if (!sai) return GF_OK;
+		
 		sai->IV_size = IV_size;
 
 		switch (boxType) {
@@ -1932,12 +2104,8 @@ GF_Err gf_isom_fragment_add_sai(GF_ISOFile *output, GF_ISOFile *input, u32 Track
 		gf_list_add(senc->samp_aux_info, sai);
 		if (sai->subsample_count) senc->flags = 0x00000002;
 
-		//not encrypted, saiz is 0
-		if (!IsEncrypted) {
-			gf_isom_cenc_set_saiz_saio(senc, NULL, traf, 0);
-		}
 		//no subsample (not NAL-based data), saiz is IV size only
-		else if (! sai->subsample_count) {
+		if (! sai->subsample_count) {
 			gf_isom_cenc_set_saiz_saio(senc, NULL, traf, IV_size);
 		}
 		// subsamples ( NAL-based data), saiz is IV size + nb subsamples (2 bytes) + 6 bytes per subsample
@@ -2106,6 +2274,7 @@ GF_Err gf_isom_fragment_copy_subsample(GF_ISOFile *dest, u32 TrackID, GF_ISOFile
 		count = gf_list_count(trak->Media->information->sampleTable->sampleGroups);
 		for (i=0; i<count; i++) {
 			GF_SampleGroupBox *sg;
+			Bool found = GF_FALSE;
 			u32 j;
 			u32 first_sample_in_entry, last_sample_in_entry;
 			first_sample_in_entry = 1;
@@ -2125,7 +2294,16 @@ GF_Err gf_isom_fragment_copy_subsample(GF_ISOFile *dest, u32 TrackID, GF_ISOFile
 				e = gf_isom_copy_sample_group_entry_to_traf(traf, trak->Media->information->sampleTable, sg->grouping_type, sg->grouping_type_parameter,  sg->sample_entries[j].group_description_index, sgpd_in_traf);
 				if (e) return e;
 
+				found = GF_TRUE;
 				break;
+			}
+			//unmapped sample
+			if (!found) {
+				if (!traf->sampleGroups)
+					traf->sampleGroups = gf_list_new();
+
+				e = gf_isom_copy_sample_group_entry_to_traf(traf, trak->Media->information->sampleTable, sg->grouping_type, sg->grouping_type_parameter,  0, sgpd_in_traf);
+				if (e) return e;
 			}
 		}
 	}
@@ -2168,6 +2346,14 @@ GF_Err gf_isom_set_traf_base_media_decode_time(GF_ISOFile *movie, u32 TrackID, u
 		if (!traf->tfdt) return GF_OUT_OF_MEM;
 	}
 	traf->tfdt->baseMediaDecodeTime = decode_time;
+	return GF_OK;
+}
+
+GF_Err gf_isom_enable_mfra(GF_ISOFile *file)
+{
+	if (!file) return GF_BAD_PARAM;
+	file->mfra = (GF_MovieFragmentRandomAccessBox *)gf_isom_box_new(GF_ISOM_BOX_TYPE_MFRA);
+	if (!file->mfra) return GF_OUT_OF_MEM;
 	return GF_OK;
 }
 
@@ -2237,6 +2423,12 @@ GF_Err gf_isom_set_traf_mss_timeext(GF_ISOFile *movie, u32 reference_track_ID, u
 {
 	return GF_NOT_SUPPORTED;
 }
+
+GF_Err gf_isom_enable_mfra(GF_ISOFile *file)
+{
+	return GF_NOT_SUPPORTED;
+}
+
 
 #endif /*GPAC_DISABLE_ISOM_FRAGMENTS)*/
 

@@ -173,20 +173,37 @@ static struct log_tool_info {
 	{ GF_LOG_SCHEDULER, "scheduler", GF_LOG_INFO },
 };
 
+#define GF_LOG_TOOL_MAX_NAME_SIZE (GF_LOG_TOOL_MAX*10)
+
 GF_EXPORT
-GF_Err gf_log_modify_tools_levels(const char *val)
+GF_Err gf_log_modify_tools_levels(const char *val_)
 {
 #ifndef GPAC_DISABLE_LOG
-	u32 level;
-	char *sep, *sep_level;
+	char tmp[GF_LOG_TOOL_MAX_NAME_SIZE];
+	const char *val = tmp;
+	if (!val_) val_ = "";
+	assert(strlen(val_) < GF_LOG_TOOL_MAX_NAME_SIZE);
+	strncpy(tmp, val_, GF_LOG_TOOL_MAX_NAME_SIZE - 1);
+	tmp[GF_LOG_TOOL_MAX_NAME_SIZE - 1] = 0;
+
 	while (val && strlen(val)) {
+		u32 level;
 		const char *next_val = NULL;
 		const char *tools = NULL;
 		/*look for log level*/
-		sep_level = strchr(val, '@');
+		char *sep_level = strchr(val, '@');
 		if (!sep_level) {
-			fprintf(stderr, "Unrecognized log format %s - expecting logTool@logLevel\n", val);
-			return GF_BAD_PARAM;
+			if (!strcmp(val, "ncl")) {
+				void default_log_callback_no_col(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list vlist);
+
+				gf_log_set_callback(NULL, default_log_callback_no_col);
+				if (!val[3]) break;
+				val += 4;
+				continue;
+			} else {
+				fprintf(stderr, "Unrecognized log format %s - expecting logTool@logLevel\n", val);
+				return GF_BAD_PARAM;
+			}
 		}
 
 		if (!strnicmp(sep_level+1, "error", 5)) {
@@ -219,7 +236,7 @@ GF_Err gf_log_modify_tools_levels(const char *val)
 		while (tools) {
 			u32 i;
 
-			sep = strchr(tools, ':');
+			char *sep = strchr(tools, ':');
 			if (sep) sep[0] = 0;
 
 			if (!stricmp(tools, "all")) {
@@ -339,6 +356,11 @@ Bool gf_log_tool_level_on(GF_LOG_Tool log_tool, GF_LOG_Level log_level)
 	return GF_FALSE;
 }
 
+void default_log_callback_no_col(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool, const char *fmt, va_list vlist)
+{
+	vfprintf(stderr, fmt, vlist);
+}
+
 #define RED    "\x1b[31m"
 #define YELLOW "\x1b[33m"
 #define GREEN  "\x1b[32m"
@@ -375,7 +397,7 @@ void default_log_callback(void *cbck, GF_LOG_Level level, GF_LOG_Tool tool, cons
 			SetConsoleTextAttribute(console, FOREGROUND_GREEN | FOREGROUND_RED | FOREGROUND_BLUE);
 			break;
 	}
-	
+
 	vfprintf(stderr, fmt, vlist);
 	SetConsoleTextAttribute(console, console_attr_ori);
 #elif !defined(_WIN32_WCE)
@@ -775,7 +797,9 @@ const char *gpac_features()
 #ifdef GPAC_DISABLE_STREAMING
 	                       "GPAC_DISABLE_STREAMING "
 #endif
-
+#ifdef GPAC_DISABLE_ATSC
+	                       "GPAC_DISABLE_ATSC "
+#endif
 	                       ;
 	return features;
 }

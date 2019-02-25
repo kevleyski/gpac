@@ -1241,7 +1241,7 @@ GF_Err gf_xml_sax_parse_file(GF_SAXParser *parser, const char *fileName, gf_xml_
 	test = gf_fopen(fileName, "rb");
 	if (!test) return GF_URL_ERROR;
 	gf_fseek(test, 0, SEEK_END);
-	assert(gf_ftell(test) < 1<<31);
+	assert(gf_ftell(test) < 0xFFFFFFFF);
 	parser->file_size = (u32) gf_ftell(test);
 	gf_fclose(test);
 
@@ -2062,7 +2062,11 @@ static GF_Err gf_xml_parse_bit_sequence_bs(GF_XMLNode *bsroot, GF_BitStream *bs)
 				value = GF_4CC(att->value[0], att->value[1], att->value[2], att->value[3]);
 				nb_bits = 32;
 			} else if (!stricmp(att->name, "ID128")) {
-				gf_bin128_parse(att->value, word128);
+				GF_Err e = gf_bin128_parse(att->value, word128);
+                if (e != GF_OK) {
+                    GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[XML/NHML] Cannot parse ID128\n"));
+                    return e;
+                }
 				use_word128 = GF_TRUE;
 			} else if (!stricmp(att->name, "textmode")) {
 				if (!strcmp(att->value, "yes")) use_text = GF_TRUE;

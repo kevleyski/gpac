@@ -383,7 +383,10 @@ static GF_Err MPD_ClientQuery(GF_InputService *ifce, GF_NetworkCommand *param)
 				break;
 
 			if (group_done) {
-				if (!gf_dash_get_period_switch_status(mpdin->dash) && !gf_dash_in_last_period(mpdin->dash, GF_TRUE)) {
+				if (gf_dash_is_group_selected(mpdin->dash, group_idx)
+				&& !gf_dash_get_period_switch_status(mpdin->dash)
+				&& !gf_dash_in_last_period(mpdin->dash, GF_TRUE)
+				) {
 					GF_NetworkCommand com;
 					param->url_query.in_end_of_period = 1;
 					memset(&com, 0, sizeof(GF_NetworkCommand));
@@ -438,8 +441,10 @@ static GF_Err MPD_ClientQuery(GF_InputService *ifce, GF_NetworkCommand *param)
 
 		param->url_query.key_IV = &group->key_IV;
 
-		if (gf_dash_group_loop_detected(mpdin->dash, group_idx))
+		if (gf_dash_group_loop_detected(mpdin->dash, group_idx)) {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_DASH, ("[MPD_IN] Clock discontinuity found\n"));
 			param->url_query.discontinuity_type = 2;
+		}
 
 
 #ifndef GPAC_DISABLE_LOG
@@ -923,6 +928,13 @@ GF_Err mpdin_dash_io_on_dash_event(GF_DASHFileIO *dashio, GF_DASHEventType dash_
 		gf_service_command(mpdin->service, &com, GF_OK);
 		gf_dash_group_set_buffer_levels(mpdin->dash, group_idx, com.buffer.min, com.buffer.max, com.buffer.occupancy);
 	}
+	if (dash_evt==GF_DASH_EVENT_CACHE_FULL) {
+		for (i=0; i<gf_dash_get_group_count(mpdin->dash); i++) {
+			GF_MPDGroup *group = gf_dash_get_group_udta(mpdin->dash, i);
+			if (group && gf_dash_is_group_selected(mpdin->dash, i))
+				MPD_NotifyData(group, 0);
+		}
+	}
 
 	return GF_OK;
 }
@@ -1194,6 +1206,10 @@ GF_Err MPD_ConnectService(GF_InputService *plug, GF_ClientService *serv, const c
 	else
 		gf_dash_disable_speed_adaptation(mpdin->dash, GF_TRUE);
 
+
+	opt = gf_modules_get_option((GF_BaseInterface *)plug, "DASH", "UTCShiftATSC");
+	if (!opt) gf_modules_set_option((GF_BaseInterface *)plug, "DASH", "UTCShiftATSC", "1000");
+	else gf_dash_set_atsc_ast_shift(mpdin->dash, atoi(opt) );
 
 	/*dash thread starts at the end of gf_dash_open */
 	e = gf_dash_open(mpdin->dash, url);

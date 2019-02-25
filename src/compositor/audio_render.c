@@ -229,13 +229,38 @@ void gf_afc_reset(GF_AudioFilterChain *afc)
 static GF_Err gf_ar_setup_output_format(GF_AudioRenderer *ar)
 {
 	GF_Err e;
+	const char *opt;
+	Bool skip_hw_config = GF_FALSE;
 	u32 freq, nb_bits, nb_chan, ch_cfg;
 	u32 in_ch, in_cfg, in_bps, in_freq;
 
-	gf_mixer_get_config(ar->mixer, &freq, &nb_chan, &nb_bits, &ch_cfg);
+	freq = nb_bits = nb_chan = ch_cfg = 0;
+	opt = gf_cfg_get_key(ar->user->config, "Audio", "ForceFrequency");
+	if (!opt) gf_cfg_set_key(ar->user->config, "Audio", "ForceFrequency", "0");
+	else freq = atoi(opt);
+	opt = gf_cfg_get_key(ar->user->config, "Audio", "ForceChannels");
+	if (!opt) gf_cfg_set_key(ar->user->config, "Audio", "ForceChannels", "0");
+	else nb_chan = atoi(opt);
+	opt = gf_cfg_get_key(ar->user->config, "Audio", "ForceLayout");
+	if (!opt) gf_cfg_set_key(ar->user->config, "Audio", "ForceLayout", "0");
+	else {
+		if (!strnicmp(opt, "0x", 2)) sscanf(opt+2, "%x", &ch_cfg);
+		else sscanf(opt, "%x", &ch_cfg);
+    }
+	opt = gf_cfg_get_key(ar->user->config, "Audio", "ForceBPS");
+	if (!opt) gf_cfg_set_key(ar->user->config, "Audio", "ForceBPS", "0");
+	else nb_bits = atoi(opt);
 
-	/*user disabled multichannel audio*/
-	if (ar->disable_multichannel && (nb_chan>2) ) nb_chan = 2;
+	if (!freq || !nb_bits || !nb_chan || !ch_cfg) {
+		gf_mixer_get_config(ar->mixer, &freq, &nb_chan, &nb_bits, &ch_cfg);
+
+		/*user disabled multichannel audio*/
+		if (ar->disable_multichannel && (nb_chan>2) ) nb_chan = 2;
+	} else {
+		if (ar->config_forced) skip_hw_config = GF_TRUE;
+		else ar->config_forced++;
+	}
+
 
 	in_ch = nb_chan;
 	in_cfg = ch_cfg;
@@ -262,8 +287,10 @@ static GF_Err gf_ar_setup_output_format(GF_AudioRenderer *ar)
 			ar->filter_chain.enable_filters = GF_FALSE;
 			e = ar->audio_out->ConfigureOutput(ar->audio_out, &freq, &nb_chan, &nb_bits, ch_cfg);
 		}
-	} else {
+	} else if (!skip_hw_config) {
 		e = ar->audio_out->ConfigureOutput(ar->audio_out, &freq, &nb_chan, &nb_bits, ch_cfg);
+	} else {
+		e = GF_OK;
 	}
 
 	if (e) {
@@ -276,15 +303,15 @@ static GF_Err gf_ar_setup_output_format(GF_AudioRenderer *ar)
 		}
 		if (e) return e;
 	}
-	gf_mixer_set_config(ar->mixer, freq, nb_chan, nb_bits, in_cfg);
-	ar->audio_delay = ar->audio_out->GetAudioDelay(ar->audio_out);
-
-	ar->audio_out->SetVolume(ar->audio_out, ar->volume);
-	ar->audio_out->SetPan(ar->audio_out, ar->pan);
 
 	ar->time_at_last_config = ar->current_time;
 	ar->bytes_requested = 0;
 	ar->bytes_per_second = freq * nb_chan * nb_bits / 8;
+	gf_mixer_set_config(ar->mixer, freq, nb_chan, nb_bits, in_cfg);
+
+	ar->audio_delay = ar->audio_out->GetAudioDelay(ar->audio_out);
+	ar->audio_out->SetVolume(ar->audio_out, ar->volume);
+	ar->audio_out->SetPan(ar->audio_out, ar->pan);
 
 	if (ar->audio_listeners) {
 		u32 k=0;
@@ -322,7 +349,8 @@ static u32 gf_ar_fill_output(void *ptr, char *buffer, u32 buffer_size)
 {
 	u32 written;
 	GF_AudioRenderer *ar = (GF_AudioRenderer *) ptr;
-	if (!ar->need_reconfig) {
+	//we are configured (ar->bytes_per_second != 0) and don't need reconfig
+	if (!ar->need_reconfig && ar->bytes_per_second) {
 		u32 delay_ms = ar->disable_resync ?	0 : ar->audio_delay;
 
 		if (ar->Frozen) {
@@ -387,6 +415,8 @@ static u32 gf_ar_fill_output(void *ptr, char *buffer, u32 buffer_size)
 		}
 		//always return buffer size (eg requested input size to be filled), since the clock is always increased by buffer_size (cf above line)
 		return buffer_size;
+	} else {
+		memset(buffer, 0, buffer_size);
 	}
 	return 0;
 }

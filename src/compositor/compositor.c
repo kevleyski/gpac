@@ -177,7 +177,7 @@ static void gf_sc_reconfig_task(GF_Compositor *compositor)
 			GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[Compositor] Changing display size to %d x %d\n", compositor->new_width, compositor->new_height));
 			fs_width = fs_height = 0;
 			if (restore_fs) {
-#ifdef GPAC_IPHONE
+#if defined(GPAC_ANDROID) || defined(GPAC_IPHONE)
 				if ((compositor->new_width>compositor->display_width) || (compositor->new_height>compositor->display_height)) {
 					u32 w = compositor->display_width;
 					compositor->display_width = compositor->display_height;
@@ -1523,6 +1523,19 @@ void gf_sc_reload_config(GF_Compositor *compositor)
 		gf_cfg_set_key(compositor->user->config, "Compositor", "TileVisibilityTest", "30-0");
 	} else {
 		sscanf(sOpt, "%u-%u", &compositor->tile_visibility_nb_tests, &compositor->tile_visibility_threshold);
+	}
+
+	sOpt = gf_cfg_get_key(compositor->user->config, "Compositor", "TileVisibilityDebug");
+	if (!sOpt) {
+		gf_cfg_set_key(compositor->user->config, "Compositor", "TileVisibilityDebug", "no");
+	} else if (!strcmp(sOpt, "yes")) {
+		compositor->tile_visibility_debug = GF_TRUE;
+	}
+	sOpt = gf_cfg_get_key(compositor->user->config, "Compositor", "TileVisibilityForced");
+	if (!sOpt) {
+		gf_cfg_set_key(compositor->user->config, "Compositor", "TileVisibilityForced", "no");
+	} else if (!strcmp(sOpt, "yes")) {
+		compositor->force_all_tiles_visible = GF_TRUE;
 	}
 
 #endif //GPAC_DISABLE_3D

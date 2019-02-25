@@ -491,6 +491,7 @@ void gf_scene_remove_object(GF_Scene *scene, GF_ObjectManager *odm, u32 for_shut
 #ifndef GPAC_DISABLE_X3D
 					case TAG_X3D_Inline:
 #endif
+						if (obj->num_open) gf_mo_stop(obj);
 						gf_node_set_private(n, NULL);
 						break;
 					}
@@ -1251,16 +1252,16 @@ static void scene_video_mouse_move(void *param, GF_FieldInfo *field)
 	}
 }
 
-static GF_Node *load_vr_proto_node(GF_SceneGraph *sg, const char *def_name)
+static GF_Node *load_vr_proto_node(GF_SceneGraph *sg, const char *name, const char *def_name)
 {
 	GF_Proto *proto;
 	GF_Node *node;
-	char *name = "urn:inet:gpac:builtin:VRGeometry";
+	if (!name) name = "urn:inet:gpac:builtin:VRGeometry";
 
-	proto = gf_sg_find_proto(sg, 0, name);
+	proto = gf_sg_find_proto(sg, 0, (char *) name);
 	if (!proto) {
 		MFURL *url;
-		proto = gf_sg_proto_new(sg, 0, name, GF_FALSE);
+		proto = gf_sg_proto_new(sg, 0,  (char *) name, GF_FALSE);
 		url = gf_sg_proto_get_extern_url(proto);
 		if (url)
 			url->vals = gf_malloc(sizeof(SFURL));
@@ -1269,7 +1270,6 @@ static GF_Node *load_vr_proto_node(GF_SceneGraph *sg, const char *def_name)
 			return NULL;
 		}
 		url->count=1;
-		url->vals = gf_malloc(sizeof(SFURL));
 		url->vals[0].url = gf_strdup(name);
 	}
 	node = gf_sg_proto_create_instance(sg, proto);
@@ -1309,7 +1309,7 @@ static void create_movie(GF_Scene *scene, GF_Node *root, const char *tr_name, co
 		GF_Node *app = n2;
 
 		if (scene->vr_type) {
-			n2 = load_vr_proto_node(scene->graph, name_geo);
+			n2 = load_vr_proto_node(scene->graph, NULL, name_geo);
 		} else {
 			n2 = is_create_node(scene->graph, TAG_MPEG4_Rectangle, name_geo);
 		}
@@ -1337,7 +1337,7 @@ just once when receiving the first OD AU (ressources are NOT destroyed when seek
 to update the OD ressources, we still take care of it*/
 void gf_scene_regenerate(GF_Scene *scene)
 {
-	GF_Node *n1, *n2;
+	GF_Node *n1, *n2, *root;
 	GF_Event evt;
 	M_AudioClip *ac;
 	M_MovieTexture *mt;
@@ -1352,7 +1352,7 @@ void gf_scene_regenerate(GF_Scene *scene)
 
 	gf_sc_lock(scene->root_od->term->compositor, 1);
 
-	ac = (M_AudioClip *) gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO");
+	ac = (M_AudioClip *) gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO1");
 
 	/*this is the first time, generate a scene graph*/
 	if (!ac) {
@@ -1362,6 +1362,7 @@ void gf_scene_regenerate(GF_Scene *scene)
 		n1 = is_create_node(scene->graph, scene->vr_type ? TAG_MPEG4_Group : TAG_MPEG4_OrderedGroup, NULL);
 		gf_sg_set_root_node(scene->graph, n1);
 		gf_node_register(n1, NULL);
+		root = n1;
 
 		if (! scene->root_od->parentscene) {
 			n2 = is_create_node(scene->graph, TAG_MPEG4_Background2D, "DYN_BACK");
@@ -1403,7 +1404,7 @@ void gf_scene_regenerate(GF_Scene *scene)
 		gf_node_list_add_child( &((GF_ParentNode *)n1)->children, n2);
 		gf_node_register(n2, n1);
 
-		ac = (M_AudioClip *) is_create_node(scene->graph, TAG_MPEG4_AudioClip, "DYN_AUDIO");
+		ac = (M_AudioClip *) is_create_node(scene->graph, TAG_MPEG4_AudioClip, "DYN_AUDIO1");
 		ac->startTime = gf_scene_get_time(scene);
 		((M_Sound2D *)n2)->source = (GF_Node *)ac;
 		gf_node_register((GF_Node *)ac, n2);
@@ -1457,6 +1458,12 @@ void gf_scene_regenerate(GF_Scene *scene)
 			gf_node_list_add_child( &((GF_ParentNode *)addon_layer)->children, (GF_Node*)addon_scene);
 			gf_node_register((GF_Node *)addon_scene, (GF_Node *)addon_layer);
 		}
+		//VR mode, add VR headup
+		else {
+			GF_Node *vrhud = load_vr_proto_node(scene->graph, "urn:inet:gpac:builtin:VRHUD", NULL);
+			gf_node_list_add_child( &((GF_ParentNode *)root)->children, (GF_Node*)vrhud);
+			gf_node_register(vrhud, root);
+		}
 
 
 		//send activation for sensors
@@ -1471,9 +1478,42 @@ void gf_scene_regenerate(GF_Scene *scene)
 		}
 	}
 
+	if (scene->ambisonic_type) {
+		char szName[20];
+		SFURL url;
+		u32 i, count;
+		GF_Node *an, *root = gf_sg_get_root_node(scene->graph);
+		url.url = NULL;
+		url.OD_ID = 0;
 
-	ac = (M_AudioClip *) gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO");
-	set_media_url(scene, &scene->audio_url, (GF_Node*)ac, &ac->url, GF_STREAM_AUDIO);
+		count = gf_list_count(scene->resources);
+		for (i=0; i<count; i++) {
+			GF_ObjectManager *odm = gf_list_get(scene->resources, i);
+			if (!odm->ambi_ch_id) continue;
+
+			sprintf(szName, "DYN_AUDIO%d", odm->ambi_ch_id);
+			an = gf_sg_find_node_by_name(scene->graph, szName);
+			if (!an) {
+				/*create an sound2D and an audioClip node*/
+				an = is_create_node(scene->graph, TAG_MPEG4_Sound2D, NULL);
+				gf_node_list_add_child( &((GF_ParentNode *)root)->children, an);
+				gf_node_register(an, root);
+
+				ac = (M_AudioClip *) is_create_node(scene->graph, TAG_MPEG4_AudioClip, szName);
+				ac->startTime = gf_scene_get_time(scene);
+				((M_Sound2D *)an)->source = (GF_Node *)ac;
+				gf_node_register((GF_Node *)ac, an);
+			}
+			ac = (M_AudioClip *) gf_sg_find_node_by_name(scene->graph, szName);
+
+			url.OD_ID = odm->OD->objectDescriptorID;
+			set_media_url(scene, &url, (GF_Node*)ac, &ac->url, GF_STREAM_AUDIO);
+		}
+	} else {
+		ac = (M_AudioClip *) gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO1");
+		set_media_url(scene, &scene->audio_url, (GF_Node*)ac, &ac->url, GF_STREAM_AUDIO);
+	}
+
 
 	if (scene->srd_type) {
 		char szName[20], szTex[20], szGeom[20];
@@ -1695,6 +1735,30 @@ void gf_scene_set_service_id(GF_Scene *scene, u32 service_id)
 
 	gf_sc_lock(scene->root_od->term->compositor, 1);
 	if (scene->selected_service_id != service_id) {
+		u32 i;
+		GF_ObjectManager *odm, *remote_odm = NULL;
+		//delete all objects with given service ID
+		i=0;
+		while ((odm = gf_list_enum(scene->resources, &i))) {
+			if (odm->OD->ServiceID!=scene->selected_service_id) continue;
+			if (odm->OD->URLString) {
+				remote_odm = odm;
+				assert(remote_odm->net_service->nb_odm_users);
+				remote_odm->net_service->nb_odm_users--;
+				remote_odm->net_service = scene->root_od->net_service;
+				remote_odm->net_service->nb_odm_users++;
+			}
+			//delete all objects from this service
+			else if (remote_odm) {
+				gf_term_lock_media_queue(scene->root_od->term, 1);
+				if (odm->net_service==remote_odm->net_service) odm->net_service->owner = odm;
+				odm->action_type = GF_ODM_ACTION_DELETE;
+				gf_list_add(scene->root_od->term->media_queue, odm);
+				gf_term_lock_media_queue(scene->root_od->term, 0);
+			}
+		}
+		GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[Scene] Switching %s from service %d to service %d (media time %g)\n", scene->root_od->net_service->url, scene->selected_service_id, service_id, (Double)scene->root_od->media_start_time/1000.0));
+
 		scene->selected_service_id = service_id;
 		scene->audio_url.OD_ID = 0;
 		scene->visual_url.OD_ID = 0;
@@ -1706,7 +1770,20 @@ void gf_scene_set_service_id(GF_Scene *scene, u32 service_id)
 			scene->root_od->media_start_time = gf_clock_media_time(scene->dyn_ck);
 			scene->dyn_ck = NULL;
 		}
-		GF_LOG(GF_LOG_INFO, GF_LOG_MEDIA, ("[Scene] Switching %s from service %d to service %d (media time %g)\n", scene->root_od->net_service->url, scene->selected_service_id, service_id, (Double)scene->root_od->media_start_time/1000.0));
+		if (remote_odm) {
+			i=0;
+			while ((odm = gf_list_enum(scene->resources, &i))) {
+				if (odm->OD->ServiceID!=scene->selected_service_id) continue;
+				if (odm->OD->RedirectOnly) {
+					//gf_odm_setup_object will increment the number of odms in net service (it's supposed to
+					//be called only upon startup, but we reuse the function). Since we are already registered
+					//with the service, decrement before calling
+					odm->net_service->nb_odm_users--;
+					gf_odm_setup_object(odm, odm->net_service);
+				}
+				break;
+			}
+		}
 		gf_scene_regenerate(scene);
 	}
 	gf_sc_lock(scene->root_od->term->compositor, 0);
@@ -1729,7 +1806,7 @@ void gf_scene_select_object(GF_Scene *scene, GF_ObjectManager *odm)
 
 
 	if (odm->state) {
-		if (check_odm_deactivate(&scene->audio_url, odm, gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO")) ) return;
+		if (check_odm_deactivate(&scene->audio_url, odm, gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO1")) ) return;
 		if (check_odm_deactivate(&scene->visual_url, odm, gf_sg_find_node_by_name(scene->graph, "DYN_VIDEO1") )) return;
 		if (check_odm_deactivate(&scene->text_url, odm, gf_sg_find_node_by_name(scene->graph, "DYN_TEXT") )) return;
 	}
@@ -1737,6 +1814,9 @@ void gf_scene_select_object(GF_Scene *scene, GF_ObjectManager *odm)
 
 	if (!odm->codec && odm->subscene) {
 		M_Inline *dscene = (M_Inline *) gf_sg_find_node_by_name(scene->graph, "ADDON_SCENE");
+
+		if (!dscene)
+			return;
 
 		if (odm->addon && odm->addon->addon_type==GF_ADDON_TYPE_MAIN) {
 			return;
@@ -1749,7 +1829,7 @@ void gf_scene_select_object(GF_Scene *scene, GF_ObjectManager *odm)
 	}
 
 	if (odm->codec->type == GF_STREAM_AUDIO) {
-		M_AudioClip *ac = (M_AudioClip *) gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO");
+		M_AudioClip *ac = (M_AudioClip *) gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO1");
 		if (!ac) return;
 		if (scene->audio_url.url) gf_free(scene->audio_url.url);
 		scene->audio_url.url = NULL;
@@ -1822,7 +1902,7 @@ void gf_scene_select_main_addon(GF_Scene *scene, GF_ObjectManager *odm, Bool set
 	scene->main_addon_selected = set_on;
 
 	if (set_on) {
-		odm_deactivate(gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO"));
+		odm_deactivate(gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO1"));
 		odm_deactivate(gf_sg_find_node_by_name(scene->graph, "DYN_VIDEO1"));
 		odm_deactivate(gf_sg_find_node_by_name(scene->graph, "DYN_TEXT"));
 
@@ -1851,7 +1931,7 @@ void gf_scene_select_main_addon(GF_Scene *scene, GF_ObjectManager *odm, Bool set
 		scene->sys_clock_at_main_activation = 0;
 		scene->obj_clock_at_main_activation = 0;
 
-		odm_activate(&scene->audio_url, gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO"));
+		odm_activate(&scene->audio_url, gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO1"));
 		odm_activate(&scene->visual_url, gf_sg_find_node_by_name(scene->graph, "DYN_VIDEO1"));
 		odm_activate(&scene->text_url, gf_sg_find_node_by_name(scene->graph, "DYN_TEXT"));
 
@@ -2042,7 +2122,7 @@ void gf_scene_restart_dynamic(GF_Scene *scene, s64 from_time, Bool restart_only,
 
 	/*also check nodes since they may be deactivated (end of stream)*/
 	if (scene->is_dynamic_scene) {
-		M_AudioClip *ac = (M_AudioClip *) gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO");
+		M_AudioClip *ac = (M_AudioClip *) gf_sg_find_node_by_name(scene->graph, "DYN_AUDIO1");
 		M_MovieTexture *mt = (M_MovieTexture *) gf_sg_find_node_by_name(scene->graph, "DYN_VIDEO1");
 		M_AnimationStream *as = (M_AnimationStream *) gf_sg_find_node_by_name(scene->graph, "DYN_TEXT");
 		if (ac) {
@@ -2086,7 +2166,7 @@ void gf_scene_force_size(GF_Scene *scene, u32 width, u32 height)
 		if (! scene->srd_type) {
 			GF_Node *node = gf_sg_find_node_by_name(scene->graph, "DYN_GEOM1");
 			if (node && (((M_Sphere *)node)->radius == FIX_ONE)) {
-				u32 radius = MAX(width, height) / 2;
+				u32 radius = MAX(width, height)/4;
 
 				((M_Sphere *)node)->radius = - INT2FIX(radius);
 				gf_node_changed(node, NULL);
@@ -2580,11 +2660,14 @@ restart:
 void gf_scene_reset_addon(GF_AddonMedia *addon, Bool disconnect)
 {
 	if (addon->root_od) {
+		GF_Terminal *term = addon->root_od->term;
+		gf_term_lock_net(term, GF_TRUE);
 		addon->root_od->addon = NULL;
-		if (disconnect) {
+		if (disconnect) {				
 			gf_scene_remove_object(addon->root_od->parentscene, addon->root_od, 2);
 			gf_odm_disconnect(addon->root_od, 1);
 		}
+		gf_term_lock_net(term, GF_FALSE);
 	}
 
 	if (addon->url) gf_free(addon->url);
@@ -2597,7 +2680,7 @@ void gf_scene_reset_addons(GF_Scene *scene)
 		GF_AddonMedia *addon = gf_list_last(scene->declared_addons);
 		gf_list_rem_last(scene->declared_addons);
 
-		gf_scene_reset_addon(addon, 0);
+		gf_scene_reset_addon(addon, GF_FALSE);
 	}
 }
 
@@ -2619,7 +2702,10 @@ static void load_associated_media(GF_Scene *scene, GF_AddonMedia *addon)
 	//we force the timeline of the addon to be locked with the main scene
 	mo = gf_scene_get_media_object(scene, &url, GF_MEDIA_OBJECT_SCENE, GF_TRUE);
 
-	if (!mo || !mo->odm) return;
+	if (!mo || !mo->odm) {
+		assert(0);
+		return;
+	}
 
 	addon->root_od = mo->odm;
 	mo->odm->addon = addon;
@@ -2684,8 +2770,10 @@ void gf_scene_register_associated_media(GF_Scene *scene, GF_AssociatedContentLoc
 				load_associated_media(scene, addon);
 			}
 			//nothing associated, deactivate addon
-			if (!addon_info->external_URL) {
-				gf_scene_reset_addon(addon, 1);
+			if (!addon_info->external_URL || !strlen(addon_info->external_URL) ) {
+				gf_list_rem(scene->declared_addons, i);
+				gf_scene_reset_addon(addon, GF_TRUE);
+				gf_scene_toggle_addons(scene, GF_FALSE);
 			} else if (strcmp(addon_info->external_URL, addon->url)) {
 				//reconfigure addon
 				gf_free(addon->url);
@@ -2697,7 +2785,7 @@ void gf_scene_register_associated_media(GF_Scene *scene, GF_AssociatedContentLoc
 		addon = NULL;
 	}
 
-	if (!addon_info->external_URL) {
+	if (!addon_info->external_URL || !strlen(addon_info->external_URL) ) {
 		return;
 	}
 

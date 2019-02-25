@@ -66,7 +66,7 @@ GF_Err stbl_findEntryForTime(GF_SampleTableBox *stbl, u64 DTS, u8 useCTS, u32 *s
 			if ( i && (curDTS + CTSOffset > DTS) ) {
 				ent = &stbl->TimeToSample->entries[i];
 				curSampNum -= ent->sampleCount;
-				curDTS -= ent->sampleDelta * ent->sampleCount;
+				curDTS -= (u64)ent->sampleDelta * ent->sampleCount;
 				i --;
 			} else if (!i) {
 				//beginning of the table, no choice
@@ -96,7 +96,7 @@ GF_Err stbl_findEntryForTime(GF_SampleTableBox *stbl, u64 DTS, u8 useCTS, u32 *s
 			curDTS += ent->sampleDelta;
 		}
 		//we're switching to the next entry, update the cache!
-		stbl->TimeToSample->r_CurrentDTS += ent->sampleCount * ent->sampleDelta;
+		stbl->TimeToSample->r_CurrentDTS += (u64)ent->sampleCount * ent->sampleDelta;
 		stbl->TimeToSample->r_currentEntryIndex += 1;
 		stbl->TimeToSample->r_FirstSampleInEntry += ent->sampleCount;
 	}
@@ -206,7 +206,7 @@ GF_Err stbl_GetSampleDTS_and_Duration(GF_TimeToSampleBox *stts, u32 SampleNumber
 		}
 
 		//update our cache
-		stts->r_CurrentDTS += ent->sampleCount * ent->sampleDelta;
+		stts->r_CurrentDTS += (u64)ent->sampleCount * ent->sampleDelta;
 		stts->r_currentEntryIndex += 1;
 		stts->r_FirstSampleInEntry += ent->sampleCount;
 	}
@@ -282,6 +282,7 @@ GF_Err stbl_SearchSAPs(GF_SampleTableBox *stbl, u32 SampleNumber, SAPType *IsRAP
 		GF_SampleGroupBox *sg = gf_list_get(stbl->sampleGroups, i);
 		switch (sg->grouping_type) {
 		case GF_ISOM_SAMPLE_GROUP_RAP:
+		case GF_ISOM_SAMPLE_GROUP_SYNC:
 			is_rap_group = 1;
 			break;
 		case GF_ISOM_SAMPLE_GROUP_ROLL:
@@ -557,7 +558,9 @@ GF_Err stbl_GetSampleDepType(GF_SampleDependencyTypeBox *sdep, u32 SampleNumber,
 	assert(dependsOn && dependedOn && redundant);
 	*dependsOn = *dependedOn = *redundant = 0;
 
-	if (SampleNumber > sdep->sampleCount) return GF_BAD_PARAM;
+	if (SampleNumber > sdep->sampleCount) {
+		return GF_OK;
+	}
 	flag = sdep->sample_info[SampleNumber-1];
 	*isLeading = (flag >> 6) & 3;
 	*dependsOn = (flag >> 4) & 3;
@@ -566,56 +569,5 @@ GF_Err stbl_GetSampleDepType(GF_SampleDependencyTypeBox *sdep, u32 SampleNumber,
 	return GF_OK;
 }
 
-u32 stbl_GetSampleFragmentCount(GF_SampleFragmentBox *stsf, u32 sampleNumber)
-{
-	GF_StsfEntry *ent;
-	u32 i, count;
-	if (!stsf) return 0;
-
-	//check cache
-	if (!stsf->r_currentEntry || (stsf->r_currentEntry->SampleNumber < sampleNumber)) {
-		stsf->r_currentEntry = NULL;
-		stsf->r_currentEntryIndex = 0;
-	}
-	i = stsf->r_currentEntryIndex;
-
-	count = gf_list_count(stsf->entryList);
-	for (; i<count; i++) {
-		ent = (GF_StsfEntry *)gf_list_get(stsf->entryList, i);
-		if (ent->SampleNumber == sampleNumber) {
-			stsf->r_currentEntry = ent;
-			stsf->r_currentEntryIndex = i;
-			return ent->fragmentCount;
-		}
-	}
-	//not found
-	return 0;
-}
-
-u32 stbl_GetSampleFragmentSize(GF_SampleFragmentBox *stsf, u32 sampleNumber, u32 FragmentIndex)
-{
-	GF_StsfEntry *ent;
-	u32 i, count;
-	if (!stsf || !FragmentIndex) return 0;
-
-	//check cache
-	if (!stsf->r_currentEntry || (stsf->r_currentEntry->SampleNumber < sampleNumber)) {
-		stsf->r_currentEntry = NULL;
-		stsf->r_currentEntryIndex = 0;
-	}
-	i = stsf->r_currentEntryIndex;
-	count = gf_list_count(stsf->entryList);
-	for (; i<count; i++) {
-		ent = (GF_StsfEntry *)gf_list_get(stsf->entryList, i);
-		if (ent->SampleNumber == sampleNumber) {
-			stsf->r_currentEntry = ent;
-			stsf->r_currentEntryIndex = i;
-			if (FragmentIndex > ent->fragmentCount) return 0;
-			return ent->fragmentSizes[FragmentIndex - 1];
-		}
-	}
-	//not found
-	return 0;
-}
 
 #endif /*GPAC_DISABLE_ISOM*/

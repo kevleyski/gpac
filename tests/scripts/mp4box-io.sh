@@ -44,9 +44,20 @@ mp4_test ()
   do_hint=0 ;;
  *.jpeg )
   do_hint=0 ;;
- *.png )
-  do_hint=0 ;;
+ # jp2, mjp2 and m1v disabled
+ *.jp2 )
+  return ;;
  *.mj2 )
+  return ;;
+ *.m1v )
+  return ;;
+ *.av1 )
+  do_hint=0 ;;
+ *.obu )
+  do_hint=0 ;;
+ *.ivf )
+  do_hint=0 ;;
+ *.png )
   do_hint=0 ;;
  *.qcp )
   do_play=0 ;;
@@ -56,12 +67,11 @@ mp4_test ()
  esac
 
  name=$(basename $1)
-# name=${name%.*}
+ test_begin "mp4box-io-$name"
+
  mp4file="$TEMP_DIR/$name.mp4"
  tmp1="$TEMP_DIR/$name.1.tmp"
  tmp2="$TEMP_DIR/$name.2.tmp"
-
- test_begin "mp4box-io-$name"
 
  if [ $test_skip  = 1 ] ; then
   return
@@ -92,7 +102,7 @@ mp4_test ()
  if [ $do_play != 0 ] ; then
   #MP4 playback
   dump_dur=8
-  do_playback_test $mp4file "play" && rm $mp4file &
+  do_playback_test $mp4file "play"
  fi
 
  test_end

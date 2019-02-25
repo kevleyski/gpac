@@ -88,7 +88,7 @@ static GF_Err gf_isom_full_box_read(GF_Box *ptr, GF_BitStream *bs);
 GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, Bool is_root_box)
 {
 	u32 type, uuid_type, hdr_size;
-	u64 size, start, end;
+	u64 size, start, payload_start, end;
 	char uuid[16];
 	GF_Err e;
 	GF_Box *newBox;
@@ -181,6 +181,9 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 	}
 
 	if (!newBox->type) newBox->type = type;
+	payload_start = gf_bs_get_position(bs);
+
+retry_unknown_box:
 
 	end = gf_bs_available(bs);
 	if (size - hdr_size > end ) {
@@ -206,6 +209,14 @@ GF_Err gf_isom_box_parse_ex(GF_Box **outBox, GF_BitStream *bs, u32 parent_type, 
 	if (e && (e != GF_ISOM_INCOMPLETE_FILE)) {
 		gf_isom_box_del(newBox);
 		*outBox = NULL;
+
+		if (parent_type==GF_ISOM_BOX_TYPE_STSD) {
+			newBox = gf_isom_box_new(GF_ISOM_BOX_TYPE_UNKNOWN);
+			((GF_UnknownBox *)newBox)->original_4cc = type;
+			newBox->size = size;
+			gf_bs_seek(bs, payload_start);
+			goto retry_unknown_box;
+		}
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Read Box \"%s\" failed (%s) - skipping\n", gf_4cc_to_str(type), gf_error_to_string(e)));
 
 		//we don't try to reparse known boxes that have been failing (too dangerous)
@@ -436,7 +447,6 @@ ISOM_BOX_IMPL_DECL(tfra)
 ISOM_BOX_IMPL_DECL(mfro)
 ISOM_BOX_IMPL_DECL(uuid)
 ISOM_BOX_IMPL_DECL(void)
-ISOM_BOX_IMPL_DECL(stsf)
 ISOM_BOX_IMPL_DECL(gnrm)
 ISOM_BOX_IMPL_DECL(gnrv)
 ISOM_BOX_IMPL_DECL(gnra)
@@ -619,8 +629,15 @@ ISOM_BOX_IMPL_DECL(piff_pssh)
 ISOM_BOX_IMPL_DECL(senc)
 ISOM_BOX_IMPL_DECL(cslg)
 ISOM_BOX_IMPL_DECL(ccst)
+ISOM_BOX_IMPL_DECL(auxi)
 ISOM_BOX_IMPL_DECL(hvcc)
+ISOM_BOX_IMPL_DECL(av1c)
 ISOM_BOX_IMPL_DECL(prft)
+
+//VPx
+ISOM_BOX_IMPL_DECL(vpcc)
+ISOM_BOX_IMPL_DECL(SmDm)
+ISOM_BOX_IMPL_DECL(CoLL)
 
 ISOM_BOX_IMPL_DECL(trep)
 
@@ -659,6 +676,10 @@ ISOM_BOX_IMPL_DECL(ipma)
 ISOM_BOX_IMPL_DECL(trgr)
 ISOM_BOX_IMPL_DECL(trgt)
 
+/* MIAF declarations */
+ISOM_BOX_IMPL_DECL(clli)
+ISOM_BOX_IMPL_DECL(mdcv)
+
 ISOM_BOX_IMPL_DECL(grpl)
 
 ISOM_BOX_IMPL_DECL(strk)
@@ -673,29 +694,37 @@ ISOM_BOX_IMPL_DECL(tols)
 ISOM_BOX_IMPL_DECL(trik)
 ISOM_BOX_IMPL_DECL(bloc)
 ISOM_BOX_IMPL_DECL(ainf)
+ISOM_BOX_IMPL_DECL(mhac)
 
 ISOM_BOX_IMPL_DECL(grptype)
 
 
-#define BOX_DEFINE(__type, b_rad, __par) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 0, 0, __par, "p12" }
+/* Dolby Vision */
+ISOM_BOX_IMPL_DECL(dvcC)
+ISOM_BOX_IMPL_DECL(dvhe)
 
-#define BOX_DEFINE_S(__type, b_rad, __par, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 0, 0, __par, __spec }
 
-#define FBOX_DEFINE(__type, b_rad, __par, __max_v) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 1+__max_v, 0, __par, "p12" }
 
-#define FBOX_DEFINE_FLAGS(__type, b_rad, __par, __max_v, flags) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 1+__max_v, flags, __par, "p12" }
 
-#define FBOX_DEFINE_FLAGS_S(__type, b_rad, __par, __max_v, flags, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 1+__max_v, flags, __par, __spec }
+#define BOX_DEFINE(__type, b_rad, __par) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 0, 0, __par, "p12", GF_FALSE}
 
-#define FBOX_DEFINE_S(__type, b_rad, __par, __max_v, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 1+__max_v, 0, __par, __spec }
+#define BOX_DEFINE_S(__type, b_rad, __par, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 0, 0, __par, __spec, GF_FALSE }
 
-#define TREF_DEFINE(__type, b_rad, __par, __4cc, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, __4cc, 0, 0, __par, __spec }
+#define FBOX_DEFINE(__type, b_rad, __par, __max_v) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 1+__max_v, 0, __par, "p12", GF_FALSE }
 
-#define TRGT_DEFINE(__type, b_rad, __par, __4cc, max_version, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, __4cc, 1+max_version, 0, __par, __spec }
+#define FBOX_DEFINE_FLAGS(__type, b_rad, __par, __max_v, flags) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 1+__max_v, flags, __par, "p12", GF_FALSE }
 
-#define SGPD_DEFINE(__type, b_rad, __par, __4cc, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, __4cc, 1, 0, __par, __spec }
+#define FBOX_DEFINE_FLAGS_S(__type, b_rad, __par, __max_v, flags, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 1+__max_v, flags, __par, __spec, GF_FALSE }
 
-static const struct box_registry_entry {
+#define FBOX_DEFINE_S(__type, b_rad, __par, __max_v, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, 0, 1+__max_v, 0, __par, __spec, GF_FALSE }
+
+#define TREF_DEFINE(__type, b_rad, __par, __4cc, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, __4cc, 0, 0, __par, __spec, GF_FALSE }
+
+#define TRGT_DEFINE(__type, b_rad, __par, __4cc, max_version, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, __4cc, 1+max_version, 0, __par, __spec, GF_FALSE }
+
+#define SGPD_DEFINE(__type, b_rad, __par, __4cc, __spec) { __type, b_rad##_New, b_rad##_del, b_rad##_Read, b_rad##_Write, b_rad##_Size, b_rad##_dump, __4cc, 1, 0, __par, __spec, GF_FALSE }
+
+static struct box_registry_entry {
 	u32 box_4cc;
 	GF_Box * (*new_fn)();
 	void (*del_fn)(GF_Box *a);
@@ -708,6 +737,7 @@ static const struct box_registry_entry {
 	u32 flags;
 	const char *parents_4cc;
 	const char *spec;
+	Bool disabled;
 } box_registry [] =
 {
 	//DO NOT MOVE THE FIRST ENTRY
@@ -779,6 +809,7 @@ static const struct box_registry_entry {
 	SGPD_DEFINE( GF_ISOM_BOX_TYPE_SGPD, sgpd, "stbl traf", GF_ISOM_SAMPLE_GROUP_SYNC, "p15"),
 	SGPD_DEFINE( GF_ISOM_BOX_TYPE_SGPD, sgpd, "stbl traf", GF_ISOM_SAMPLE_GROUP_TSCL, "p15"),
 	SGPD_DEFINE( GF_ISOM_BOX_TYPE_SGPD, sgpd, "stbl traf", GF_ISOM_SAMPLE_GROUP_VIPR, "p15"),
+	SGPD_DEFINE( GF_ISOM_BOX_TYPE_SGPD, sgpd, "stbl traf", GF_ISOM_SAMPLE_GROUP_LBLI, "p15"),
 
 	SGPD_DEFINE( GF_ISOM_BOX_TYPE_SGPD, sgpd, "stbl traf", GF_ISOM_SAMPLE_GROUP_3GAG, "3gpp"),
 	SGPD_DEFINE( GF_ISOM_BOX_TYPE_SGPD, sgpd, "stbl traf", GF_ISOM_SAMPLE_GROUP_AVCB, "3gpp"),
@@ -787,7 +818,6 @@ static const struct box_registry_entry {
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_GNRM, gnrm, "stsd", "unknown"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_GNRV, gnrv, "stsd", "unknown"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_GNRA, gnra, "stsd", "unknown"),
-	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_STSF, stsf, "stbl traf", "gpac"),
 
 	//all track group types
 	TRGT_DEFINE( GF_ISOM_BOX_TYPE_TRGT, trgt, "trgr", GF_ISOM_BOX_TYPE_MSRC, 0, "p12" ),
@@ -1001,6 +1031,24 @@ static const struct box_registry_entry {
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_LHE1, video_sample_entry, "stsd", "p15"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_HVT1, video_sample_entry, "stsd", "p15"),
 
+	//mpegh 3D audio boxes
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_MHA1, audio_sample_entry, "stsd", "mpegh3Daudio"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_MHA2, audio_sample_entry, "stsd", "mpegh3Daudio"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_MHM1, audio_sample_entry, "stsd", "mpegh3Daudio"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_MHM2, audio_sample_entry, "stsd", "mpegh3Daudio"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_MHAC, mhac, "mha1 mha2 mhm1 mhm2", "mpegh3Daudio"),
+
+	//AV1 in ISOBMFF boxes
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_AV01, video_sample_entry, "stsd", "av1"),
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_AV1C, av1c, "av01 encv resv ipco", "av1"),
+
+	// VP8-9 boxes
+	FBOX_DEFINE_FLAGS_S( GF_ISOM_BOX_TYPE_VPCC, vpcc, "vp08 vp09 encv resv", 1, 0, "vp"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_VP08, video_sample_entry, "stsd", "vp"),
+	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_VP09, video_sample_entry, "stsd", "vp"),
+	FBOX_DEFINE_FLAGS_S(GF_ISOM_BOX_TYPE_SMDM, SmDm, "vp08 vp09 encv resv", 1, 0, "vp"),
+	FBOX_DEFINE_FLAGS_S(GF_ISOM_BOX_TYPE_COLL, CoLL, "vp08 vp09 encv resv", 1, 0, "vp"),
+		
 	//part20 boxes
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_LSR1, lsr1, "stsd", "p20"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_LSRC, lsrc, "lsr1", "p20"),
@@ -1008,7 +1056,7 @@ static const struct box_registry_entry {
 	//part30 boxes
 #ifndef GPAC_DISABLE_TTXT
 	BOX_DEFINE( GF_ISOM_BOX_TYPE_STXT, metx, "stsd"),
-	FBOX_DEFINE( GF_ISOM_BOX_TYPE_TXTC, txtc, "stxt", 0),
+	FBOX_DEFINE( GF_ISOM_BOX_TYPE_TXTC, txtc, "stxt mett sbtt", 0),
 #ifndef GPAC_DISABLE_VTT
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_WVTT, wvtt, "stsd", "p30"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_VTCC_CUE, vtcu, "vtt_sample", "p30"),
@@ -1035,10 +1083,15 @@ static const struct box_registry_entry {
 	FBOX_DEFINE_FLAGS_S( GF_ISOM_BOX_TYPE_IPMA, ipma, "iprp", 1, 1, "iff"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_GRPL, grpl, "meta", "iff"),
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_CCST, ccst, "sample_entry", 0, "iff"),
+	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_AUXI, auxi, "sample_entry", 0, "iff"),
 	TRGT_DEFINE(GF_ISOM_BOX_TYPE_GRPT, grptype, "grpl", GF_ISOM_BOX_TYPE_ALTR, 0, "iff"),
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_AUXC, auxc, "ipco", 0, "iff"),
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_OINF, oinf, "ipco", 0, "iff"),
 	FBOX_DEFINE_S( GF_ISOM_BOX_TYPE_TOLS, tols, "ipco", 0, "iff"),
+
+	//MIAF
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_CLLI, clli, "mp4v jpeg avc1 avc2 avc3 avc4 svc1 svc2 hvc1 hev1 hvc2 hev2 lhv1 lhe1 encv resv", "miaf"),
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_MDCV, mdcv, "mp4v jpeg avc1 avc2 avc3 avc4 svc1 svc2 hvc1 hev1 hvc2 hev2 lhv1 lhe1 encv resv", "miaf"),
 
 	//other MPEG boxes
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_RVCC, rvcc, "avc1 avc2 avc3 avc4 svc1 svc2 hvc1 hev1 hvc2 hev2 lhv1 lhe1 encv resv", "rvc"),
@@ -1128,6 +1181,8 @@ static const struct box_registry_entry {
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_EC3, audio_sample_entry, "stsd", "dolby"),
 	BOX_DEFINE_S( GF_ISOM_BOX_TYPE_DAC3, dac3, "ac-3", "dolby"),
 	{GF_ISOM_BOX_TYPE_DEC3, dec3_New, dac3_del, dac3_Read, dac3_Write, dac3_Size, dac3_dump, 0, 0, 0, "ec-3", "dolby" },
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_DVCC, dvcC, "dvhe dvav dva1 dvh1 avc1 avc2 avc3 avc4 hev1 encv resv", "DolbyVision"),
+	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_DVHE, video_sample_entry, "stsd", "DolbyVision"),
 
 	//Adobe boxes
 #ifndef GPAC_DISABLE_ISOM_ADOBE
@@ -1165,10 +1220,28 @@ static const struct box_registry_entry {
 	BOX_DEFINE_S(GF_ISOM_BOX_TYPE_PNG, video_sample_entry, "stsd", "apple")
 };
 
+Bool gf_box_valid_in_parent(GF_Box *a, const char *parent_4cc)
+{
+	if (!a || !a->registry || !a->registry->parents_4cc) return GF_FALSE;
+	if (strstr(a->registry->parents_4cc, parent_4cc) != NULL) return GF_TRUE;
+	return GF_FALSE;
+}
+
 GF_EXPORT
 u32 gf_isom_get_num_supported_boxes()
 {
 	return sizeof(box_registry) / sizeof(struct box_registry_entry);
+}
+
+void gf_isom_registry_disable(u32 boxCode, Bool disable)
+{
+	u32 i=0, count = gf_isom_get_num_supported_boxes();
+	for (i=1; i<count; i++) {
+		if (box_registry[i].box_4cc==boxCode) {
+			box_registry[i].disabled = disable;
+			return;
+		}
+	}
 }
 
 static u32 get_box_reg_idx(u32 boxCode, u32 parent_type)
@@ -1190,7 +1263,9 @@ GF_Box *gf_isom_box_new_ex(u32 boxType, u32 parentType)
 	GF_Box *a;
 	s32 idx = get_box_reg_idx(boxType, parentType);
 	if (idx==0) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Unknown box type %s\n", gf_4cc_to_str(boxType) ));
+		if (boxType != GF_ISOM_BOX_TYPE_UNKNOWN) {
+			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Unknown box type %s\n", gf_4cc_to_str(boxType) ));
+		}
 		a = unkn_New(boxType);
 		if (a) a->registry = &box_registry[idx];
 		return a;
@@ -1214,7 +1289,7 @@ GF_Box *gf_isom_box_new(u32 boxType)
 
 void gf_isom_box_add_for_dump_mode(GF_Box *parent, GF_Box *a)
 {
-	if (use_dump_mode && (!parent->other_boxes || (gf_list_find(parent->other_boxes, a)<0) ) )
+	if (use_dump_mode && a && (!parent->other_boxes || (gf_list_find(parent->other_boxes, a)<0) ) )
 		gf_isom_box_add_default(parent, a);
 }
 
@@ -1246,6 +1321,8 @@ GF_Err gf_isom_box_array_read_ex(GF_Box *parent, GF_BitStream *bs, GF_Err (*add_
 			if (parent->type == GF_ISOM_BOX_TYPE_UNKNOWN)
 				parent_code = gf_4cc_to_str( ((GF_UnknownBox*)parent)->original_4cc );
 			if (strstr(a->registry->parents_4cc, parent_code) != NULL) {
+				parent_OK = GF_TRUE;
+			} else if (!strcmp(a->registry->parents_4cc, "*")) {
 				parent_OK = GF_TRUE;
 			} else {
 				//parent must be a sample entry
@@ -1348,7 +1425,10 @@ GF_Err gf_isom_box_write_listing(GF_Box *a, GF_BitStream *bs)
 GF_EXPORT
 GF_Err gf_isom_box_write(GF_Box *a, GF_BitStream *bs)
 {
-	GF_Err e = gf_isom_box_write_listing(a, bs);
+	GF_Err e;
+	if (!a) return GF_BAD_PARAM;
+	if (a->registry->disabled) return GF_OK;
+	e = gf_isom_box_write_listing(a, bs);
 	if (e) return e;
 	if (a->other_boxes) {
 		return gf_isom_box_array_write(a, a->other_boxes, bs);
@@ -1379,7 +1459,12 @@ static GF_Err gf_isom_box_size_listing(GF_Box *a)
 GF_EXPORT
 GF_Err gf_isom_box_size(GF_Box *a)
 {
-	GF_Err e = gf_isom_box_size_listing(a);
+	GF_Err e;
+	if (a->registry->disabled) {
+		a->size = 0;
+		return GF_OK;
+	}
+	e = gf_isom_box_size_listing(a);
 	if (e) return e;
 	if (a->other_boxes) {
 		e = gf_isom_box_array_size(a, a->other_boxes);

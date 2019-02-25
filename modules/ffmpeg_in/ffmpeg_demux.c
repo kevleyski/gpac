@@ -227,7 +227,7 @@ static Bool FFD_CanHandleURL(GF_InputService *plug, const char *url)
 	AVFormatContext *ctx;
 	AVOutputFormat *fmt_out;
 	Bool ret = GF_FALSE;
-	char *ext, szName[1000], szExt[20];
+	char *ext, szName[1024], szExt[20];
 	const char *szExtList;
 	FFDemux *ffd;
 	if (!plug || !url)
@@ -243,6 +243,9 @@ static Bool FFD_CanHandleURL(GF_InputService *plug, const char *url)
 
 	ffd = (FFDemux*)plug->priv;
 
+	if (strlen(url) >= sizeof(szName))
+		return GF_FALSE;
+
 	strcpy(szName, url);
 	ext = strrchr(szName, '#');
 	if (ext) ext[0] = 0;
@@ -252,7 +255,7 @@ static Bool FFD_CanHandleURL(GF_InputService *plug, const char *url)
 	ext = strrchr(szName, '.');
 	if (ext && strlen(ext) > 19) ext = NULL;
 
-	if (ext && strlen(ext) > 1) {
+	if (ext && strlen(ext) > 1 && strlen(ext) <= sizeof(szExt)) {
 		strcpy(szExt, &ext[1]);
 		strlwr(szExt);
 #ifndef FFMPEG_DEMUX_ENABLE_MPEG2TS
@@ -287,7 +290,7 @@ static Bool FFD_CanHandleURL(GF_InputService *plug, const char *url)
 
 	ctx = NULL;
 	if (open_file(&ctx, szName, NULL, ffd->options ? &ffd->options : NULL)<0) {
-		AVInputFormat *av_in = NULL;;
+		AVInputFormat *av_in = NULL;
 		/*some extensions not supported by ffmpeg*/
 		if (ext && !strcmp(szExt, "cmp")) av_in = av_find_input_format("m4v");
 

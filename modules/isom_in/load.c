@@ -96,12 +96,16 @@ void isor_declare_objects(ISOMReader *read)
 	count = gf_isom_get_track_count(read->mov);
 	for (i=0; i<count; i++) {
 		u32 m_subtype;
+        u32 mtype;
 		if (!gf_isom_is_track_enabled(read->mov, i+1))
 			continue;
 
-		switch (gf_isom_get_media_type(read->mov, i+1)) {
+        mtype = gf_isom_get_media_type(read->mov, i+1);
+		switch (mtype) {
 		case GF_ISOM_MEDIA_AUDIO:
 		case GF_ISOM_MEDIA_VISUAL:
+        case GF_ISOM_MEDIA_AUXV:
+        case GF_ISOM_MEDIA_PICT:
 		case GF_ISOM_MEDIA_TEXT:
 		case GF_ISOM_MEDIA_SUBT:
 		case GF_ISOM_MEDIA_SUBPIC:
@@ -141,7 +145,7 @@ void isor_declare_objects(ISOMReader *read)
 			}
 		}
 
-		if ((gf_isom_get_media_type(read->mov, i+1) == GF_ISOM_MEDIA_VISUAL) && !highest_stream)
+		if (gf_isom_is_video_subtype(mtype) && !highest_stream)
 			continue;
 		esd = gf_media_map_esd(read->mov, i+1);
 		if (esd) {
@@ -250,9 +254,10 @@ void isor_declare_objects(ISOMReader *read)
 
 				/*don't display cover art when video is present*/
 				for (i=0; i<gf_isom_get_track_count(read->mov); i++) {
+                    u32 mtype = gf_isom_get_media_type(read->mov, i+1);
 					if (!gf_isom_is_track_enabled(read->mov, i+1))
 						continue;
-					if (gf_isom_get_media_type(read->mov, i+1) == GF_ISOM_MEDIA_VISUAL) {
+					if (gf_isom_is_video_subtype(mtype) ) {
 						isom_contains_video = GF_TRUE;
 						break;
 					}
@@ -268,6 +273,26 @@ void isor_declare_objects(ISOMReader *read)
 					} else {
 						gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_TRUE);
 					}
+				}
+			}
+		}
+	}
+	count = gf_isom_get_meta_item_count(read->mov, GF_TRUE, 0);
+	if (count) {
+		u32 item_id = gf_isom_get_meta_primary_item_id(read->mov, GF_TRUE, 0);
+		if (item_id) {
+			esd = gf_media_map_item_esd(read->mov, item_id);
+			if (esd) {
+				od = (GF_ObjectDescriptor *)gf_odf_desc_new(GF_ODF_OD_TAG);
+				od->service_ifce = read->input;
+				od->objectDescriptorID = 0;
+				gf_list_add(od->ESDescriptors, esd);
+
+				if (read->input->query_proxy && read->input->proxy_udta && read->input->proxy_type) {
+					send_proxy_command(read, GF_FALSE, GF_TRUE, GF_OK, (GF_Descriptor*)od, NULL);
+				}
+				else {
+					gf_service_declare_media(read->service, (GF_Descriptor*)od, GF_TRUE);
 				}
 			}
 		}

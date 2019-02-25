@@ -212,6 +212,8 @@ static GF_ESD *MP2TS_GetESD(M2TSIn *m2ts, GF_M2TS_PES *stream, char *dsi, u32 ds
 		esd->decoderConfig->objectTypeIndication = GPAC_OTI_VIDEO_SVC;
 		break;
 	case GF_M2TS_VIDEO_HEVC:
+	case GF_M2TS_VIDEO_HEVC_TEMPORAL:
+	case GF_M2TS_VIDEO_HEVC_MCTS:
 		esd->decoderConfig->streamType = GF_STREAM_VISUAL;
 		esd->decoderConfig->objectTypeIndication = GPAC_OTI_VIDEO_HEVC;
 		break;
@@ -319,15 +321,16 @@ static GF_ObjectDescriptor *MP2TS_GetOD(M2TSIn *m2ts, GF_M2TS_PES *stream, char 
 			GF_ESD *the_esd;
 			the_esd = MP2TS_GetESD(m2ts, (GF_M2TS_PES *)es, dsi, dsi_size);
 			if (the_esd) {
-				if ((esd->decoderConfig->objectTypeIndication==GPAC_OTI_VIDEO_AVC) && (the_esd->decoderConfig->objectTypeIndication==GPAC_OTI_VIDEO_LHVC)) {
+				if (/*(esd->decoderConfig->objectTypeIndication==GPAC_OTI_VIDEO_AVC) &&*/ the_esd->decoderConfig->objectTypeIndication==GPAC_OTI_VIDEO_LHVC) {
 					esd->has_scalable_layers = GF_FALSE;
 				}
 				the_esd->has_scalable_layers = GF_TRUE;
 
 				the_esd->dependsOnESID = cur_ES;
 				gf_list_add(od->ESDescriptors, the_esd);
+
+				cur_ES = the_esd->ESID;
 			}
-			cur_ES = the_esd->ESID;
 		}
 	}
 

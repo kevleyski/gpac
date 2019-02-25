@@ -34,11 +34,11 @@ extern "C" {
  *	\file <gpac/mpeg4_odf.h>
  *	\brief MPEG-4 Object Descriptor Framework.
  */
-	
+
 /*! \defgroup mpeg4sys_grp MPEG-4 Systems
  *	\brief MPEG-4 Systems.
  */
-	
+
 /*!
  *	\addtogroup odf_grp MPEG-4 OD
  *	\ingroup mpeg4sys_grp
@@ -183,6 +183,8 @@ typedef struct
 	GF_List *extensionDescriptors;
 	/*MPEG-2 (or other service mux formats) service ID*/
 	u16 ServiceID;
+	/*for ATSC, instructs client to keep OD alive even though URL string is set*/
+	u16 RedirectOnly;
 	/*pointer to the service interface (GF_InputService) of the service having declared the object
 	only used for DASH*/
 	void *service_ifce;
@@ -345,7 +347,7 @@ enum
 	u8 tag;	\
 	u8 version;	\
 	u32 dataID;	\
- 
+
 /*! IPMPX base object used for type casting in many function*/
 typedef struct
 {
@@ -980,15 +982,63 @@ typedef struct
 	GF_List *param_array;
 	//used in LHVC config
 	Bool complete_representation;
-	
+
 	//following are internal to libgpac and NEVER serialized
-	
+
 	//set by libisomedia at import/export/parsing time to differentiate between lhcC and hvcC time
 	Bool is_lhvc;
 
 	Bool write_annex_b;
 
 } GF_HEVCConfig;
+
+/*! used for storing AV1 OBUs*/
+typedef struct
+{
+	u64 obu_length;
+	int obu_type; /*ObuType*/
+	u8 *obu;
+} GF_AV1_OBUArrayEntry;
+
+/*! AV1 config record - not a real MPEG-4 descriptor*/
+typedef struct
+{
+	Bool marker;
+	u8 version; /*7 bits*/
+	u8 seq_profile; /*3 bits*/
+	u8 seq_level_idx_0; /*5 bits*/
+	Bool seq_tier_0;
+	Bool high_bitdepth;
+	Bool twelve_bit;
+	Bool monochrome;
+	Bool chroma_subsampling_x;
+	Bool chroma_subsampling_y;
+	u8 chroma_sample_position; /*2 bits*/
+
+	Bool initial_presentation_delay_present;
+	u8 initial_presentation_delay_minus_one; /*4 bits*/
+	GF_List *obu_array; /*GF_AV1_OBUArrayEntry*/
+} GF_AV1Config;
+
+
+/*! VP8-9 config vpcC */
+typedef struct
+{
+	u8	profile;
+	u8	level;
+
+	u8   bit_depth; /*4 bits*/
+	u8   chroma_subsampling; /*3 bits*/
+	Bool video_fullRange_flag;
+
+	u8  colour_primaries;
+	u8  transfer_characteristics;
+	u8  matrix_coefficients;
+
+	/* MUST be 0 for VP8 and VP9 */
+	u16 codec_initdata_size;
+	u8* codec_initdata;
+} GF_VPConfig;
 
 /*! Media Segment Descriptor used for Media Control Extensions*/
 typedef struct
@@ -1110,7 +1160,7 @@ GF_ODCodec *gf_odf_codec_new();
  \param codec OD codec to destroy
  */
 void gf_odf_codec_del(GF_ODCodec *codec);
-/*! add a command to the codec command list. 
+/*! add a command to the codec command list.
  \param codec target codec
  \param command command to add
  \return error if any
@@ -1256,15 +1306,18 @@ GF_Err gf_odf_avc_cfg_write_bs(GF_AVCConfig *cfg, GF_BitStream *bs);
 /*! HEVC config constructor
 \return the created HEVC config*/
 GF_HEVCConfig *gf_odf_hevc_cfg_new();
+
 /*! HEVC config destructor
  \param cfg the HEVC config to destroy*/
 void gf_odf_hevc_cfg_del(GF_HEVCConfig *cfg);
+
 /*! writes GF_HEVCConfig as MPEG-4 DSI in a bitstream object
  \param cfg the HEVC config to encode
  \param bs output bitstream object in which the config is written
  \return error if any
  */
 GF_Err gf_odf_hevc_cfg_write_bs(GF_HEVCConfig *cfg, GF_BitStream *bs);
+
 /*! writes GF_HEVCConfig as MPEG-4 DSI
  \param cfg the HEVC config to encode
  \param outData encoded dsi buffer - it is the caller responsability to free this
@@ -1272,12 +1325,14 @@ GF_Err gf_odf_hevc_cfg_write_bs(GF_HEVCConfig *cfg, GF_BitStream *bs);
  \return error if any
  */
 GF_Err gf_odf_hevc_cfg_write(GF_HEVCConfig *cfg, char **outData, u32 *outSize);
+
 /*! gets GF_HEVCConfig from bitstream MPEG-4 DSI
  \param bs bitstream containing the encoded HEVC decoder specific info
  \param is_lhvc if GF_TRUE, indicates if the dsi is LHVC
  \return the decoded HEVC config
  */
 GF_HEVCConfig *gf_odf_hevc_cfg_read_bs(GF_BitStream *bs, Bool is_lhvc);
+
 /*! gets GF_HEVCConfig from MPEG-4 DSI
  \param dsi encoded HEVC decoder specific info
  \param dsi_size encoded HEVC decoder specific info size
@@ -1285,6 +1340,39 @@ GF_HEVCConfig *gf_odf_hevc_cfg_read_bs(GF_BitStream *bs, Bool is_lhvc);
  \return the decoded HEVC config
  */
 GF_HEVCConfig *gf_odf_hevc_cfg_read(char *dsi, u32 dsi_size, Bool is_lhvc);
+
+
+/*! AV1 config constructor
+\return the created AV1 config*/
+GF_AV1Config *gf_odf_av1_cfg_new();
+
+/*! AV1 config destructor
+\param cfg the AV1 config to destroy*/
+void gf_odf_av1_cfg_del(GF_AV1Config *cfg);
+
+/*! writes GF_AV1Config as MPEG-4 DSI
+\param cfg the AV1 config to encode
+\param outData encoded dsi buffer - it is the caller responsability to free this
+\param outSize  encoded dsi buffer size
+\return error if any
+*/
+GF_Err gf_odf_av1_cfg_write(GF_AV1Config *cfg, char **outData, u32 *outSize);
+
+/*! gets GF_AV1Config from bitstream MPEG-4 DSI
+\param bs bitstream containing the encoded AV1 decoder specific info
+\return the decoded HEVC config
+*/
+GF_Err gf_odf_av1_cfg_write_bs(GF_AV1Config *cfg, GF_BitStream *bs);
+
+
+/* VP8-9 descriptors functions */
+GF_VPConfig *gf_odf_vp_cfg_new();
+void gf_odf_vp_cfg_del(GF_VPConfig *cfg);
+GF_Err gf_odf_vp_cfg_write_bs(GF_VPConfig *cfg, GF_BitStream *bs, Bool is_v0);
+GF_Err gf_odf_vp_cfg_write(GF_VPConfig *cfg, char **outData, u32 *outSize, Bool is_v0);
+GF_VPConfig *gf_odf_vp_cfg_read_bs(GF_BitStream *bs, Bool is_v0);
+GF_VPConfig *gf_odf_vp_cfg_read(char *dsi, u32 dsi_size);
+
 
 /*! destroy the descriptors in a list but not the list
  \param descList descriptor list to destroy
@@ -1359,7 +1447,7 @@ const char *gf_afx_get_type_description(u8 afx_code);
  \return NULL if unknown, otherwise value
  */
 const char *gf_odf_stream_type_name(u32 streamType);
-	
+
 /*! Gets the stream type based on stream type name
  \param streamType name of the stream type
  \return stream type GF_STREAM_XXX as defined in constants.h, 0 if unknown
@@ -1592,7 +1680,7 @@ typedef struct
 
 #define GF_IPMPX_AUTH_DESC	\
 	u8 tag;	\
- 
+
 /*! IPMPX authentication descriptor*/
 typedef struct
 {
@@ -1764,6 +1852,7 @@ typedef struct
 */
 typedef struct
 {
+	GF_IPMPX_DATA_BASE
 	GF_List *ipmp_tools;
 } GF_IPMPX_GetToolsResponse;
 

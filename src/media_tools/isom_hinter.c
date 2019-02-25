@@ -854,10 +854,12 @@ GF_Err gf_hinter_track_finalize(GF_RTPHinter *tkHint, Bool AddSystemInfo)
 	GF_ESD *esd;
 	char sdpLine[20000];
 	char mediaName[30], payloadName[30];
-
+    u32 mtype;
+    
 	Width = Height = 0;
 	gf_isom_sdp_clean_track(tkHint->file, tkHint->TrackNum);
-	if (gf_isom_get_media_type(tkHint->file, tkHint->TrackNum) == GF_ISOM_MEDIA_VISUAL)
+    mtype = gf_isom_get_media_type(tkHint->file, tkHint->TrackNum);
+    if (gf_isom_is_video_subtype(mtype))
 		gf_isom_get_visual_info(tkHint->file, tkHint->TrackNum, 1, &Width, &Height);
 
 	gf_rtp_builder_get_payload_name(tkHint->rtp_p, payloadName, mediaName);
@@ -1083,7 +1085,7 @@ GF_Err gf_hinter_finalize(GF_ISOFile *file, GF_SDP_IODProfile IOD_Profile, u32 b
 	}
     //xtended attribute for copyright
     if (gf_isom_drop_date_version_info_enabled(file)) {
-        sprintf(buf64, "a=x-copyright: %s", "MP4/3GP File hinted with GPAC - (C)2000-2016 - http://gpac.io");
+        sprintf(buf64, "a=x-copyright: %s", "MP4/3GP File hinted with GPAC - (c) Telecom ParisTech (http://gpac.io)");
     } else {
         sprintf(buf64, "a=x-copyright: %s", "MP4/3GP File hinted with GPAC " GPAC_FULL_VERSION " (C)2000-2016 - http://gpac.io");
     }

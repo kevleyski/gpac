@@ -229,6 +229,7 @@ void PrintUsage()
 	        "\t        \"module\"     : GPAC modules debugging\n"
 	        "\t        \"mutex\"      : mutex\n"
 	        "\t        \"all\"        : all tools logged - other tools can be specified afterwards.\n"
+	        "\tThe special value \"ncl\" disables color logs.\n"
 	        "\n"
 	        "\t-log-clock or -lc      : logs time in micro sec since start time of GPAC before each log line.\n"
 	        "\t-log-utc or -lu        : logs UTC time in ms before each log line.\n"
@@ -298,7 +299,7 @@ void PrintUsage()
 	        "\t-help:          shows this screen\n"
 	        "\n"
 	        "MP4Client - GPAC command line player and dumper - version "GPAC_FULL_VERSION"\n"
-	        "GPAC Written by Jean Le Feuvre (c) 2001-2005 - ENST (c) 2005-200X\n"
+	        "(c) Telecom ParisTech 2000-2018 - Licence LGPL v2\n"
 	        "GPAC Configuration: " GPAC_CONFIGURATION "\n"
 	        "Features: %s\n",
 	        GF_IMPORT_DEFAULT_FPS,
@@ -909,7 +910,8 @@ Bool GPAC_EventProc(void *ptr, GF_Event *evt)
 		break;
 	case GF_EVENT_NAVIGATE:
 		if (gf_term_is_supported_url(term, evt->navigate.to_url, 1, no_mime_check)) {
-			strcpy(the_url, evt->navigate.to_url);
+			strncpy(the_url, evt->navigate.to_url, sizeof(the_url)-1);
+			the_url[sizeof(the_url) - 1] = 0;
 			fprintf(stderr, "Navigating to URL %s\n", the_url);
 			gf_term_navigate_to(term, evt->navigate.to_url);
 			return 1;
@@ -1098,6 +1100,11 @@ void set_cfg_option(char *opt_string)
 	}
 	{
 		const size_t sepIdx = sep - opt_string;
+		if (sepIdx >= sizeof(szSec)) {
+			fprintf(stderr, "Badly formatted option %s - Section name is too long\n", opt_string);
+			return;
+		}
+
 		strncpy(szSec, opt_string, sepIdx);
 		szSec[sepIdx] = 0;
 	}
@@ -1109,8 +1116,16 @@ void set_cfg_option(char *opt_string)
 	}
 	{
 		const size_t sepIdx = sep2 - sep;
+		if (sepIdx >= sizeof(szKey)) {
+			fprintf(stderr, "Badly formatted option %s - key name is too long\n", opt_string);
+			return;
+		}
 		strncpy(szKey, sep, sepIdx);
 		szKey[sepIdx] = 0;
+		if (strlen(sep2 + 1) >= sizeof(szVal)) {
+			fprintf(stderr, "Badly formatted option %s - value is too long\n", opt_string);
+			return;
+		}
 		strcpy(szVal, sep2+1);
 	}
 
@@ -1400,7 +1415,11 @@ int mp4client_main(int argc, char **argv)
 			sscanf(argv[i+1], "%f", &scale);
 			i++;
 		}
-		
+		else if (!strcmp(arg, "-c") || !strcmp(arg, "-cfg")) {
+			/* already parsed */
+			i++;
+		}
+
 		/*arguments only used in non-gui mode*/
 		if (!gui_mode) {
 			if (arg[0] != '-') {
@@ -1675,7 +1694,14 @@ int mp4client_main(int argc, char **argv)
 	else if (!gui_mode && url_arg) {
 		char *ext;
 
-		strcpy(the_url, url_arg);
+		if (strlen(url_arg) >= sizeof(the_url)) {
+			fprintf(stderr, "Input url %s is too long, truncating to %d chars.\n", url_arg, (int)(sizeof(the_url) - 1));
+			strncpy(the_url, url_arg, sizeof(the_url)-1);
+			the_url[sizeof(the_url) - 1] = 0;
+		}
+		else {
+			strcpy(the_url, url_arg);
+		}
 		ext = strrchr(the_url, '.');
 		if (ext && (!stricmp(ext, ".m3u") || !stricmp(ext, ".pls"))) {
 			GF_Err e = GF_OK;
@@ -1687,7 +1713,10 @@ int mp4client_main(int argc, char **argv)
 				GF_DownloadSession *sess = gf_dm_sess_new(term->downloader, the_url, GF_NETIO_SESSION_NOT_THREADED, NULL, NULL, &e);
 				if (sess) {
 					e = gf_dm_sess_process(sess);
-					if (!e) strcpy(the_url, gf_dm_sess_get_cache_name(sess));
+					if (!e) {
+						strncpy(the_url, gf_dm_sess_get_cache_name(sess), sizeof(the_url) - 1);
+						the_url[sizeof(the_url) - 1] = 0;
+					}
 					gf_dm_sess_del(sess);
 				}
 			}
@@ -1710,7 +1739,8 @@ int mp4client_main(int argc, char **argv)
 		fprintf(stderr, "Hit 'h' for help\n\n");
 		str = gf_cfg_get_key(cfg_file, "General", "StartupFile");
 		if (str) {
-			strcpy(the_url, "MP4Client "GPAC_FULL_VERSION);
+			strncpy(the_url, "MP4Client "GPAC_FULL_VERSION , sizeof(the_url)-1);
+			the_url[sizeof(the_url) - 1] = 0;
 			gf_term_connect(term, str);
 			startup_file = 1;
 			is_connected = 1;
@@ -2301,12 +2331,16 @@ force_input:
 			odm = NULL;
 			root_od = gf_term_get_root_object(term);
 			if (root_od) {
-				odm = gf_term_get_object(term, root_od, index);
-				if (odm) {
-					gf_term_select_object(term, odm);
-				} else {
-					fprintf(stderr, "Cannot find object at index %d - trying with serviceID\n", index);
+				if ( gf_term_find_service(term, root_od, index)) {
 					gf_term_select_service(term, root_od, index);
+				} else {
+					fprintf(stderr, "Cannot find service %d - trying with object index\n", index);
+					odm = gf_term_get_object(term, root_od, index);
+					if (odm) {
+						gf_term_select_object(term, odm);
+					} else {
+						fprintf(stderr, "Cannot find object at index %d\n", index);
+					}
 				}
 			}
 		}
@@ -2654,8 +2688,16 @@ void PrintODList(GF_Terminal *term, GF_ObjectManager *root_odm, u32 num, u32 ind
 				fprintf(stderr, "#%d - ", num);
 				if (odi.media_url) {
 					fprintf(stderr, "%s", odi.media_url);
+				} else if (odi.od) {
+				 	if (odi.od->URLString) {
+						fprintf(stderr, "%s", odi.od->URLString);
+					} else {
+						fprintf(stderr, "ID %d", odi.od->objectDescriptorID);
+					}
+				} else if (odi.service_url) {
+					fprintf(stderr, "%s", odi.service_url);
 				} else {
-					fprintf(stderr, "ID %d", odi.od->objectDescriptorID);
+					fprintf(stderr, "unknown");
 				}
 				fprintf(stderr, " - %s", (odi.od_type==GF_STREAM_VISUAL) ? "Video" : (odi.od_type==GF_STREAM_AUDIO) ? "Audio" : "Systems");
 				if (odi.od && odi.od->ServiceID) fprintf(stderr, " - Service ID %d", odi.od->ServiceID);
@@ -2686,7 +2728,7 @@ void ViewOD(GF_Terminal *term, u32 OD_ID, u32 number, const char *szURL)
 			if (!odm) break;
 			if (gf_term_get_object_info(term, odm, &odi) == GF_OK) {
 				if (szURL && strstr(odi.service_url, szURL)) break;
-				if ((number == (u32)(-1)) && (odi.od->objectDescriptorID == OD_ID)) break;
+				if ((number == (u32)(-1)) && odi.od && (odi.od->objectDescriptorID == OD_ID)) break;
 				else if (i == (u32)(number-1)) break;
 			}
 			odm = NULL;

@@ -35,7 +35,7 @@ extern "C" {
  *	\file <gpac/avparse.h>
  *	\brief Utility tools for audio and video raw media parsing.
  */
-	
+
 /*! \defgroup media_grp Media Tools
  *	You will find in this module the documentation of all media tools in GPAC.
 */
@@ -49,8 +49,8 @@ extern "C" {
  *This section documents the audio and video parsing functions of the GPAC framework.
  *	@{
  */
-	
-	
+
+
 #include <gpac/bitstream.h>
 
 
@@ -62,7 +62,7 @@ extern "C" {
  */
 void gf_media_reduce_aspect_ratio(u32 *width, u32 *height);
 
-/*! 
+/*!
  Reduces input FPS to a more compact value (eg 25000/1000 -> 25/1)
  \param timescale timescale of the aspect ratio
  \param sample_dur sample duration of the aspect ratio in the given timescale
@@ -86,7 +86,7 @@ typedef struct
 	u32 time_increment;
 	/*for MPEG 1/2*/
 	Double fps;
-	
+
 	u32 next_object_start;
 } GF_M4VDecSpecInfo;
 
@@ -315,6 +315,39 @@ GF_Err gf_img_png_dec(char *png, u32 png_size, u32 *width, u32 *height, u32 *pix
 GF_Err gf_img_file_dec(char *png_file, u32 *oti, u32 *width, u32 *height, u32 *pixel_format, char **dst, u32 *dst_size);
 GF_Err gf_img_png_enc(char *data, u32 width, u32 height, s32 stride, u32 pixel_format, char *dst, u32 *dst_size);
 GF_Err gf_img_png_enc_file(char *data, u32 width, u32 height, s32 stride, u32 pixel_format, char *dst_file);
+
+
+
+/*!\brief obu types. */
+typedef enum {
+	OBU_RESERVED_0 = 0,
+	OBU_SEQUENCE_HEADER = 1,
+	OBU_TEMPORAL_DELIMITER = 2,
+	OBU_FRAME_HEADER = 3,
+	OBU_TILE_GROUP = 4,
+	OBU_METADATA = 5,
+	OBU_FRAME = 6,
+	OBU_REDUNDANT_FRAME_HEADER = 7,
+	OBU_TILE_LIST = 8,
+	OBU_RESERVED_9 = 9,
+	OBU_RESERVED_10 = 10,
+	OBU_RESERVED_11 = 11,
+	OBU_RESERVED_12 = 12,
+	OBU_RESERVED_13 = 13,
+	OBU_RESERVED_14 = 14,
+	OBU_PADDING = 15,
+} ObuType;
+
+/*!\brief obu metadata types. */
+typedef enum {
+	OBU_METADATA_TYPE_HDR_CLL = 1,
+	OBU_METADATA_TYPE_HDR_MDCV = 2,
+	OBU_METADATA_TYPE_SCALABILITY = 3,
+	OBU_METADATA_TYPE_ITUT_T35 = 4,
+	OBU_METADATA_TYPE_TIMECODE = 5
+} ObuMetadataType;
+
+const char *av1_get_obu_name(ObuType obu_type);
 
 /*! @} */
 

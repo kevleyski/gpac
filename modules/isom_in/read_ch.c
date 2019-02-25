@@ -241,6 +241,16 @@ next_segment:
 				flags = 0;
 				if (read->no_order_check) flags |= GF_ISOM_SEGMENT_NO_ORDER_FLAG;
 				if (scalable_segment) flags |= GF_ISOM_SEGMENT_SCALABLE_FLAG;
+				else {
+					//whenever we load a base segment, reset all sample count info
+					gf_isom_reset_sample_count(read->mov);
+					for (i=0; i<count; i++) {
+						ISOMChannel *ch = gf_list_get(read->channels, i);
+						if (ch) ch->sample_num = 0;
+					}
+				}
+
+
 				e = gf_isom_open_segment(read->mov, param.url_query.next_url, param.url_query.start_range, param.url_query.end_range, flags);
 
 				if (param.url_query.current_download  && (e==GF_ISOM_INCOMPLETE_FILE)) {
@@ -449,7 +459,7 @@ static void init_reader(ISOMChannel *ch)
 	} else {
 		ch->current_slh.decodingTimeStamp = ch->start;
 		ch->current_slh.compositionTimeStamp = ch->start;
-		
+
 		//TODO - we need to notify scene decoder how many secs elapsed between RAP and seek point
 		if (ch->current_slh.compositionTimeStamp != ch->sample->DTS + ch->sample->CTS_Offset) {
 			ch->current_slh.seekFlag = 1;
@@ -461,7 +471,24 @@ static void init_reader(ISOMChannel *ch)
 	ch->owner->no_order_check = ch->speed < 0 ? GF_TRUE : GF_FALSE;
 }
 
-
+void isor_reader_get_sample_from_item(ISOMChannel *ch)
+{
+	if (ch->current_slh.AU_sequenceNumber) {
+		ch->last_state = GF_EOS;
+		return;
+	}
+	ch->sample_time = 0;
+	ch->last_state = GF_OK;
+	ch->sample = gf_isom_sample_new();
+	ch->sample->IsRAP = RAP;
+	ch->current_slh.accessUnitEndFlag = ch->current_slh.accessUnitStartFlag = 1;
+	ch->current_slh.au_duration = 1000;
+	ch->current_slh.randomAccessPointFlag = ch->sample->IsRAP;
+	ch->current_slh.compositionTimeStampFlag = 1;
+	ch->current_slh.decodingTimeStampFlag = 1;
+	gf_isom_extract_meta_item_mem(ch->owner->mov, GF_TRUE, 0, ch->item_id, &ch->sample->data, &ch->sample->dataLength, NULL, GF_FALSE);
+	ch->current_slh.accessUnitLength = ch->sample->dataLength;
+}
 
 void isor_reader_get_sample(ISOMChannel *ch)
 {
@@ -655,6 +682,8 @@ void isor_reader_get_sample(ISOMChannel *ch)
 		u32 mtype = gf_isom_get_media_type(ch->owner->mov, ch->track);
 		switch (mtype) {
 		case GF_ISOM_MEDIA_VISUAL:
+        case GF_ISOM_MEDIA_AUXV:
+        case GF_ISOM_MEDIA_PICT:
 			//code is here as a reminder, but by default we use inband param set extraction so no need for it
 #if 0
 			if ( ! (ch->nalu_extract_mode & GF_ISOM_NALU_EXTRACT_INBAND_PS_FLAG) ) {
@@ -922,6 +951,10 @@ void isor_flush_data(ISOMReader *read, Bool check_buffer_level, Bool is_chunk_fl
 		read->nb_force_flush = 0;
 		if (read->has_pending_segments) {
 			read->has_pending_segments--;
+		}
+		if (param.url_query.discontinuity_type==2) {
+			gf_isom_reset_fragment_info(read->mov, 0);
+			read->clock_discontinuity = 1;
 		}
 
 		if (e==GF_EOS) {

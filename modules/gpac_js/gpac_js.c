@@ -150,6 +150,7 @@ enum {
 	GJS_OM_PROP_MAIN_ADDON_MEDIATIME = -51,
 	GJS_OM_PROP_DEPENDENT_GROUPS = -52,
 	GJS_OM_PROP_IS_VR_SCENE = -53,
+	GJS_OM_PROP_DISABLED = -54
 };
 
 enum {
@@ -552,6 +553,8 @@ static JSBool SMJS_FUNCTION(gpac_get_option)
 			return JS_TRUE;
 		}
 		opt = term->compositor->audio_renderer->filter_chain.filters->filter->GetOption(term->compositor->audio_renderer->filter_chain.filters->filter, key_name);
+	} else if (sec_name && !stricmp(sec_name, "General") && key_name && !strcmp(key_name, "Version")) {
+		opt = GPAC_FULL_VERSION;
 	} else if (key_name) {
 		opt = gf_cfg_get_key(term->user->config, sec_name, key_name);
 	} else if (idx>=0) {
@@ -1415,6 +1418,9 @@ case GJS_OM_PROP_DEPENDENT_GROUPS:
 case GJS_OM_PROP_IS_VR_SCENE:
 	*vp = BOOLEAN_TO_JSVAL(odm->subscene && odm->subscene->vr_type ? JS_TRUE : JS_FALSE);
 	break;
+case GJS_OM_PROP_DISABLED:
+	*vp = BOOLEAN_TO_JSVAL(odm->OD->RedirectOnly ? JS_TRUE : JS_FALSE);
+	break;
 }
 return JS_TRUE;
 }
@@ -1928,7 +1934,7 @@ static Bool gjs_event_filter(void *udta, GF_Event *evt, Bool consumed_by_composi
 	if (lock_fail) {
 		GF_Event *evt_clone;
 		gf_mx_p(gjs->event_mx);
-		evt_clone = gf_malloc(sizeof(GF_Event));;
+		evt_clone = gf_malloc(sizeof(GF_Event));
 		memcpy(evt_clone, evt, sizeof(GF_Event));
 		gf_list_add(gjs->event_queue, evt_clone);
 		GF_LOG(GF_LOG_INFO, GF_LOG_COMPOSE, ("[GPACJS] Couldn't lock % mutex, queing event\n", (lock_fail==2) ? "JavaScript" : "Compositor"));
@@ -2305,6 +2311,7 @@ static void gjs_load(GF_JSUserExtension *jsext, GF_SceneGraph *scene, JSContext 
 		SMJS_PROPERTY_SPEC("main_addon_media_time",		GJS_OM_PROP_MAIN_ADDON_MEDIATIME, JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_SHARED | JSPROP_READONLY, 0, 0),
 		SMJS_PROPERTY_SPEC("dependent_groups",		GJS_OM_PROP_DEPENDENT_GROUPS, JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_SHARED | JSPROP_READONLY, 0, 0),
 		SMJS_PROPERTY_SPEC("vr_scene",		GJS_OM_PROP_IS_VR_SCENE, JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_SHARED | JSPROP_READONLY, 0, 0),
+		SMJS_PROPERTY_SPEC("disabled",		GJS_OM_PROP_DISABLED, JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_SHARED | JSPROP_READONLY, 0, 0),
 
 		SMJS_PROPERTY_SPEC(0, 0, 0, 0, 0)
 	};

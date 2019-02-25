@@ -125,6 +125,21 @@ void gf_term_select_service(GF_Terminal *term, GF_ObjectManager *odm, u32 servic
 #endif
 }
 
+GF_EXPORT
+Bool gf_term_find_service(GF_Terminal *term, GF_ObjectManager *odm, u32 service_id)
+{
+	u32 i;
+	GF_ObjectManager *anodm;
+	if (!term || !odm || !odm->subscene) return GF_FALSE;
+	if (!gf_term_check_odm(term, odm)) return GF_FALSE;
+
+	i=0;
+	while ((anodm = gf_list_enum(odm->subscene->resources, &i))) {
+		if (anodm->OD && (anodm->OD->ServiceID==service_id)) return GF_TRUE;
+	}
+	return GF_FALSE;
+}
+
 
 /*select given object when stream selection is available*/
 GF_EXPORT
@@ -319,7 +334,7 @@ GF_Err gf_term_get_object_info(GF_Terminal *term, GF_ObjectManager *odm, GF_Medi
 			gf_mo_get_visual_info(odm->mo, &info->width, &info->height, NULL, &info->par, &info->pixelFormat, NULL);
 			break;
 		case GF_STREAM_AUDIO:
-			gf_mo_get_audio_info(odm->mo, &info->sample_rate, &info->bits_per_sample, &info->num_channels, NULL);
+			gf_mo_get_audio_info(odm->mo, &info->sample_rate, &info->bits_per_sample, &info->num_channels, NULL, NULL);
 			info->clock_drift = 0;
 			break;
 		case GF_STREAM_TEXT:

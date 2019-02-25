@@ -49,6 +49,7 @@ enable_fuzzing=0
 fuzz_all=0
 fuzz_duration=60
 no_fuzz_cleanup=0
+skip_next_hash_test=0
 
 current_script=""
 
@@ -79,7 +80,8 @@ VIDEO_DIR="$LOCAL_OUT_DIR/videos"
 #dir where all logs are generated
 LOGS_DIR="$LOCAL_OUT_DIR/logs"
 #temp dir for any test
-TEMP_DIR="$LOCAL_OUT_DIR/temp"
+INTERN_TEMP_DIR="$LOCAL_OUT_DIR/temp"
+TEMP_DIR=$INTERN_TEMP_DIR
 
 ALL_REPORTS="$LOCAL_OUT_DIR/all_results.xml"
 ALL_LOGS="$LOCAL_OUT_DIR/all_logs.txt"
@@ -114,8 +116,8 @@ if [ ! -e $RULES_DIR ] ; then
 mkdir $RULES_DIR
 fi
 
-if [ ! -e $TEMP_DIR ] ; then
-mkdir $TEMP_DIR
+if [ ! -e $INTERN_TEMP_DIR ] ; then
+mkdir $INTERN_TEMP_DIR
 fi
 
 L_ERR=1
@@ -196,6 +198,7 @@ echo "  -check:                check test suites (names of each test is unique)"
 echo "  -track-stack:          track stack in malloc and turns on -warn option"
 echo "  -noplay:               disables MP4Client tests"
 echo "  -test=NAME             only executes given test"
+echo "  -precommit              alias for -sync-before -git-hash -warn -noplay. Before commit/push, you should run ./make_tests -precommit"
 echo "  SCRIPTS                only runs the scripts provided as arguments, by default runs everything in $SCRIPTS_DIR"
 echo "  -v:                    set verbose output"
 echo "  -h:                    print this help"
@@ -210,7 +213,7 @@ sync_media ()
   mkdir $EXTERNAL_MEDIA_DIR
  fi
  cd $EXTERNAL_MEDIA_DIR
- wget -q -m -nH --no-parent --cut-dirs=4 --reject "*.gif" "$REFERENCE_DIR/media/"
+ wget -q -m -nH --no-parent --cut-dirs=4 --reject "*.gif" --reject "index.html*" --restrict-file-names=nocontrol "$REFERENCE_DIR/media/"
  cd "$main_dir"
 }
 
@@ -249,7 +252,7 @@ strict_mode=0
 track_stack=0
 speed=1
 single_test_name=""
-erase_temp_dir=1
+keep_temp_dir=0
 
 #Parse arguments
 for i in $* ; do
@@ -272,7 +275,7 @@ for i in $* ; do
  "-keep-avi")
   keep_avi=1;;
  "-keep-tmp")
-  erase_temp_dir=0;;
+  keep_temp_dir=1;;
  "-no-hash")
   disable_hash=1;;
  "-strict")
@@ -311,6 +314,12 @@ for i in $* ; do
   ;;
  "-v")
   verbose=1;;
+ "-precommit")
+  sync_media
+  sync_hash
+  log_after_fail=1
+  MP4CLIENT_NOT_FOUND=1
+  ;;
  "-h")
   print_usage
   exit;;
@@ -352,7 +361,7 @@ fi
 if [ $do_clean != 0 ] ; then
  rm -f $ALL_REPORTS > /dev/null
  rm -f $ALL_LOGS > /dev/null
- rm -rf $TEMP_DIR/* 2> /dev/null
+ rm -rf $INTERN_TEMP_DIR/* 2> /dev/null
  if [ "${#url_arg[@]}" -eq 0 ] ; then
   echo "Deleting cache (logs, stats and videos)"
   rm -rf $LOGS_DIR/* > /dev/null
@@ -463,6 +472,8 @@ if [ $MP4CLIENT_NOT_FOUND = 0 ] && [ $do_clean = 0 ] ; then
   fi
 fi
 
+disable_playback=$MP4CLIENT_NOT_FOUND
+
 MP42TS -h 2> /dev/null
 res=$?
 if [ $res != 0 ] ; then
@@ -519,9 +530,11 @@ MP4CLIENT="MP4Client -noprog -strict-error $base_args"
 MP42TS="MP42TS $base_args"
 DASHCAST="DashCast $base_args"
 
-$MP4BOX -version 2> $TEMP_DIR/version.txt
-VERSION="`head -1 $TEMP_DIR/version.txt | cut -d ' ' -f 5-` "
-rm $TEMP_DIR/version.txt
+$MP4BOX -version 2> $INTERN_TEMP_DIR/version.txt
+VERSION="`head -1 $INTERN_TEMP_DIR/version.txt | cut -d ' ' -f 5-` "
+rm $INTERN_TEMP_DIR/version.txt
+log $L_INF "GPAC version: $VERSION"
+log $L_INF ""
 
 #reset all the possible return values
 reset_stat ()
@@ -553,10 +566,12 @@ test_begin ()
  result=""
  TEST_NAME=$1
  fuzz_test=$fuzz_all
+ is_fuzz_test=0
  reference_hash_valid="$HASH_DIR/$TEST_NAME-valid-hash"
 
  log $L_DEB "Starting test $TEST_NAME"
 
+ TEMP_DIR=$INTERN_TEMP_DIR
 
  report="$TEMP_DIR/$TEST_NAME-temp.txt"
  LOGS="$LOGS_DIR/$TEST_NAME-logs.txt-new"
@@ -588,6 +603,13 @@ test_begin ()
   return
  fi
 
+ if [ $keep_temp_dir != 0 ] ; then
+ 	TEMP_DIR="$INTERN_TEMP_DIR/$TEST_NAME"
+	if [ ! -e $TEMP_DIR ] ; then
+		mkdir $TEMP_DIR
+	fi
+ fi
+
  #reset defaults
  dump_dur=$DEF_DUMP_DUR
  dump_size=$DEF_DUMP_SIZE
@@ -612,7 +634,7 @@ test_begin ()
   fi
  fi
 
- if [ $MP4CLIENT_NOT_FOUND > 0 ] ; then
+ if [ $MP4CLIENT_NOT_FOUND = 0 ] ; then
   skip_play_hash=1
  fi
 
@@ -681,6 +703,8 @@ test_end ()
 {
  #wait for all sub-tests to complete (some may use subshells)
  wait
+
+ TEMP_DIR=$INTERN_TEMP_DIR
 
   if [ $# -gt 0 ] ; then
    log $L_ERR "> in test $TEST_NAME in script $current_script line $BASH_LINENO"
@@ -766,12 +790,18 @@ shopt -s nullglob
    HASH_TEST=""
    HASH_NOT_FOUND=0
    HASH_FAIL=0
+   SRC_NOT_FOUND=0
 
    source $i
    nb_test_hash=$((nb_test_hash + 1))
    if [ $HASH_NOT_FOUND -eq 1 ] ; then
     result="$HASH_TEST:HashNotFound $result"
     nb_hash_missing=$((nb_hash_missing + 1))
+    test_exec_na=$((test_exec_na + 1))
+   elif [ $SRC_NOT_FOUND -eq 1 ] ; then
+    result="$HASH_TEST:HashSourceNotFound $result"
+    test_ok=0
+    nb_hash_fail=$((nb_hash_fail + 1))
     test_exec_na=$((test_exec_na + 1))
    elif [ $HASH_FAIL -eq 1 ] ; then
     result="$HASH_TEST:HashFail $result"
@@ -791,8 +821,8 @@ shopt -s nullglob
   if [ $generate_hash = 1 ] ; then
     log $L_DEB "Test $TEST_NAME $nb_subtests subtests and $nb_test_hash hashes"
     nb_hashes=$((nb_test_hash + nb_test_hash))
-	#only allow no hash if only one subtest
-    if [ $subtest_idx -gt 1 ] && [ $nb_hashes -lt $subtest_idx ] ; then
+  	#only allow no hash if only one subtest or fuzzing
+    if [ $subtest_idx -gt 1 ] && [ $nb_hashes -lt $subtest_idx ] && [ $is_fuzz_test = 0 ]; then
      log $L_ERR "Test $TEST_NAME has too few hash tests: $nb_hashes for $nb_subtests subtests - please fix"
      result="NOT ENOUGH HASHES"
     else
@@ -892,7 +922,8 @@ do_fuzz()
 ret=0
 do_test ()
 {
-
+  skip_next_hash_test=0
+  
   if [ $# -gt 2 ] ; then
    log $L_ERR "> in test $TEST_NAME in script $current_script line $BASH_LINENO"
    log $L_ERR "	@do_test takes only two arguments - wrong call (first arg $1)"
@@ -908,18 +939,23 @@ do_test ()
   return
  fi
 
- if [ $MP4CLIENT_NOT_FOUND != 0 ] ; then
+ if [ $MP4CLIENT_NOT_FOUND = 1 ] ; then
 	case $1 in MP4Client*)
 		return
 	esac
  fi
+
  log L_DEB "executing $1"
 
  subtest_idx=$((subtest_idx + 1))
 
  log_subtest="$LOGS_DIR/$TEST_NAME-logs-$subtest_idx-$2.txt"
- stat_subtest="$TEMP_DIR/$TEST_NAME-stats-$subtest_idx-$2.sh"
+ stat_subtest="$INTERN_TEMP_DIR/$TEST_NAME-stats-$subtest_idx-$2.sh"
  SUBTEST_NAME=$2
+
+ if [ $fuzz_test = 1 ] ; then
+   is_fuzz_test=1
+ fi
 
  if [ $enable_fuzzing = 0 ] ; then
   fuzz_test=0
@@ -986,6 +1022,7 @@ if [ $rv -eq 1 ] ; then
    if [ -n "$res_err" ]; then
     echo "Negative test detected, reverting to success (found \"$res_err\" in stderr)" >> $log_subtest
     rv=0
+    skip_next_hash_test=1
     echo "" > $stat_subtest
     break
    fi
@@ -1030,12 +1067,17 @@ do_playback_test ()
   return
  fi
 
+ if [ $MP4CLIENT_NOT_FOUND = 1 ] ; then
+  return
+ fi
+
+
  if [ $single_test = 1 ] ; then
   FULL_SUBTEST="$TEST_NAME"
  else
   FULL_SUBTEST="$TEST_NAME-$2"
  fi
- AVI_DUMP="$TEMP_DIR/$FULL_SUBTEST-dump"
+ AVI_DUMP="$INTERN_TEMP_DIR/$FULL_SUBTEST-dump"
 
  args="$MP4CLIENT -avi 0-$dump_dur -out $AVI_DUMP -size $dump_size $1"
 
@@ -1094,6 +1136,10 @@ fi
 #@do_hash_test: generates a hash for $1 file , compare it to HASH_DIR/$TEST_NAME$2.hash
 do_hash_test ()
 {
+  if [ $skip_next_hash_test = 1 ] ; then
+    skip_next_hash_test=0
+    return
+  fi
 
   if [ $# -gt 2 ] ; then
    log $L_ERR "> in test $TEST_NAME in script $current_script line $BASH_LINENO"
@@ -1114,9 +1160,9 @@ do_hash_test ()
   return
  fi
 
- STATHASH_SH="$TEMP_DIR/$TEST_NAME-stathash-$2.sh"
+ STATHASH_SH="$INTERN_TEMP_DIR/$TEST_NAME-stathash-$2.sh"
 
- test_hash="$TEMP_DIR/$TEST_NAME-$2-test.hash"
+ test_hash="$INTERN_TEMP_DIR/$TEST_NAME-$2-test.hash"
  ref_hash="$HASH_DIR/$TEST_NAME-$2.hash"
 
  echo "HASH_TEST=$2" > $STATHASH_SH
@@ -1143,6 +1189,14 @@ do_hash_test ()
  fi
 
  if [ $generate_hash = 0 ] ; then
+  if [ ! -f $1 ] ; then
+   echo "SRC_NOT_FOUND=1" >> $STATHASH_SH
+   echo "HASH_FAIL=0" >> $STATHASH_SH
+   echo "not found $1"
+   return
+  fi
+
+  echo "SRC_NOT_FOUND=0" >> $STATHASH_SH
   if [ ! -f $ref_hash ] ; then
    echo "HASH_NOT_FOUND=1" >> $STATHASH_SH
    return
@@ -1196,8 +1250,8 @@ do_compare_file_hashes ()
    log $L_ERR "> in test $TEST_NAME in script $current_script line $BASH_LINENO"
    log $L_ERR "	@do_compare_file_hashes takes only two arguments - wrong call (first arg is $1)"
   fi
-test_hash_first="$TEMP_DIR/$TEST_NAME-$(basename $1).hash"
-test_hash_second="$TEMP_DIR/$TEST_NAME-$(basename $2).hash"
+test_hash_first="$INTERN_TEMP_DIR/$TEST_NAME-$(basename $1).hash"
+test_hash_second="$INTERN_TEMP_DIR/$TEST_NAME-$(basename $2).hash"
 
 $MP4BOX -hash -std $1 > $test_hash_first 2> /dev/null
 $MP4BOX -hash -std $1 > $test_hash_second 2> /dev/null
@@ -1380,7 +1434,7 @@ echo '<?xml-stylesheet href="stylesheet.xsl" type="text/xsl"?>' >> $ALL_REPORTS
 echo "<GPACTestSuite version=\"$VERSION\" platform=\"$platform\" start_date=\"$start_date\" end_date=\"$(date '+%d/%m/%Y %H:%M:%S')\">" >> $ALL_REPORTS
 
 
-if [ $erase_temp_dir != 0 ] ; then
+if [ $keep_temp_dir != 1 ] ; then
    rm -rf $TEMP_DIR/* 2> /dev/null
 fi
 
@@ -1425,7 +1479,6 @@ fi
 TESTS_TOTAL=$((TESTS_TOTAL + 1))
 if [ $TEST_SKIP = 0 ] ; then
  TESTS_DONE=$((TESTS_DONE + 1))
-cp $i "test.txt"
 else
  TESTS_SKIP=$((TESTS_SKIP + $TEST_SKIP))
 fi
@@ -1590,6 +1643,12 @@ if [ $strict_mode = 1 ] ; then
   break
  fi
 fi
+
+#cleanup temp dir
+if [ $keep_temp_dir != 1 ] ; then
+   rm -rf $TEMP_DIR/* 2> /dev/null
+fi
+
 done
 
 

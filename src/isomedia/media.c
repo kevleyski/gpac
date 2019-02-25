@@ -25,6 +25,7 @@
 
 #include <gpac/internal/isomedia_dev.h>
 #include <gpac/constants.h>
+#include <gpac/avparse.h>
 
 #ifndef GPAC_DISABLE_ISOM
 
@@ -199,10 +200,33 @@ GF_Err Media_GetESD(GF_MediaBox *mdia, u32 sampleDescIndex, GF_ESD **out_esd, Bo
 			HEVC_RewriteESDescriptorEx((GF_MPEGVisualSampleEntryBox*) entry, NULL);
 		esd = ((GF_MPEGVisualSampleEntryBox*) entry)->emul_esd;
 		break;
+	case GF_ISOM_BOX_TYPE_AV01:
+		AV1_RewriteESDescriptorEx((GF_MPEGVisualSampleEntryBox*)entry, mdia);
+		esd = ((GF_MPEGVisualSampleEntryBox*)entry)->emul_esd;
+		break;
+	case GF_ISOM_BOX_TYPE_VP09:
+		VP9_RewriteESDescriptorEx((GF_MPEGVisualSampleEntryBox*)entry, mdia);
+		esd = ((GF_MPEGVisualSampleEntryBox*)entry)->emul_esd;
+		break;
 	case GF_ISOM_BOX_TYPE_MP4A:
 	case GF_ISOM_BOX_TYPE_ENCA:
-		ESDa = ((GF_MPEGAudioSampleEntryBox*)entry)->esd;
-		if (ESDa) esd = (GF_ESD *) ESDa->desc;
+        {
+            GF_MPEGAudioSampleEntryBox *ase = (GF_MPEGAudioSampleEntryBox*)entry;
+            ESDa = ase->esd;
+            if (ESDa) esd = (GF_ESD *) ESDa->desc;
+            else {
+                // Assuming that if no ESD is provided the stream is Basic MPEG-4 AAC LC
+                GF_M4ADecSpecInfo aacinfo;
+                memset(&aacinfo, 0, sizeof(GF_M4ADecSpecInfo));
+                aacinfo.nb_chan = ase->channel_count;
+                aacinfo.base_object_type = GF_M4A_AAC_LC;
+                aacinfo.base_sr = ase->samplerate_hi;
+                *out_esd = gf_odf_desc_esd_new(0);
+                (*out_esd)->decoderConfig->streamType = GF_STREAM_AUDIO;
+                (*out_esd)->decoderConfig->objectTypeIndication = GPAC_OTI_AUDIO_AAC_MPEG4;
+                gf_m4a_write_config(&aacinfo, &(*out_esd)->decoderConfig->decoderSpecificInfo->data, &(*out_esd)->decoderConfig->decoderSpecificInfo->dataLength);
+            }
+        }
 		break;
 	case GF_ISOM_BOX_TYPE_MP4S:
 	case GF_ISOM_BOX_TYPE_ENCS:
@@ -234,31 +258,11 @@ GF_Err Media_GetESD(GF_MediaBox *mdia, u32 sampleDescIndex, GF_ESD **out_esd, Bo
 		gf_bs_get_content(bs, & esd->decoderConfig->decoderSpecificInfo->data, & esd->decoderConfig->decoderSpecificInfo->dataLength);
 		gf_bs_del(bs);
 	}
-	break;
+		break;
 	case GF_ISOM_BOX_TYPE_STPP:
-	{
-		/* TODO */
-	}
-	break;
 	case GF_ISOM_BOX_TYPE_SBTT:
-	{
-		/* TODO */
-	}
-	break;
 	case GF_ISOM_BOX_TYPE_STXT:
-	{
-		GF_BitStream *bs;
-		esd =  gf_odf_desc_esd_new(2);
-		*out_esd = esd;
-		esd->decoderConfig->streamType = GF_STREAM_TEXT;
-		esd->decoderConfig->objectTypeIndication = GPAC_OTI_SCENE_SIMPLE_TEXT_MP4;
-		bs = gf_bs_new(NULL, 0, GF_BITSTREAM_WRITE);
-		gf_bs_write_u32(bs, entry->type);
-		gf_isom_box_write((GF_Box *)((GF_MetaDataSampleEntryBox*)entry)->config, bs);
-		gf_bs_get_content(bs, & esd->decoderConfig->decoderSpecificInfo->data, & esd->decoderConfig->decoderSpecificInfo->dataLength);
-		gf_bs_del(bs);
-	}
-	break;
+		break;
 #endif
 
 	case GF_ISOM_SUBTYPE_3GP_AMR:
@@ -315,6 +319,11 @@ GF_Err Media_GetESD(GF_MediaBox *mdia, u32 sampleDescIndex, GF_ESD **out_esd, Bo
 			memcpy(esd->decoderConfig->decoderSpecificInfo->data, ptr->lsr_config->hdr, sizeof(char)*ptr->lsr_config->hdr_size);
 			break;
 		}
+	case GF_ISOM_SUBTYPE_MH3D_MHA1:
+	case GF_ISOM_SUBTYPE_MH3D_MHA2:
+	case GF_ISOM_SUBTYPE_MH3D_MHM1:
+	case GF_ISOM_SUBTYPE_MH3D_MHM2:
+		break;
 
 	default:
 		return GF_ISOM_INVALID_MEDIA;
@@ -385,18 +394,22 @@ GF_Err Media_GetSample(GF_MediaBox *mdia, u32 sampleNumber, GF_ISOSample **samp,
 		//if no SyncSample, all samples are sync (cf spec)
 		(*samp)->IsRAP = RAP;
 	}
-	/*overwrite sync sample with sample dep if any*/
+
 	if (mdia->information->sampleTable->SampleDep) {
 		u32 isLeading, dependsOn, dependedOn, redundant;
 		e = stbl_GetSampleDepType(mdia->information->sampleTable->SampleDep, sampleNumber, &isLeading, &dependsOn, &dependedOn, &redundant);
 		if (!e) {
 			if (dependsOn==1) (*samp)->IsRAP = RAP_NO;
-			else if (dependsOn==2) (*samp)->IsRAP = RAP;
+			//commenting following code since it is wrong - an I frame is not always a SAP1, it can be a SAP2 or SAP3.
+			//Keeping this code breaks AVC / HEVC openGOP import when writing sample dependencies
+			//else if (dependsOn==2) (*samp)->IsRAP = RAP;
+
 			/*if not depended upon and redundant, mark as carousel sample*/
 			if ((dependedOn==2) && (redundant==1)) (*samp)->IsRAP = RAP_REDUNDANT;
 			/*TODO FIXME - we must enhance the IsRAP semantics to carry disposable info ... */
 		}
 	}
+
 	/*get sync shadow*/
 	if (Media_IsSampleSyncShadow(mdia->information->sampleTable->ShadowSync, sampleNumber)) (*samp)->IsRAP = RAP_REDUNDANT;
 
@@ -463,12 +476,10 @@ GF_Err Media_GetSample(GF_MediaBox *mdia, u32 sampleNumber, GF_ISOSample **samp,
 		e = Media_RewriteODFrame(mdia, *samp);
 		if (e) return e;
 	}
-	/*FIXME: we do NOT rewrite sample if we have a encrypted track*/
+	/*we do NOT rewrite sample if we have a encrypted track*/
 	else if (gf_isom_is_nalu_based_entry(mdia, entry)
-	//we rewrite sample even if track is encrypted since CENC keeps nal unit in clear, which is all we need to rewrite the sample and insert SPS/PPS/VPS
-//	&& !gf_isom_is_track_encrypted(mdia->mediaTrack->moov->mov, gf_isom_get_tracknum_from_id(mdia->mediaTrack->moov, mdia->mediaTrack->Header->trackID))
-
-	        ) {
+		&& !gf_isom_is_track_encrypted(mdia->mediaTrack->moov->mov, gf_isom_get_tracknum_from_id(mdia->mediaTrack->moov, mdia->mediaTrack->Header->trackID))
+	) {
 		e = gf_isom_nalu_sample_rewrite(mdia, *samp, sampleNumber, (GF_MPEGVisualSampleEntryBox *)entry);
 		if (e) return e;
 	}
@@ -721,8 +732,35 @@ GF_Err Media_SetDuration(GF_TrackBox *trak)
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
+GF_Err Media_SetDrefURL(GF_DataEntryURLBox *dref_entry, const char *origName, const char *finalName)
+{
+	//for now we only support dref created in same folder for relative URLs
+	if (strstr(origName, "://") || ((origName[1]==':') && (origName[2]=='\\'))
+		|| (origName[0]=='/') || (origName[0]=='\\')
+	) {
+		dref_entry->location = gf_strdup(origName);
+	} else {
+		char *fname = strrchr(origName, '/');
+		if (!fname) fname = strrchr(origName, '\\');
+		if (fname) fname++;
 
-GF_Err Media_CreateDataRef(GF_DataReferenceBox *dref, char *URLname, char *URNname, u32 *dataRefIndex)
+		if (!fname) {
+			dref_entry->location = gf_strdup(origName);
+		} else {
+			u32 len = (u32)(fname - origName);
+			if (!finalName || strncmp(origName, finalName, len)) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Concatenation of relative path %s with relative path %s not supported, use absolute URLs\n", origName, finalName));
+				return GF_NOT_SUPPORTED;
+			} else {
+				dref_entry->location = gf_strdup(fname);
+			}
+		}
+	}
+	return GF_OK;
+}
+
+
+GF_Err Media_CreateDataRef(GF_ISOFile *movie, GF_DataReferenceBox *dref, char *URLname, char *URNname, u32 *dataRefIndex)
 {
 	GF_Err e;
 	GF_DataEntryURLBox *entry;
@@ -743,12 +781,12 @@ GF_Err Media_CreateDataRef(GF_DataReferenceBox *dref, char *URLname, char *URNna
 		//THIS IS URL
 		entry = (GF_DataEntryURLBox *) gf_isom_box_new(GF_ISOM_BOX_TYPE_URL);
 		entry->flags = 0;
-		entry->location = (char*)gf_malloc(strlen(URLname)+1);
+
+		e = Media_SetDrefURL(entry, URLname, movie->fileName ? movie->fileName : movie->finalName);
 		if (! entry->location) {
 			gf_isom_box_del((GF_Box *)entry);
-			return GF_OUT_OF_MEM;
+			return e ? e : GF_OUT_OF_MEM;
 		}
-		strcpy(entry->location, URLname);
 		e = dref_AddDataEntry(dref, (GF_Box *)entry);
 		if (e) return e;
 		*dataRefIndex = gf_list_count(dref->other_boxes);

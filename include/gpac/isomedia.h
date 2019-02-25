@@ -193,6 +193,7 @@ enum {
 	GF_ISOM_SAMPLE_GROUP_SYNC = GF_4CC( 's', 'y', 'n', 'c'), //p15
 	GF_ISOM_SAMPLE_GROUP_TSCL = GF_4CC( 't', 's', 'c', 'l'), //p15
 	GF_ISOM_SAMPLE_GROUP_VIPR = GF_4CC( 'v', 'i', 'p', 'r'), //p15
+	GF_ISOM_SAMPLE_GROUP_LBLI = GF_4CC( 'l', 'b', 'l', 'i'), //p15
 
 	GF_ISOM_SAMPLE_GROUP_3GAG = GF_4CC( '3', 'g', 'a', 'g'), //3gpp
 	GF_ISOM_SAMPLE_GROUP_AVCB = GF_4CC( 'a', 'v', 'c', 'b'), //3gpp
@@ -213,6 +214,8 @@ enum
 {
 	/*base media types*/
 	GF_ISOM_MEDIA_VISUAL	= GF_4CC( 'v', 'i', 'd', 'e' ),
+    GF_ISOM_MEDIA_AUXV      = GF_4CC( 'a', 'u', 'x', 'v' ),
+    GF_ISOM_MEDIA_PICT      = GF_4CC( 'p', 'i', 'c', 't' ),
 	GF_ISOM_MEDIA_AUDIO		= GF_4CC( 's', 'o', 'u', 'n' ),
 	GF_ISOM_MEDIA_HINT		= GF_4CC( 'h', 'i', 'n', 't' ),
 	GF_ISOM_MEDIA_META		= GF_4CC( 'm', 'e', 't', 'a' ),
@@ -295,6 +298,8 @@ enum
 	GF_ISOM_SUBTYPE_AVC4_H264		= GF_4CC( 'a', 'v', 'c', '4' ),
 	GF_ISOM_SUBTYPE_SVC_H264		= GF_4CC( 's', 'v', 'c', '1' ),
 	GF_ISOM_SUBTYPE_MVC_H264		= GF_4CC( 'm', 'v', 'c', '1' ),
+
+	/*HEVC media type*/
 	GF_ISOM_SUBTYPE_HVC1			= GF_4CC( 'h', 'v', 'c', '1' ),
 	GF_ISOM_SUBTYPE_HEV1			= GF_4CC( 'h', 'e', 'v', '1' ),
 	GF_ISOM_SUBTYPE_HVC2			= GF_4CC( 'h', 'v', 'c', '2' ),
@@ -302,6 +307,13 @@ enum
 	GF_ISOM_SUBTYPE_LHV1			= GF_4CC( 'l', 'h', 'v', '1' ),
 	GF_ISOM_SUBTYPE_LHE1			= GF_4CC( 'l', 'h', 'e', '1' ),
 	GF_ISOM_SUBTYPE_HVT1			= GF_4CC( 'h', 'v', 't', '1' ),
+
+	/*AV1 media type*/
+	GF_ISOM_SUBTYPE_AV01 = GF_4CC('a', 'v', '0', '1'),
+
+	/* VP */
+	GF_ISOM_SUBTYPE_VP08 = GF_4CC('v', 'p', '0', '8'),
+	GF_ISOM_SUBTYPE_VP09 = GF_4CC('v', 'p', '0', '9'),
 
 	/*3GPP(2) extension subtypes*/
 	GF_ISOM_SUBTYPE_3GP_H263	= GF_4CC( 's', '2', '6', '3' ),
@@ -343,8 +355,15 @@ enum
 	GF_ISOM_SUBTYPE_PNG 		= GF_4CC( 'p', 'n', 'g', ' ' ),
 	GF_ISOM_SUBTYPE_MJP2 		= GF_4CC( 'm', 'j', 'p', '2' ),
 
+	GF_ISOM_SUBTYPE_MH3D_MHA1	= GF_4CC( 'm', 'h', 'a', '1' ),
+	GF_ISOM_SUBTYPE_MH3D_MHA2	= GF_4CC( 'm', 'h', 'a', '2' ),
+	GF_ISOM_SUBTYPE_MH3D_MHM1	= GF_4CC( 'm', 'h', 'm', '1' ),
+	GF_ISOM_SUBTYPE_MH3D_MHM2	= GF_4CC( 'm', 'h', 'm', '2' ),
+
+
 	/* on-screen colours */
 	GF_ISOM_SUBTYPE_NCLX 		= GF_4CC( 'n', 'c', 'l', 'x' ),
+	GF_ISOM_SUBTYPE_PROF 		= GF_4CC( 'p', 'r', 'o', 'f' ),
 };
 
 
@@ -426,9 +445,10 @@ enum
 	/* Apple iTunes Video (.M4V) Video */
 	GF_ISOM_BRAND_M4V  = GF_4CC( 'M', '4', 'V', ' ' ),
 
-	GF_ISOM_BRAND_HVC1 = GF_4CC( 'h', 'v', 'c', '1' ),
 	GF_ISOM_BRAND_HVCE = GF_4CC( 'h', 'v', 'c', 'e' ),
 	GF_ISOM_BRAND_HVCI = GF_4CC( 'h', 'v', 'c', 'i' ),
+
+	GF_ISOM_BRAND_AV01 = GF_4CC( 'a', 'v', '0', '1'),
 
 	GF_ISOM_BRAND_ISMA = GF_4CC( 'I', 'S', 'M', 'A' ),
 
@@ -1013,16 +1033,11 @@ GF_Err gf_isom_get_fragment_defaults(GF_ISOFile *the_file, u32 trackNumber,
                                      u32 *defaultRandomAccess, u8 *defaultPadding, u16 *defaultDegradationPriority);
 
 
-/*non standard extensions used for video packets in order to keep AU structure in the file format
-(no normative tables for that). Info is NOT written to disk.
-*/
-/*get number of fragments for a sample */
-u32 gf_isom_get_sample_fragment_count(GF_ISOFile *the_file, u32 trackNumber, u32 sampleNumber);
-/*get sample fragment size*/
-u16 gf_isom_get_sample_fragment_size(GF_ISOFile *the_file, u32 trackNumber, u32 sampleNumber, u32 FragmentIndex);
-
 /*returns 1 if file is single AV (max one audio, one video, one text and basic od/bifs)*/
 Bool gf_isom_is_single_av(GF_ISOFile *file);
+
+/*returns TRUE if this is a video track type (vide, auxv, pict, ...)*/
+Bool gf_isom_is_video_subtype(u32 mtype);
 
 /*guess which std this file refers to. return value:
 	GF_ISOM_BRAND_ISOM: unrecognized std
@@ -1046,6 +1061,13 @@ void gf_isom_no_version_date_info(GF_ISOFile *file, Bool drop_info);
 
 /*gets last UTC/timestamp values indicated for the reference track in the file if any. Returns 0 if no info found*/
 Bool gf_isom_get_last_producer_time_box(GF_ISOFile *file, u32 *refTrackID, u64 *ntp, u64 *timestamp, Bool reset_info);
+
+/*gets max/average rate info as indicated in ESDS or BTRT boxes
+if sampleDescIndex is 0, gather for all sample descriptions*/
+GF_Err gf_isom_get_bitrate(GF_ISOFile *movie, u32 trackNumber, u32 sampleDescIndex, u32 *average_bitrate, u32 *max_bitrate, u32 *decode_buffer_size);
+
+/*returns true if this sample was the first sample of a traf in a fragmented file, false otherwise*/
+Bool gf_isom_sample_was_traf_start(GF_ISOFile *movie, u32 trackNumber, u32 sampleNum);
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
@@ -1084,6 +1106,9 @@ GF_Err gf_isom_rewrite_track_dependencies(GF_ISOFile *movie, u32 trackNumber);
 /*Add samples to a track. Use streamDescriptionIndex to specify the desired stream (if several)*/
 GF_Err gf_isom_add_sample(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex, const GF_ISOSample *sample);
 
+/*set depenecy info for given sample*/
+GF_Err gf_isom_sample_set_dep_info(GF_ISOFile *file, u32 track, u32 sampleNumber, u32 isLeading, u32 dependsOn, u32 dependedOn, u32 redundant);
+
 //copies all sample dependency, subSample and sample group information from the given sampleNumber in source file to the last added sample in dest file
 GF_Err gf_isom_copy_sample_info(GF_ISOFile *dst, u32 dst_track, GF_ISOFile *src, u32 src_track, u32 sampleNumber);
 
@@ -1108,7 +1133,7 @@ Use streamDescriptionIndex to specify the desired stream (if several)*/
 GF_Err gf_isom_add_sample_reference(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex, GF_ISOSample *sample, u64 dataOffset);
 
 /*set the duration of the last media sample. If not set, the duration of the last sample is the
-duration of the previous one if any, or media TimeScale (default value). This does not modify the edit list if any, 
+duration of the previous one if any, or media TimeScale (default value). This does not modify the edit list if any,
 you must modify this using gf_isom_set_edit_segment*/
 GF_Err gf_isom_set_last_sample_duration(GF_ISOFile *the_file, u32 trackNumber, u32 duration);
 
@@ -1295,17 +1320,21 @@ GF_Err gf_isom_set_track_matrix(GF_ISOFile *the_file, u32 trackNumber, u32 matri
 
 GF_Err gf_isom_set_pixel_aspect_ratio(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex, u32 hSpacing, u32 vSpacing);
 
-GF_Err gf_isom_set_clean_apperture(GF_ISOFile *movie, u32 trackNumber, u32 StreamDescriptionIndex, u32 cleanApertureWidthN, u32 cleanApertureWidthD, u32 cleanApertureHeightN, u32 cleanApertureHeightD, u32 horizOffN, u32 horizOffD, u32 vertOffN, u32 vertOffD);
+GF_Err gf_isom_set_clean_aperture(GF_ISOFile *movie, u32 trackNumber, u32 StreamDescriptionIndex, u32 cleanApertureWidthN, u32 cleanApertureWidthD, u32 cleanApertureHeightN, u32 cleanApertureHeightD, u32 horizOffN, u32 horizOffD, u32 vertOffN, u32 vertOffD);
+
+GF_Err gf_isom_set_image_sequence_coding_constraints(GF_ISOFile *movie, u32 trackNumber, u32 StreamDescriptionIndex, Bool remove, Bool all_ref_pics_intra, Bool intra_pred_used, u32 max_ref_per_pic);
+GF_Err gf_isom_set_image_sequence_alpha(GF_ISOFile *movie, u32 trackNumber, u32 StreamDescriptionIndex, Bool remove);
 
 /*set SR & nbChans for audio description*/
-GF_Err gf_isom_set_audio_info(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex, u32 sampleRate, u32 nbChannels, u8 bitsPerSample);
+typedef enum {
+	GF_IMPORT_AUDIO_SAMPLE_ENTRY_NOT_SET = 0,
+	GF_IMPORT_AUDIO_SAMPLE_ENTRY_v0_BS = 1,
+	GF_IMPORT_AUDIO_SAMPLE_ENTRY_v0_2 = 2,
+	GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_MPEG = 3,
+	GF_IMPORT_AUDIO_SAMPLE_ENTRY_v1_QTFF = 4,
+} GF_AudioSampleEntryImportMode;
 
-/*non standard extensions: set/remove a fragment of a sample - this is used for video packets
-in order to keep AU structure in the file format (no normative tables for that). Info is NOT written to disk*/
-GF_Err gf_isom_add_sample_fragment(GF_ISOFile *the_file, u32 trackNumber, u32 sampleNumber, u16 FragmentSize);
-GF_Err gf_isom_remove_sample_fragment(GF_ISOFile *the_file, u32 trackNumber, u32 sampleNumber);
-/*remove all sample fragment info for this track*/
-GF_Err gf_isom_remove_sample_fragments(GF_ISOFile *the_file, u32 trackNumber);
+GF_Err gf_isom_set_audio_info(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex, u32 sampleRate, u32 nbChannels, u8 bitsPerSample, GF_AudioSampleEntryImportMode asemode);
 
 /*set CTS unpack mode (used for B-frames & like): in unpack mode, each sample uses one entry in CTTS tables
 unpack=0: set unpack on - !!creates a CTTS table if none found!!
@@ -1376,7 +1405,7 @@ GF_Err gf_isom_change_mpeg4_description(GF_ISOFile *the_file, u32 trackNumber, u
 /*Add a system descriptor to the ESD of a stream - you have to delete the descriptor*/
 GF_Err gf_isom_add_desc_to_description(GF_ISOFile *the_file, u32 trackNumber, u32 StreamDescriptionIndex, GF_Descriptor *theDesc);
 
-/*updates average and max bitrate - if 0 for max, removes bitrate info*/
+/*updates average and max bitrate - if 0 for max and avg, removes bitrate info*/
 GF_Err gf_isom_update_bitrate(GF_ISOFile *movie, u32 trackNumber, u32 sampleDescriptionIndex, u32 average_bitrate, u32 max_bitrate, u32 decode_buffer_size);
 
 
@@ -1416,7 +1445,7 @@ GF_Err gf_isom_clone_root_od(GF_ISOFile *input, GF_ISOFile *output);
 kept if keep_hint_tracks is set
 if keep_pssh, all pssh boxes will be kept
 fragment information (mvex) is not kept*/
-GF_Err gf_isom_clone_movie(GF_ISOFile *orig_file, GF_ISOFile *dest_file, Bool clone_tracks, Bool keep_hint_tracks, Bool keep_pssh);
+GF_Err gf_isom_clone_movie(GF_ISOFile *orig_file, GF_ISOFile *dest_file, Bool clone_tracks, Bool keep_hint_tracks, Bool keep_pssh, Bool create_mvex_after_traks);
 
 /*returns true if same set of sample description in both tracks - this does include self-contained checking
 and reserved flags. The specific media cfg (DSI & co) is not analysed, only
@@ -1530,6 +1559,9 @@ GF_Err gf_isom_start_segment(GF_ISOFile *movie, const char *SegName, Bool memory
 /*sets the baseMediaDecodeTime of the first sample of the given track*/
 GF_Err gf_isom_set_traf_base_media_decode_time(GF_ISOFile *movie, u32 TrackID, u64 decode_time);
 
+/*enables mfra when writing movie fragments*/
+GF_Err gf_isom_enable_mfra(GF_ISOFile *file);
+
 /*sets Microsoft Smooth Streaming traf 'tfxd' box info, written at the end of each traf*/
 GF_Err gf_isom_set_traf_mss_timeext(GF_ISOFile *movie, u32 reference_track_ID, u64 ntp_in_10mhz, u64 traf_duration_in_10mhz);
 
@@ -1537,7 +1569,7 @@ GF_Err gf_isom_set_traf_mss_timeext(GF_ISOFile *movie, u32 reference_track_ID, u
 timestamp_shift is the constant difference between media time and presentation time (derived from edit list)
 out_seg_size is optional, holds the segment size in bytes
 */
-GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegs_per_sidx, u32 referenceTrackID, u64 ref_track_decode_time, s32 timestamp_shift, u64 ref_track_next_cts, Bool daisy_chain_sidx, Bool last_segment, Bool close_segment_handle, u32 segment_marker_4cc, u64 *index_start_range, u64 *index_end_range, u64 *out_seg_size);
+GF_Err gf_isom_close_segment(GF_ISOFile *movie, s32 subsegs_per_sidx, u32 referenceTrackID, u64 ref_track_decode_time, s32 timestamp_shift, u64 ref_track_next_cts, Bool daisy_chain_sidx, Bool use_ssix, Bool last_segment, Bool close_segment_handle, u32 segment_marker_4cc, u64 *index_start_range, u64 *index_end_range, u64 *out_seg_size);
 
 /*writes any pending fragment to file for low-latency output. shall only be used if no SIDX is used (subsegs_per_sidx<0 or flushing all fragments before calling gf_isom_close_segment)*/
 GF_Err gf_isom_flush_fragments(GF_ISOFile *movie, Bool last_segment);
@@ -1553,7 +1585,7 @@ gf_isom_close_segment that will follow. This avoids wasting time and disk space 
 the pre-allocated SIDX is destroyed and sucessive calls to gf_isom_close_segment will create their own sidx (unless gf_isom_allocate_sidx is called again).
 frags_per_sidx, daisy_chain_sidx and frags_per_segment are currently ignored and reserved for future usages where multiple SIDX could be written
 if not NULL, start_range and end_range will contain the byte range of the SIDX box in the movie*/
-GF_Err gf_isom_allocate_sidx(GF_ISOFile *movie, s32 subsegs_per_sidx, Bool daisy_chain_sidx, u32 nb_segs, u32 *frags_per_segment, u32 *start_range, u32 *end_range);
+GF_Err gf_isom_allocate_sidx(GF_ISOFile *movie, s32 subsegs_per_sidx, Bool daisy_chain_sidx, u32 nb_segs, u32 *frags_per_segment, u32 *start_range, u32 *end_range, Bool use_ssix);
 
 enum
 {
@@ -1605,6 +1637,10 @@ GF_Err gf_isom_fragment_append_data(GF_ISOFile *the_file, u32 TrackID, char *dat
 
 /*reset internal info used with fragments and segment. Should be called when seeking (with keep_sample_count=0) or when loading a media segments with the same timing as the previously loaded segment*/
 void gf_isom_reset_fragment_info(GF_ISOFile *movie, Bool keep_sample_count);
+
+/*reset sample count to 0 and next moof number to 0. When doint scalable media, should be called before opening the segment containing
+the base layer in order to make sure the sample count base number is always the same (ie 1) on all tracks*/
+void gf_isom_reset_sample_count(GF_ISOFile *movie);
 
 void gf_isom_reset_seq_num(GF_ISOFile *movie);
 
@@ -1959,6 +1995,12 @@ GF_HEVCConfig *gf_isom_hevc_config_get(GF_ISOFile *the_file, u32 trackNumber, u3
 /*gets LHVC config - user is responsible for deleting it*/
 GF_HEVCConfig *gf_isom_lhvc_config_get(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex);
 
+/*gets AV1 config - user is responsible for deleting it*/
+GF_AV1Config *gf_isom_av1_config_get(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex);
+
+/*gets VP config - user is responsible for deleting it*/
+GF_VPConfig *gf_isom_vp_config_get(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex);
+
 /*return true if track dependencies implying extractors or implicit reconstruction are found*/
 Bool gf_isom_needs_layer_reconstruction(GF_ISOFile *file);
 
@@ -2003,11 +2045,14 @@ GF_Err gf_isom_mvc_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_AVCConfi
 /*deletes MVC config*/
 GF_Err gf_isom_mvc_config_del(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex);
 
-/*sets avc3 entry type (inband SPS/PPS) instead of of avc1 (SPS/PPS in avcC box)*/
+/*sets avc3 entry type (inband SPS/PPS) instead of avc1 (SPS/PPS in avcC box)*/
 GF_Err gf_isom_avc_set_inband_config(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex);
 
-/*sets hev1 entry type (inband SPS/PPS) instead of of hvc1 (SPS/PPS in avcC box)*/
+/*sets hev1 entry type (inband SPS/PPS) instead of hvc1 (SPS/PPS in hvcC box)*/
 GF_Err gf_isom_hevc_set_inband_config(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex);
+
+/*sets lhe1 entry type instead of lhc1 but keep lhcC box intact*/
+GF_Err gf_isom_lhvc_force_inband_config(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex);
 
 /*sets hvt1 entry type (tile track) or hev2/hvc2 type if is_base_track is set - cfg may be set to indicate sub-profile of the tile. It is the use responsability to set the tbas track reference to the base hevc track*/
 GF_Err gf_isom_hevc_set_tile_config(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex, GF_HEVCConfig *cfg, Bool is_base_track);
@@ -2028,6 +2073,15 @@ typedef enum {
 	GF_ISOM_LEHVC_WITH_BASE_BACKWARD,
 } GF_ISOMLHEVCTrackType;
 GF_Err gf_isom_lhvc_config_update(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex, GF_HEVCConfig *cfg, GF_ISOMLHEVCTrackType track_type);
+
+
+/*creates new VPx config*/
+GF_Err gf_isom_vp_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_VPConfig *cfg, char *URLname, char *URNname, u32 *outDescriptionIndex, Bool is_vp9);
+
+
+/*creates new AV1 config*/
+GF_Err gf_isom_av1_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_AV1Config *cfg, char *URLname, char *URNname, u32 *outDescriptionIndex);
+
 
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
 
@@ -2264,7 +2318,8 @@ GF_Err gf_isom_get_original_format_type(GF_ISOFile *the_file, u32 trackNumber, u
 
 typedef struct
 {
-	u16 bytes_clear_data;
+	//16 bit stored but we use 32
+	u32 bytes_clear_data;
 	u32 bytes_encrypted_data;
 } GF_CENCSubSampleEntry;
 
@@ -2298,7 +2353,9 @@ GF_Err gf_isom_set_oma_protection(GF_ISOFile *the_file, u32 trackNumber, u32 des
 
 
 GF_Err gf_isom_cenc_allocate_storage(GF_ISOFile *the_file, u32 trackNumber, u32 container_type, u32 AlgorithmID, u8 IV_size, bin128 KID);
-GF_Err gf_isom_track_cenc_add_sample_info(GF_ISOFile *the_file, u32 trackNumber, u32 container_type, u8 IV_size, char *buf, u32 len);
+
+//if buf is NULL but len is given, this adds an unencrypted entry. otherwise, buf && len represent the sai cenc info to add
+GF_Err gf_isom_track_cenc_add_sample_info(GF_ISOFile *the_file, u32 trackNumber, u32 container_type, u8 IV_size, char *buf, u32 len, Bool use_subsamples);
 
 
 
@@ -2331,14 +2388,15 @@ void gf_isom_cenc_samp_aux_info_del(GF_CENCSampleAuxInfo *samp_aux_info);
 /*boxType is type of box which contains the sample auxiliary information. Now we have two type: GF_ISOM_BOX_UUID_PSEC and GF_ISOM_BOX_TYPE_SENC*/
 GF_Err gf_isom_cenc_get_sample_aux_info(GF_ISOFile *the_file, u32 trackNumber, u32 sampleNumber, GF_CENCSampleAuxInfo **sai, u32 *container_type);
 
-void gf_isom_cenc_get_default_info(GF_ISOFile *the_file, u32 trackNumber, u32 sampleDescriptionIndex, u32 *default_IsEncrypted, u8 *default_IV_size, bin128 *default_KID);
+void gf_isom_cenc_get_default_info(GF_ISOFile *the_file, u32 trackNumber, u32 sampleDescriptionIndex, u32 *default_IsEncrypted, u8 *default_IV_size, bin128 *default_KID, u8 *constant_IV_size, bin128 *constant_IV, u8 *crypt_byte_block, u8 *skip_byte_block);
 
 Bool gf_isom_cenc_is_pattern_mode(GF_ISOFile *the_file, u32 trackNumber, u32 sampleDescriptionIndex);
-void gf_isom_cenc_get_default_pattern_info(GF_ISOFile *the_file, u32 trackNumber, u32 sampleDescriptionIndex, u8 *default_crypt_byte_block, u8 *default_skip_byte_block);
 
 u32 gf_isom_get_pssh_count(GF_ISOFile *file);
 /*index is 1-based, all pointers shall not be free*/
 GF_Err gf_isom_get_pssh_info(GF_ISOFile *file, u32 pssh_index, bin128 SystemID, u32 *KID_count, const bin128 **KIDs, const u8 **private_data, u32 *private_data_size);
+
+GF_Err gf_isom_get_pssh(GF_ISOFile *file, u32 pssh_index, u8 **pssh_data, u32 *pssh_size);
 
 
 #ifndef GPAC_DISABLE_ISOM_DUMP
@@ -2383,6 +2441,7 @@ u32 gf_isom_get_meta_item_count(GF_ISOFile *file, Bool root_meta, u32 track_num)
 /*gets item info for the given item
 	@item_num: 1-based index of item to query
 	@itemID (optional): item ID in file
+	@type: item 4CC type
 	@is_self_reference: item is the file itself
 	@item_name (optional): item name
 	@item_mime_type (optional): item mime type
@@ -2392,7 +2451,7 @@ u32 gf_isom_get_meta_item_count(GF_ISOFile *file, Bool root_meta, u32 track_num)
 
 */
 GF_Err gf_isom_get_meta_item_info(GF_ISOFile *file, Bool root_meta, u32 track_num, u32 item_num,
-                                  u32 *itemID, u32 *protection_idx, Bool *is_self_reference,
+                                  u32 *itemID, u32 *type, u32 *protection_idx, Bool *is_self_reference,
                                   const char **item_name, const char **item_mime_type, const char **item_encoding,
                                   const char **item_url, const char **item_urn);
 
@@ -2409,7 +2468,7 @@ GF_Err gf_isom_extract_meta_item(GF_ISOFile *file, Bool root_meta, u32 track_num
 /*extracts item from given meta in memory
 	@item_num: 1-based index of item to query
 */
-GF_Err gf_isom_extract_meta_item_mem(GF_ISOFile *file, Bool root_meta, u32 track_num, u32 item_id, char **out_data, u32 *out_size, const char **mime_type);
+GF_Err gf_isom_extract_meta_item_mem(GF_ISOFile *file, Bool root_meta, u32 track_num, u32 item_id, char **out_data, u32 *out_size, const char **mime_type, Bool use_annex_b);
 
 /*retirves primary item ID, 0 if none found (primary can also be stored through meta XML)*/
 u32 gf_isom_get_meta_primary_item_id(GF_ISOFile *file, Bool root_meta, u32 track_num);
@@ -2449,6 +2508,10 @@ typedef struct
 	GF_TileItemMode tile_mode;
 	u32 single_tile_number;
 	double time;
+	char iccPath[GF_MAX_PATH];
+	Bool alpha;
+	u8 num_channels;
+	u8 bits_per_channel[3];
 } GF_ImageItemProperties;
 
 GF_Err gf_isom_meta_get_next_item_id(GF_ISOFile *file, Bool root_meta, u32 track_num, u32 *item_id);
@@ -2468,6 +2531,8 @@ GF_Err gf_isom_set_meta_primary_item(GF_ISOFile *file, Bool root_meta, u32 track
 GF_Err gf_isom_meta_add_item_ref(GF_ISOFile *file, Bool root_meta, u32 trackID, u32 from_id, u32 to_id, u32 type, u64 *ref_index);
 
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
+
+GF_Err gf_isom_get_meta_image_props(GF_ISOFile *file, Bool root_meta, u32 track_num, u32 item_id, GF_ImageItemProperties *prop);
 
 
 /********************************************************************
@@ -2665,6 +2730,8 @@ GF_Err gf_isom_set_sample_roll_group(GF_ISOFile *movie, u32 track, u32 sample_nu
 /*set encryption group for a sample_number; see GF_CENCSampleEncryptionGroupEntry for the parameters*/
 GF_Err gf_isom_set_sample_cenc_group(GF_ISOFile *movie, u32 track, u32 sample_number, u8 isEncrypted, u8 IV_size, bin128 KeyID,
 									u8 crypt_byte_block, u8 skip_byte_block, u8 constant_IV_size, bin128 constant_IV);
+
+GF_Err gf_isom_set_sample_cenc_default(GF_ISOFile *movie, u32 track, u32 sample_number);
 
 GF_Err gf_isom_set_composition_offset_mode(GF_ISOFile *file, u32 track, Bool use_negative_offsets);
 

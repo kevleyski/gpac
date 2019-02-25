@@ -476,12 +476,18 @@ struct _webvtt_parser {
 	void (*on_cue_read)(void *, GF_WebVTTCue *);
 };
 
+#ifndef GPAC_DISABLE_MEDIA_IMPORT
+
 static Bool gf_webvtt_timestamp_is_zero(GF_WebVTTTimestamp *ts)
 {
 	return (ts->hour == 0 && ts->min == 0 && ts->sec == 0 && ts->ms == 0) ? GF_TRUE : GF_FALSE;
 }
-
-#ifndef GPAC_DISABLE_MEDIA_IMPORT
+static Bool gf_webvtt_timestamp_greater(GF_WebVTTTimestamp *ts1, GF_WebVTTTimestamp *ts2)
+{
+	u64 t_ts1 = (60 * 60 * ts1->hour + 60 * ts1->min + ts1->sec) * 1000 + ts1->ms;
+	u64 t_ts2 = (60 * 60 * ts2->hour + 60 * ts2->min + ts2->sec) * 1000 + ts2->ms;
+	return (t_ts1 >= t_ts2) ? GF_TRUE : GF_FALSE;
+}
 
 
 /* mark the overlapped cue in the previous sample as split */
@@ -940,6 +946,14 @@ GF_Err gf_webvtt_parser_parse_timings_settings(GF_WebVTTParser *parser, GF_WebVT
 			char *settings = line + pos;
 			e = gf_webvtt_cue_add_property(cue, WEBVTT_SETTINGS, settings, (u32) strlen(settings));
 		}
+
+		if (!gf_webvtt_timestamp_greater(&cue->end, &cue->start)) {
+			parser->report_message(parser->user, e, "Bad VTT timestamps, end smaller than start", timestamp_string);
+			cue->end = cue->start;
+			cue->end.ms += 1;
+			return GF_NON_COMPLIANT_BITSTREAM;
+
+		}
 	}
 	return e;
 }
@@ -1117,7 +1131,7 @@ GF_Err gf_webvtt_parser_parse(GF_WebVTTParser *parser, u32 duration)
 	}
 	while (gf_list_count(parser->samples) > 0) {
 		GF_WebVTTSample *sample = (GF_WebVTTSample *)gf_list_get(parser->samples, 0);
-		parser->last_duration = sample->end - sample->start;
+		parser->last_duration = (sample->end > sample->start) ? sample->end - sample->start : 0;
 		gf_list_rem(parser->samples, 0);
 		parser->on_sample_parsed(parser->user, sample);
 	}
@@ -1505,7 +1519,8 @@ GF_Err gf_webvtt_dump_iso_track(GF_MediaExporter *dumper, char *szName, u32 trac
 	parser->user = out;
 	parser->on_cue_read = gf_webvtt_dump_cue;
 
-	fprintf(out, "<WebVTTTrack trackID=\"%d\">\n", gf_isom_get_track_id(dumper->file, track) );
+	if (box_dump)
+		fprintf(out, "<WebVTTTrack trackID=\"%d\">\n", gf_isom_get_track_id(dumper->file, track) );
 
 	e = gf_webvtt_dump_header(out, dumper->file, track, box_dump, 1);
 	if (e) goto exit;
@@ -1528,8 +1543,9 @@ GF_Err gf_webvtt_dump_iso_track(GF_MediaExporter *dumper, char *szName, u32 trac
 	duration = gf_isom_get_media_duration(dumper->file, track);
 	gf_webvtt_parser_dump_finalize(parser, duration);
 
-	fprintf(out, "</WebVTTTrack>\n");
-	
+	if (box_dump)
+		fprintf(out, "</WebVTTTrack>\n");
+
 exit:
 	gf_webvtt_parser_del(parser);
 	if (szName) gf_fclose(out);

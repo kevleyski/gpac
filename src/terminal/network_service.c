@@ -1102,6 +1102,8 @@ GF_ClientService *gf_term_service_new(GF_Terminal *term, struct _od_manager *own
 	serv->fn_command = term_on_command;
 	serv->fn_data_packet = term_on_data_packet;
 	serv->fn_add_media = term_on_media_add;
+
+	if (owner && owner->OD && owner->OD->RedirectOnly) serv->serviceID = owner->OD->ServiceID;
 	return serv;
 }
 
@@ -1229,7 +1231,7 @@ GF_DownloadSession *gf_service_download_new(GF_ClientService *service, const cha
 {
 	GF_Err e;
 	GF_DownloadSession * sess;
-	char *sURL, *orig_url;
+	char *sURL, *orig_url, *frag;
 	if (!service) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[HTTP] service is null, cannot create new download session for %s.\n", url));
 		return NULL;
@@ -1238,6 +1240,9 @@ GF_DownloadSession *gf_service_download_new(GF_ClientService *service, const cha
 	sURL = gf_url_concatenate(service->url, url);
 	/*path was absolute*/
 	if (!sURL) sURL = gf_strdup(url);
+	frag = strchr(sURL, '#');
+	if (frag) frag[0] = 0;
+	
 	assert( service->term );
 
 	orig_url = service->pending_service_session ? (char *) gf_dm_sess_get_original_resource_name(service->pending_service_session) : NULL;
@@ -1498,3 +1503,12 @@ GF_Err gf_term_service_cache_close(GF_ClientService *ns, Bool no_save)
 	ns->cache = NULL;
 	return e;
 }
+
+
+GF_EXPORT
+GF_DownloadManager *gf_term_service_get_dm(GF_ClientService *ns)
+{
+	if (!ns->term) return NULL;
+	return ns->term->downloader;
+}
+

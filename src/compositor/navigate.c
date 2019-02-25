@@ -382,7 +382,7 @@ static Bool compositor_handle_navigation_3d(GF_Compositor *compositor, GF_Event 
 		key_trans = cam->world_bbox.radius / 100;
 	}
 
-	key_pan = FIX_ONE/25;
+	key_pan = FIX_ONE/20;
 	key_exam = FIX_ONE/20;
 	key_inv = 1;
 
@@ -392,6 +392,14 @@ static Bool compositor_handle_navigation_3d(GF_Compositor *compositor, GF_Event 
 		key_pan *= 4;
 		key_exam *= 4;
 		key_trans*=4;
+	}
+
+	if (!gf_term_get_option(compositor->term, GF_OPT_ORIENTATION_SENSORS_ACTIVE)) {
+		Fixed yaw, pitch, roll;
+		gf_mx_get_yaw_pitch_roll(&compositor->visual->camera.modelview, &yaw, &pitch, &roll);
+		compositor->audio_renderer->yaw = yaw;
+		compositor->audio_renderer->pitch = pitch;
+		compositor->audio_renderer->roll = roll;
 	}
 
 	switch (ev->type) {
@@ -605,6 +613,28 @@ static Bool compositor_handle_navigation_3d(GF_Compositor *compositor, GF_Event 
 		case GF_KEY_PAGEUP:
 			if (keys & GF_KEY_MOD_CTRL) {
 				view_zoom(compositor, cam, -FIX_ONE/10);
+				return 1;
+			}
+			break;
+		case GF_KEY_D:
+			if (keys & GF_KEY_MOD_CTRL) {
+				compositor->tile_visibility_debug = !compositor->tile_visibility_debug;
+				gf_sc_invalidate(compositor, NULL);
+				return 1;
+			}
+			break;
+		case GF_KEY_G:
+			if (keys & GF_KEY_MOD_CTRL) {
+				compositor->vrhud_mode++;
+				if (compositor->vrhud_mode==5) compositor->vrhud_mode=0;
+				gf_sc_invalidate(compositor, NULL);
+				return 1;
+			}
+			break;
+		case GF_KEY_A:
+			if (keys & GF_KEY_MOD_CTRL) {
+				compositor->force_all_tiles_visible = !compositor->force_all_tiles_visible;
+				gf_sc_invalidate(compositor, NULL);
 				return 1;
 			}
 			break;

@@ -28,6 +28,7 @@
 #define _GF_MEDIA_DEV_H_
 
 #include <gpac/media_tools.h>
+#include <gpac/mpeg4_odf.h>
 
 #ifndef GPAC_DISABLE_STREAMING
 #include <gpac/ietf.h>
@@ -62,10 +63,8 @@ u32 gf_media_nalu_payload_end_bs(GF_BitStream *bs);
 returns data_len if no startcode found and sets sc_size to 0 (last nal in payload)*/
 u32 gf_media_nalu_next_start_code(const u8 *data, u32 data_len, u32 *sc_size);
 
-/*returns NAL unit type - bitstream must be sync'ed!!*/
-u8 AVC_NALUType(GF_BitStream *bs);
-Bool SVC_NALUIsSlice(u8 type);
-
+u32 gf_media_nalu_emulation_bytes_remove_count(const char *buffer, u32 nal_size);
+u32 gf_media_nalu_remove_emulation_bytes(const char *buffer_src, char *buffer_dst, u32 nal_size);
 
 enum
 {
@@ -119,13 +118,13 @@ typedef struct
 	/*to be eventually completed by other vui members*/
 } AVC_VUI;
 
-typedef struct 
+typedef struct
 {
 	u32 left;
 	u32 right;
 	u32 top;
 	u32 bottom;
-	
+
 } AVC_CROP;
 
 
@@ -146,6 +145,7 @@ typedef struct
 	u8 chroma_format;
 	u8 luma_bit_depth_m8;
 	u8 chroma_bit_depth_m8;
+	u32 ChromaArrayType;
 
 	s16 offset_for_ref_frame[256];
 
@@ -157,6 +157,8 @@ typedef struct
 
 	/*used to discard repeated SPSs - 0: not parsed, 1 parsed, 2 sent*/
 	u32 state;
+
+	u32 sbusps_crc;
 
 	/*for SVC stats during import*/
 	u32 nb_ei, nb_ep, nb_eb;
@@ -170,9 +172,15 @@ typedef struct
 	s32 pic_order_present;			/* pic_order_present_flag*/
 	s32 redundant_pic_cnt_present;	/* redundant_pic_cnt_present_flag */
 	u32 slice_group_count;			/* num_slice_groups_minus1 + 1*/
+	u32 mb_slice_group_map_type;
+	u32 pic_size_in_map_units_minus1;
+	u32 slice_group_change_rate_minus1;
 	/*used to discard repeated SPSs - 0: not parsed, 1 parsed, 2 sent*/
 	u32 status;
-
+	Bool weighted_pred_flag;
+	u8 weighted_bipred_idc;
+	Bool deblocking_filter_control_present_flag;
+	u32 num_ref_idx_l0_default_active_minus1, num_ref_idx_l1_default_active_minus1;
 } AVC_PPS;
 
 typedef struct
@@ -486,6 +494,138 @@ s32 gf_media_hevc_read_vps_ex(char *data, u32 *size, HEVCState *hevc, Bool remov
 
 GF_Err gf_hevc_get_sps_info_with_state(HEVCState *hevc_state, char *sps_data, u32 sps_size, u32 *sps_id, u32 *width, u32 *height, s32 *par_n, s32 *par_d);
 
+
+
+GF_Err gf_media_parse_ivf_file_header(GF_BitStream *bs, int *width, int *height, u32 *codec_fourcc, u32 *frame_rate, u32 *time_scale, u32 *num_frames);
+
+
+
+#define VP9_MAX_FRAMES_IN_SUPERFRAME 16
+
+GF_Err vp9_parse_sample(GF_BitStream *bs, GF_VPConfig *vp9_cfg, Bool *key_frame, int *FrameWidth, int *FrameHeight, int *renderWidth, int *renderHeight);
+GF_Err vp9_parse_superframe(GF_BitStream *bs, u64 ivf_frame_size, int *num_frames_in_superframe, u32 frame_sizes[VP9_MAX_FRAMES_IN_SUPERFRAME], int *superframe_index_size);
+
+
+
+#define AV1_MAX_TILE_ROWS 64
+#define AV1_MAX_TILE_COLS 64
+
+typedef enum {
+	AV1_KEY_FRAME = 0,
+	AV1_INTER_FRAME = 1,
+	AV1_INTRA_ONLY_FRAME = 2,
+	AV1_SWITCH_FRAME = 3,
+} AV1FrameType;
+
+typedef struct
+{
+	Bool seen_frame_header, seen_seq_header;
+	Bool key_frame, show_frame;
+	AV1FrameType frame_type;
+	GF_List *header_obus, *frame_obus; /*GF_AV1_OBUArrayEntry*/
+	struct {
+		//offset in bytes after first byte of obu, including its header
+		u32 obu_start_offset;
+		u32 size;
+	} tiles[AV1_MAX_TILE_ROWS * AV1_MAX_TILE_COLS];
+	u32 nb_tiles_in_obu;
+	u8 refresh_frame_flags;
+	u8 order_hint;
+	u8 allow_high_precision_mv;
+	u8 show_existing_frame, frame_to_show_map_idx;
+	//indicates the size of the uncompressed_header syntax element. This is set back to 0 at the next OBU parsing
+	u16 uncompressed_header_bytes;
+} AV1StateFrame;
+
+#define AV1_NUM_REF_FRAMES	8
+
+typedef struct
+{
+	s32 coefs[AV1_NUM_REF_FRAMES][6];
+} AV1GMParams;
+
+typedef struct
+{
+	/*importing options*/
+	Bool keep_temporal_delim;
+
+	/*general sequence information*/
+	Bool frame_id_numbers_present_flag;
+	Bool reduced_still_picture_header;
+	Bool decoder_model_info_present_flag;
+	u16 OperatingPointIdc;
+	int width, height, UpscaledWidth;
+	double FPS;
+
+	Bool use_128x128_superblock;
+	u8 frame_width_bits_minus_1, frame_height_bits_minus_1;
+	u8 equal_picture_interval;
+	u8 delta_frame_id_length_minus_2;
+	u8 additional_frame_id_length_minus_1;
+	u8 seq_force_integer_mv;
+	u8 seq_force_screen_content_tools;
+	Bool enable_superres;
+	Bool enable_order_hint;
+	Bool enable_cdef;
+	Bool enable_restoration;
+	Bool enable_warped_motion;
+	u8 OrderHintBits;
+	Bool enable_ref_frame_mvs;
+	Bool film_grain_params_present;
+	u8 buffer_delay_length;
+	u8 frame_presentation_time_length;
+	u32 buffer_removal_time_length;
+	u8 operating_points_count;
+	u8 decoder_model_present_for_this_op[6];
+	u8 operating_point_idc[6];
+	
+	u32 tileRows, tileCols, tileRowsLog2, tileColsLog2;
+	u8 tile_size_bytes; /*coding tile header size*/
+	Bool separate_uv_delta_q;
+
+	/*Needed for RFC6381*/
+	Bool still_picture;
+	u8 bit_depth;
+	Bool color_description_present_flag;
+	u8 color_primaries, transfer_characteristics, matrix_coefficients;
+	Bool color_range;
+	/*shall not be null*/
+	GF_AV1Config *config;
+
+	/*OBU parsing state, reset at each obu*/
+	Bool obu_has_size_field, obu_extension_flag;
+	u8 temporal_id, spatial_id;
+
+	/*inter-frames state */
+	u8 RefOrderHint[AV1_NUM_REF_FRAMES];
+	u8 RefValid[AV1_NUM_REF_FRAMES];
+	u8 OrderHints[AV1_NUM_REF_FRAMES];
+
+	AV1GMParams GmParams;
+	AV1GMParams PrevGmParams;
+	AV1GMParams SavedGmParams[AV1_NUM_REF_FRAMES];
+	u8 RefFrameType[AV1_NUM_REF_FRAMES];
+
+	/*frame parsing state*/
+	AV1StateFrame frame_state;
+} AV1State;
+
+GF_Err aom_av1_parse_temporal_unit_from_section5(GF_BitStream *bs, AV1State *state);
+GF_Err aom_av1_parse_temporal_unit_from_annexb(GF_BitStream *bs, AV1State *state);
+GF_Err aom_av1_parse_temporal_unit_from_ivf(GF_BitStream *bs, AV1State *state);
+
+GF_Err gf_media_aom_parse_ivf_file_header(GF_BitStream *bs, AV1State *state);
+GF_Err gf_media_parse_ivf_frame_header(GF_BitStream *bs, u64 *frame_size);
+
+Bool gf_media_probe_ivf(GF_BitStream *bs);
+Bool gf_media_aom_probe_annexb(GF_BitStream *bs);
+
+/*parses one OBU*/
+GF_Err gf_media_aom_av1_parse_obu(GF_BitStream *bs, ObuType *obu_type, u64 *obu_size, u32 *obu_hdr_size, AV1State *state);
+
+Bool av1_is_obu_header(ObuType obu_type);
+void av1_reset_frame_state(AV1StateFrame *frame_state);
+
 #endif /*GPAC_DISABLE_AV_PARSERS*/
 
 typedef struct
@@ -525,6 +665,7 @@ typedef enum
 	GF_DASH_TEMPLATE_TEMPLATE,
 	GF_DASH_TEMPLATE_INITIALIZATION_TEMPLATE,
 	GF_DASH_TEMPLATE_REPINDEX,
+	GF_DASH_TEMPLATE_SEGMENT_NO_OUTPUT
 } GF_DashTemplateSegmentType;
 
 GF_Err gf_media_mpd_format_segment_name(GF_DashTemplateSegmentType seg_type, Bool is_bs_switching, char *segment_name, const char *output_file_name, const char *rep_id, const char *base_url, const char *seg_rad_name, const char *seg_ext, u64 start_time, u32 bandwidth, u32 segment_number, Bool use_segment_timeline);

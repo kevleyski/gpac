@@ -75,6 +75,8 @@ static const char * ISOR_MIME_TYPES[] = {
 	"audio/3gpp2", "3g2 3gp2", "3GPP2/MMS Music",
 	"video/iso.segment", "iso", "ISOBMF Fragments",
 	"audio/iso.segment", "iso", "ISOBMF Fragments",
+	"image/heif", "heif", "HEIF Images",
+	"image/heic", "heic", "HEIF Images",
 	NULL
 };
 
@@ -180,7 +182,9 @@ void isor_check_buffer_level(ISOMReader *read)
 			} else {
 				do_buffer = ch->buffering;
 			}
-			buffer_level = (u32) ( (done - data_offset) / mov_rate * 1000);
+			buffer_level = 0;
+			if (done > data_offset)
+				buffer_level = (u32) ( (done - data_offset) / mov_rate * 1000);
 #else
 			//we only send buffer on/off based on remainging playback time in channel
 			time_remain_ch -= (samp->DTS + samp->CTS_Offset);
@@ -585,7 +589,7 @@ static GF_Descriptor *ISOR_GetServiceDesc(GF_InputService *plug, u32 expect_type
 		for (i=0; i<gf_isom_get_track_count(read->mov); i++) {
 			u32 type = gf_isom_get_media_type(read->mov, i+1);
 			if (
-			    ((type==GF_ISOM_MEDIA_VISUAL) && (expect_type==GF_MEDIA_OBJECT_VIDEO))
+			    (gf_isom_is_video_subtype(type) && (expect_type==GF_MEDIA_OBJECT_VIDEO))
 			    || ((type==GF_ISOM_MEDIA_AUDIO) && (expect_type==GF_MEDIA_OBJECT_AUDIO)) ) {
 				trackID = gf_isom_get_track_id(read->mov, i+1);
 				break;
@@ -698,6 +702,9 @@ void isor_send_cenc_config(ISOMChannel *ch)
 	gf_isom_get_cenc_info(ch->owner->mov, ch->track, 1, NULL, &com.drm_cfg.scheme_type, &com.drm_cfg.scheme_version, NULL);
 
 	com.drm_cfg.PSSH_count = gf_isom_get_pssh_count(ch->owner->mov);
+	//no pssh, skip event
+	if (!com.drm_cfg.PSSH_count) return;
+
 	com.drm_cfg.PSSHs = gf_malloc(sizeof(GF_NetComDRMConfigPSSH)*(com.drm_cfg.PSSH_count) );
 
 	/*fill PSSH in the structure. We will free it in CENC_Setup*/
@@ -724,12 +731,14 @@ GF_Err ISOR_ConnectChannel(GF_InputService *plug, LPNETCHANNEL channel, const ch
 	ISOMChannel *ch;
 	GF_NetworkCommand com;
 	u32 track;
+	u32 item_idx;
 	Bool is_esd_url;
 	GF_Err e;
 	ISOMReader *read;
 	if (!plug || !plug->priv) return GF_SERVICE_ERROR;
 	read = (ISOMReader *) plug->priv;
 
+	item_idx = 0;
 	track = 0;
 	ch = NULL;
 	is_esd_url = GF_FALSE;
@@ -775,8 +784,11 @@ GF_Err ISOR_ConnectChannel(GF_InputService *plug, LPNETCHANNEL channel, const ch
 	}
 	track = gf_isom_get_track_by_id(read->mov, (u32) ESID);
 	if (!track) {
-		e = GF_STREAM_NOT_FOUND;
-		goto exit;
+		item_idx = gf_isom_get_meta_item_by_id(read->mov, GF_TRUE, 0, ESID);
+		if (!item_idx) {
+			e = GF_STREAM_NOT_FOUND;
+			goto exit;
+		}
 	}
 
 	GF_SAFEALLOC(ch, ISOMChannel);
@@ -787,34 +799,42 @@ GF_Err ISOR_ConnectChannel(GF_InputService *plug, LPNETCHANNEL channel, const ch
 	ch->owner = read;
 	ch->channel = channel;
 	gf_list_add(read->channels, ch);
-	ch->track = track;
-	ch->track_id = gf_isom_get_track_id(read->mov, ch->track);
-	switch (gf_isom_get_media_type(ch->owner->mov, ch->track)) {
-	case GF_ISOM_MEDIA_OCR:
-		ch->streamType = GF_STREAM_OCR;
-		break;
-	case GF_ISOM_MEDIA_SCENE:
-		ch->streamType = GF_STREAM_SCENE;
-		break;
-	case GF_ISOM_MEDIA_VISUAL:
-		gf_isom_get_reference(ch->owner->mov, ch->track, GF_ISOM_REF_BASE, 1, &ch->base_track);
-		//use base track only if avc/svc or hevc/lhvc. If avc+lhvc we need different rules
-		if ( gf_isom_get_avc_svc_type(ch->owner->mov, ch->base_track, 1) == GF_ISOM_AVCTYPE_AVC_ONLY) {
-			if ( gf_isom_get_hevc_lhvc_type(ch->owner->mov, ch->track, 1) >= GF_ISOM_HEVCTYPE_HEVC_ONLY) {
-				ch->base_track=0;
+	if (!item_idx) {
+		ch->track = track;
+		ch->track_id = gf_isom_get_track_id(read->mov, ch->track);
+		switch (gf_isom_get_media_type(ch->owner->mov, ch->track)) {
+		case GF_ISOM_MEDIA_OCR:
+			ch->streamType = GF_STREAM_OCR;
+			break;
+		case GF_ISOM_MEDIA_SCENE:
+			ch->streamType = GF_STREAM_SCENE;
+			break;
+		case GF_ISOM_MEDIA_VISUAL:
+        case GF_ISOM_MEDIA_AUXV:
+        case GF_ISOM_MEDIA_PICT:
+			gf_isom_get_reference(ch->owner->mov, ch->track, GF_ISOM_REF_BASE, 1, &ch->base_track);
+			//use base track only if avc/svc or hevc/lhvc. If avc+lhvc we need different rules
+			if (gf_isom_get_avc_svc_type(ch->owner->mov, ch->base_track, 1) == GF_ISOM_AVCTYPE_AVC_ONLY) {
+				if (gf_isom_get_hevc_lhvc_type(ch->owner->mov, ch->track, 1) >= GF_ISOM_HEVCTYPE_HEVC_ONLY) {
+					ch->base_track = 0;
+				}
 			}
-		}
-		
-		ch->next_track = 0;
-		/*in scalable mode add SPS/PPS in-band*/
-		ch->nalu_extract_mode = GF_ISOM_NALU_EXTRACT_INBAND_PS_FLAG /*| GF_ISOM_NALU_EXTRACT_ANNEXB_FLAG*/;
-		gf_isom_set_nalu_extract_mode(ch->owner->mov, ch->track, ch->nalu_extract_mode);
-		break;
-	}
 
-	ch->has_edit_list = gf_isom_get_edit_list_type(ch->owner->mov, ch->track, &ch->dts_offset) ? GF_TRUE : GF_FALSE;
-	ch->has_rap = (gf_isom_has_sync_points(ch->owner->mov, ch->track)==1) ? GF_TRUE : GF_FALSE;
-	ch->time_scale = gf_isom_get_media_timescale(ch->owner->mov, ch->track);
+			ch->next_track = 0;
+			break;
+		}
+		ch->has_edit_list = gf_isom_get_edit_list_type(ch->owner->mov, ch->track, &ch->dts_offset) ? GF_TRUE : GF_FALSE;
+		ch->has_rap = (gf_isom_has_sync_points(ch->owner->mov, ch->track) == 1) ? GF_TRUE : GF_FALSE;
+		ch->time_scale = gf_isom_get_media_timescale(ch->owner->mov, ch->track);
+	}
+	else {
+		ch->item_id = ESID;
+		ch->item_idx = item_idx;
+		ch->use_item = GF_TRUE;
+		ch->has_edit_list = GF_FALSE;
+		ch->has_rap = GF_TRUE;
+		ch->time_scale = 1000;
+	}
 
 exit:
 	if (read->input->query_proxy && read->input->proxy_udta && read->input->proxy_type) {
@@ -869,6 +889,11 @@ exit:
 			ch->is_cenc = GF_TRUE;
 			isor_send_cenc_config(ch);
 		}
+	}
+	if (!ch->is_encrypted) {
+		/*in scalable mode add SPS/PPS in-band*/
+		ch->nalu_extract_mode = GF_ISOM_NALU_EXTRACT_INBAND_PS_FLAG /*| GF_ISOM_NALU_EXTRACT_ANNEXB_FLAG*/;
+		gf_isom_set_nalu_extract_mode(ch->owner->mov, ch->track, ch->nalu_extract_mode);
 	}
 	return e;
 }
@@ -927,7 +952,12 @@ GF_Err ISOR_ChannelGetSLP(GF_InputService *plug, LPNETCHANNEL channel, char **ou
 	if (!ch->sample) {
 		/*get sample*/
 		gf_mx_p(read->segment_mutex);
-		isor_reader_get_sample(ch);
+		if (!ch->use_item) {
+			isor_reader_get_sample(ch);
+		}
+		else {
+			isor_reader_get_sample_from_item(ch);
+		}
 		gf_mx_v(read->segment_mutex);
 		*is_new_data = ch->sample ? GF_TRUE : GF_FALSE;
 	}

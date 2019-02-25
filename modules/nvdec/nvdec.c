@@ -106,6 +106,7 @@ static u32 global_nb_loaded_decoders = 0;
 static GF_Mutex *global_inst_mutex = NULL;
 static CUdevice  cuda_dev = -1;
 static CUcontext cuda_ctx = NULL;
+static Bool cuda_ctx_gl = GF_FALSE;
 
 
 //#define ENABLE_10BIT_OUTPUT
@@ -453,16 +454,29 @@ static GF_Err NVDec_AttachStream(GF_BaseDecoder *ifcg, GF_ESD *esd)
 			GET_GLFUN(glBindBuffer);
 			GET_GLFUN(glBufferData);
 #endif
+			cuda_ctx_gl = GF_TRUE;
 
 		} else {
 			res = cuCtxCreate(&cuda_ctx, CU_CTX_BLOCKING_SYNC, cuda_dev);
+			cuda_ctx_gl = GF_FALSE;
 		}		
 		if (res != CUDA_SUCCESS) {
-			GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[NVDec] failed to init cuda %scontext %s\n", ctx->use_gl_texture ? "OpenGL ": "", cudaGetErrorEnum(res) ) );
 			if (ctx->use_gl_texture) {
-				GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[NVDec] check you started the player without compositor thread (-no-cthread option)\n" ) );
+				cuda_ctx_gl = GF_FALSE;
+				GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[NVDec] Couldn't initialize cuda OpenGL context %s\n\tcheck you started the player without compositor thread (-no-cthread option)\n\tRetrying without OpenGL support\n", cudaGetErrorEnum(res) ) );
+				res = cuCtxCreate(&cuda_ctx, CU_CTX_BLOCKING_SYNC, cuda_dev);
+				if (res != CUDA_SUCCESS) {
+					GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[NVDec] failed to init cuda context %s\n", cudaGetErrorEnum(res) ) );
+				} else {
+					ctx->use_gl_texture = GF_FALSE;
+				}
+			} else {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[NVDec] failed to init cuda context %s\n", cudaGetErrorEnum(res) ) );
 			}
-			return GF_IO_ERR;
+
+			if (res != CUDA_SUCCESS) {
+				return GF_IO_ERR;
+			}
 		}
 	}
 
@@ -528,6 +542,40 @@ static GF_Err NVDec_DetachStream(GF_BaseDecoder *ifcg, u16 ES_ID)
 	return GF_OK;
 }
 
+static Bool NVDec_check_cuda_gl(NVDecCtx *ctx)
+{
+    int major, minor;
+    char deviceName[256];
+	CUresult res;
+
+	if (cuda_ctx) return cuda_ctx_gl;
+
+	res = cuDeviceGet(&cuda_dev, 0);
+	if (res != CUDA_SUCCESS) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CODEC, ("[NVDec] failed to init cuda device %s\n", cudaGetErrorEnum(res) ) );
+		return GF_IO_ERR;
+	}
+
+	cuDeviceComputeCapability(&major, &minor, cuda_dev);
+	cuDeviceGetName(deviceName, 256, cuda_dev);
+
+	GF_LOG(GF_LOG_INFO, GF_LOG_CODEC, ("[NVDec] GPU Device %s (idx 0) has SM %d.%d compute capability\n", deviceName, major, minor));
+
+	res = cuGLCtxCreate(&cuda_ctx, CU_CTX_BLOCKING_SYNC, cuda_dev);
+
+	if (res == CUDA_SUCCESS) {
+#ifdef LOAD_GL_1_5
+		GET_GLFUN(glGenBuffers);
+		GET_GLFUN(glBindBuffer);
+		GET_GLFUN(glBufferData);
+#endif
+		cuda_ctx_gl = GF_TRUE;
+	} else {
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[NVDec] Couldn't initialize cuda OpenGL context %s\n\tcheck you started the player without compositor thread (-no-cthread option)\n\tDisabling OpenGL support\n", cudaGetErrorEnum(res) ) );
+	}
+	return cuda_ctx_gl;
+}
+
 static GF_Err NVDec_GetCapabilities(GF_BaseDecoder *ifcg, GF_CodecCapability *capability)
 {
 	NVDecCtx *ctx = (NVDecCtx *)ifcg->privateStack;
@@ -579,6 +627,9 @@ static GF_Err NVDec_GetCapabilities(GF_BaseDecoder *ifcg, GF_CodecCapability *ca
 	case GF_CODEC_FRAME_OUTPUT:
 		opt = gf_modules_get_option((GF_BaseInterface *)ifcg, "NVDec", "DisableGL");
 		capability->cap.valueInt = (!opt || strcmp(opt, "yes")) ? 1 : 0;
+		if (capability->cap.valueInt && !NVDec_check_cuda_gl(ctx)) {
+			capability->cap.valueInt = 0;
+		}
 		break;
 	case GF_CODEC_FORCE_ANNEXB:
 		capability->cap.valueInt = 1;
@@ -999,9 +1050,19 @@ GF_Err NVDec_GetOutputFrame(struct _mediadecoder *dec, u16 ES_ID, GF_MediaDecode
 
 static u32 NVDec_CanHandleStream(GF_BaseDecoder *dec, u32 StreamType, GF_ESD *esd, u8 PL)
 {
+	const char *opt;
 	if (StreamType != GF_STREAM_VISUAL) return GF_CODEC_NOT_SUPPORTED;
 	/*media type query*/
 	if (!esd) return GF_CODEC_STREAM_TYPE_SUPPORTED;
+
+	opt = gf_modules_get_option((GF_BaseInterface *)dec, "NVDec", "Enabled");
+	if (!opt) {
+		gf_modules_set_option((GF_BaseInterface *)dec, "NVDec", "Enabled", "no");
+		GF_LOG(GF_LOG_WARNING, GF_LOG_CODEC, ("[NVDec] nvdec disabled by default, enable it in config file NVDec:Enabled=yes\n") );
+		return GF_CODEC_NOT_SUPPORTED;
+	} else if (!strcmp(opt, "no")) {
+		return GF_CODEC_NOT_SUPPORTED;
+	}
 
 	switch (esd->decoderConfig->objectTypeIndication) {
 	case GPAC_OTI_VIDEO_HEVC:
@@ -1133,6 +1194,7 @@ void DeleteNVDec(GF_BaseDecoder *ifcg)
 		gf_free(ctx->dec_inst);
 	}
 
+
 	assert(nb_cuvid_inst);
 	nb_cuvid_inst--;
 	if (!nb_cuvid_inst) {
@@ -1141,8 +1203,15 @@ void DeleteNVDec(GF_BaseDecoder *ifcg)
 		cuUninit();
 		cuvid_load_state = 0;
 	}
-
+	while (gf_list_count(ctx->frames)) {
+		NVDecFrame *f = (NVDecFrame *) gf_list_pop_back(ctx->frames);
+		gf_free(f);
+	}
 	gf_list_del(ctx->frames);
+	while (gf_list_count(ctx->frames_res)) {
+		NVDecFrame *f = (NVDecFrame *) gf_list_pop_back(ctx->frames_res);
+		gf_free(f);
+	}
 	gf_list_del(ctx->frames_res);
 	gf_free(ctx);
 	gf_free(ifcg);

@@ -234,10 +234,22 @@ enum
 	GF_M2TS_VIDEO_H264				= 0x1B,
 	GF_M2TS_VIDEO_SVC				= 0x1F,
 	GF_M2TS_VIDEO_HEVC				= 0x24,
+	GF_M2TS_VIDEO_HEVC_TEMPORAL		= 0x25,
+	GF_M2TS_VIDEO_MVCD				= 0x26,
+	GF_M2TS_TEMI					= 0x27,
 	GF_M2TS_VIDEO_SHVC				= 0x28,
 	GF_M2TS_VIDEO_SHVC_TEMPORAL		= 0x29,
 	GF_M2TS_VIDEO_MHVC				= 0x2A,
 	GF_M2TS_VIDEO_MHVC_TEMPORAL		= 0x2B,
+
+	GF_M2TS_GREEN					= 0x2C,
+	GF_M2TS_MHAS_MAIN				= 0x2D,
+	GF_M2TS_MHAS_AUX				= 0x2E,
+
+	GF_M2TS_QUALITY_SEC				= 0x2F,
+	GF_M2TS_MORE_SEC				= 0x30,
+
+	GF_M2TS_VIDEO_HEVC_MCTS			= 0x31,
 
 	GF_M2TS_VIDEO_DCII				= 0x80,
 	GF_M2TS_AUDIO_AC3				= 0x81,
@@ -1143,6 +1155,7 @@ typedef struct __m2ts_mux_stream {
 
 	/*table tools*/
 	GF_M2TS_Mux_Table *tables;
+	u8 initial_version_number;
 	/*total table sizes for bitrate estimation (PMT/PAT/...)*/
 	u32 total_table_size;
 	/* used for on-the-fly packetization of sections */
@@ -1153,6 +1166,7 @@ typedef struct __m2ts_mux_stream {
 	Bool table_needs_update;
 	Bool table_needs_send;
 	Bool force_single_au;
+	Bool set_initial_disc;
 
 	/*minimal amount of bytes we are allowed to copy frome next AU in the current PES. If no more than this
 	is available in PES, don't copy from next*/
@@ -1240,6 +1254,7 @@ struct __m2ts_mux_program {
 	Bool initial_ts_set;
 	Bool pcr_init_time_set;
 	u32 pcr_offset;
+	Bool initial_disc_set;
 
 	GF_Descriptor *iod;
 	/*list of GF_M2TSDescriptor to add to the program descriptor loop. By default set to NULL, if non null will be reset and destroyed upon cleanup*/
@@ -1345,7 +1360,7 @@ GF_M2TS_Mux *gf_m2ts_mux_new(u32 mux_rate, u32 pat_refresh_rate, Bool real_time)
 void gf_m2ts_mux_del(GF_M2TS_Mux *mux);
 //sets max interval between two PCR. Default/max interval is 100 ms
 void gf_m2ts_mux_set_pcr_max_interval(GF_M2TS_Mux *muxer, u32 pcr_update_ms);
-GF_M2TS_Mux_Program *gf_m2ts_mux_program_add(GF_M2TS_Mux *muxer, u32 program_number, u32 pmt_pid, u32 pmt_refresh_rate, u32 pcr_offset, Bool mpeg4_signaling);
+GF_M2TS_Mux_Program *gf_m2ts_mux_program_add(GF_M2TS_Mux *muxer, u32 program_number, u32 pmt_pid, u32 pmt_refresh_rate, u32 pcr_offset, Bool mpeg4_signaling, u32 pmt_version, Bool initial_disc);
 GF_M2TS_Mux_Stream *gf_m2ts_program_stream_add(GF_M2TS_Mux_Program *program, GF_ESInterface *ifce, u32 pid, Bool is_pcr, Bool force_pes_mode);
 void gf_m2ts_mux_update_config(GF_M2TS_Mux *mux, Bool reset_time);
 
@@ -1359,7 +1374,7 @@ GF_Err gf_m2ts_mux_use_single_au_pes_mode(GF_M2TS_Mux *muxer, GF_M2TS_PackMode a
 GF_Err gf_m2ts_mux_set_initial_pcr(GF_M2TS_Mux *muxer, u64 init_pcr_value);
 GF_Err gf_m2ts_mux_enable_pcr_only_packets(GF_M2TS_Mux *muxer, Bool enable_forced_pcr);
 
-/*user inteface functions*/
+/*user interface functions*/
 GF_Err gf_m2ts_program_stream_update_ts_scale(GF_ESInterface *_self, u32 time_scale);
 
 void gf_m2ts_mux_program_set_name(GF_M2TS_Mux_Program *program, const char *program_name, const char *mux_provider_name);

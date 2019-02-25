@@ -646,6 +646,10 @@ GF_Err gf_sm_load_init(GF_SceneLoader *load)
 				ext[0] = '.';
 				ext = anext;
 			}
+			if (strlen(ext) < 2 || strlen(ext) > sizeof(szExt)) {
+				GF_LOG(GF_LOG_ERROR, GF_LOG_SCENE, ("[Scene Manager] invalid extension in file name %s\n", load->fileName));
+				return GF_NOT_SUPPORTED;
+			}
 			strcpy(szExt, &ext[1]);
 			strlwr(szExt);
 			if (strstr(szExt, "bt")) load->type = GF_SM_LOAD_BT;
@@ -700,7 +704,7 @@ GF_Err gf_sm_load_init(GF_SceneLoader *load)
 	case GF_SM_LOAD_XBL:
 		e = gf_sm_load_init_xbl(load);
 
-		load->process = gf_sm_load_run_xbl;;
+		load->process = gf_sm_load_run_xbl;
 		load->done = gf_sm_load_done_xbl;
 		return e;
 #endif
